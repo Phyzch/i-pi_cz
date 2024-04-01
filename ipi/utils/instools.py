@@ -153,7 +153,7 @@ def diag_banded(A, n=2):
 
 
 def red2comp(h, nbeads, natoms, coef=None):
-    """Takes the reduced physical hessian (3*natoms*nbeads,3*natoms)
+    """Takes the reduced physical hessian (3*natoms,3*natoms*nbeads)
     and construct the 'complete' one (3*natoms*nbeads)^2"""
     info("\n @Instanton: Creating 'complete' physical hessian \n", verbosity.high)
 

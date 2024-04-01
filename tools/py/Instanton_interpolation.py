@@ -116,7 +116,7 @@ if input_geo != "None" or chk != "None":
         natoms = pos[0].natoms
         atom = pos[0]
         # Compose the half ring polymer.
-        q = np.vstack([i.q for i in pos])
+        q = np.vstack([i.q for i in pos])  # row: bead_index, column: atom_index
     else:
         from ipi.engine.simulation import Simulation
 
@@ -224,22 +224,24 @@ if input_hess != "None" or chk != "None":
     # # Compose the full ring polymer.
     size1 = size0 * (2 * nbeads)
     size2 = size0 * (2 * nbeadsNew)
-    new_h = np.zeros([size0, size2])
+    new_h = np.zeros([size0, size2])  # physical hessian matrix
     q2 = np.concatenate((q, np.flipud(q)), axis=0)  # Compose the full ring polymer.
     rpc = nm_rescale(2 * nbeads, 2 * nbeadsNew)
     new_q = rpc.b1tob2(q2)[0:nbeadsNew]
 
-    for i in range(size0):
-        for j in range(size0):
+    for i in range(size0):  # index for dof (atom) in hessian
+        for j in range(size0):  # index for dof (atom) in hessian
             h = np.array([])
-            for n in range(nbeads):
-                h = np.append(h, hessian[i, j + size0 * n])
+            # h = h_ij^{n}, here n is index for beads. the ring polymer contraction is done for the same hessian component of different beads.
+            for n in range(nbeads): # index for beads. 
+                h = np.append(h, hessian[i, j + size0 * n])   
             #           h3 = np.concatenate((h, h, h), axis=0).reshape((h.size, 3), order='F') # Open path expect three coordinates per atom
             #           diag = rpc.b1tob2(h3)[:, 0] # Open path
+                
             h2 = np.concatenate(
                 (h, np.flipud(h)), axis=0
             )  # Compose the full ring polymer.
-            diag = rpc.b1tob2(h2)
+            diag = rpc.b1tob2(h2)   # according to SI of J. Am. Chem. Soc. 2019, 141, 6, 2526–2534, the ring-polymer hessian is transformed the same way as coordinate q.
             new_h[i, j:size2:size0] += diag
 
     new_h_half = new_h[:, 0 : size2 // 2]

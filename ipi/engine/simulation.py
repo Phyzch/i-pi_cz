@@ -38,7 +38,6 @@ class Simulation:
         mode: A string specifying what kind of simulation will be run.
         fflist: A list of forcefield objects that can be called to compute energy and forces
         syslist: A list of physical systems
-        prng: A random number generator.
         tsteps: The total number of steps.
         ttime: The wall clock time (in seconds).
         outtemplate: A template output object to be used to generate the outputs

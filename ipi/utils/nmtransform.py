@@ -36,12 +36,12 @@ def mk_nm_matrix(nbeads):
     """
 
     b2nm = np.zeros((nbeads, nbeads))
-    b2nm[0, :] = np.sqrt(1.0)
+    b2nm[0, :] = np.sqrt(1.0)  # row index is for frequency, column index is for beads.
     for j in range(nbeads):
         for i in range(1, nbeads // 2 + 1):
             b2nm[i, j] = np.sqrt(2.0) * np.cos(2 * np.pi * j * i / float(nbeads))
         for i in range(nbeads // 2 + 1, nbeads):
-            b2nm[i, j] = np.sqrt(2.0) * np.sin(2 * np.pi * j * i / float(nbeads))
+            b2nm[i, j] = np.sqrt(2.0) * np.sin(2 * np.pi * j * i / float(nbeads))  # mode i is conjugate to mode (nbeads -i) in this matrix representation.
     if (nbeads % 2) == 0:
         b2nm[nbeads // 2, 0:nbeads:2] = 1.0
         b2nm[nbeads // 2, 1:nbeads:2] = -1.0
@@ -83,7 +83,7 @@ def mk_rs_matrix(nb1, nb2):
 
     if nb1 == nb2:
         return np.identity(nb1, float)
-    elif nb1 > nb2:
+    elif nb1 > nb2:   # contraction
         b1_nm = mk_nm_matrix(nb1)
         nm_b2 = mk_nm_matrix(nb2).T
 
@@ -92,7 +92,7 @@ def mk_rs_matrix(nb1, nb2):
         b1_b2[0, 0] = 1.0
         for i in range(1, nb2 // 2 + 1):
             b1_b2[i, i] = 1.0
-            b1_b2[nb2 - i, nb1 - i] = 1.0
+            b1_b2[nb2 - i, nb1 - i] = 1.0  # note here in b1_nm matrix, row i represent mode i, row (nb1-i) represents mode (-i) conjugates to mode i.
         if nb2 % 2 == 0:
             # if we are contracting down to an even number of beads, then we have to
             # pick just one of the last degenerate modes to match onto the single
@@ -256,8 +256,8 @@ class nm_rescale(object):
             self.noop = True
         else:
             self.noop = False
-            self._b1tob2 = mk_rs_matrix(nbeads1, nbeads2)
-            self._b2tob1 = self._b1tob2.T * (float(nbeads1) / float(nbeads2))
+            self._b1tob2 = mk_rs_matrix(nbeads1, nbeads2)  # size: [nbeads2, nbeads1]
+            self._b2tob1 = self._b1tob2.T * (float(nbeads1) / float(nbeads2))  # size : [nbeads1, nbeads2]
             # definition of the scaling also using the open case normal mode matrix transformations
             self._o_b1tob2 = mk_o_rs_matrix(nbeads1, nbeads2)
             self._o_b2tob1 = self._o_b1tob2.T * (float(nbeads1) / float(nbeads2))

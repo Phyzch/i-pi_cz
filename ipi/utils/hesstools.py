@@ -52,10 +52,10 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
     ii = natoms * nbeads
     mm = np.zeros((nbeads, natoms))
     for i in range(nbeads):
-        mm[i] = m
+        mm[i] = m       # m here is a 1d array with size [natoms]. Therefore, this repeat mass nbeads times.
     mm = mm.reshape(ii)
-    ism = m3.reshape((ii * 3, 1)) ** (-0.5)
-    dynmat = np.multiply(ism.T, np.multiply(h, ism))
+    ism = m3.reshape((ii * 3, 1)) ** (-0.5)  # ism: inverse square of m3. 
+    dynmat = np.multiply(ism.T, np.multiply(h, ism))  # dynmat is mass weighted hessian.
     # ismm = np.outer(ism, ism)
     # dynmat = np.multiply(h, ismm)
 
@@ -63,8 +63,8 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
         hm = dynmat
     else:
         # Computes the centre of mass.
-        com = np.dot(np.transpose(q.reshape((ii, 3))), mm) / mm.sum()
-        qminuscom = q.reshape((ii, 3)) - com
+        com = np.dot(np.transpose(q.reshape((ii, 3))), mm) / mm.sum()  # for 3d array, q should be [nbeads, natoms, 3]
+        qminuscom = q.reshape((ii, 3)) - com  # recentered coordinate.
         ism = ism.flatten()
 
         if asr == "poly":
@@ -72,18 +72,19 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
             moi = np.zeros((3, 3), float)
             for k in range(ii):
                 moi -= (
-                    np.dot(
+                    np.matmul(
                         np.cross(qminuscom[k], np.identity(3)),
                         np.cross(qminuscom[k], np.identity(3)),
                     )
                     * mm[k]
                 )
 
-            I, U = np.linalg.eig(moi)
-            R = np.dot(qminuscom, U)
+            I, U = np.linalg.eig(moi)  # I: eigenvalue, U: eigenvector. eigenvector is the rotational mode. U[:,i] is eigenvector i.
+            R = np.dot(qminuscom, U)  # coordinate for atoms with the principle axis as rotational axis (rotational frame)
             D = np.zeros((6, 3 * ii), float)
 
-            # Computes the vectors along translations and rotations.
+            # Computes the vectors along translations and rotations. 
+            # See https://en.wikipedia.org/wiki/Eckart_conditions and https://web.archive.org/web/20210509233020/https://gaussian.com/wp-content/uploads/dl/vib.pdf
             # Translations
             D[0] = np.tile([1, 0, 0], ii) / ism
             D[1] = np.tile([0, 1, 0], ii) / ism
@@ -92,14 +93,14 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
             for i in range(3 * ii):
                 iatom = i // 3
                 idof = np.mod(i, 3)
-                D[3, i] = (R[iatom, 1] * U[idof, 2] - R[iatom, 2] * U[idof, 1]) / ism[i]
+                D[3, i] = (R[iatom, 1] * U[idof, 2] - R[iatom, 2] * U[idof, 1]) / ism[i]  # this is rotational motion for each atom in coordinate axis.
                 D[4, i] = (R[iatom, 2] * U[idof, 0] - R[iatom, 0] * U[idof, 2]) / ism[i]
                 D[5, i] = (R[iatom, 0] * U[idof, 1] - R[iatom, 1] * U[idof, 0]) / ism[i]
 
             for k in range(6):
                 D[k] = D[k] / np.linalg.norm(D[k])
             # Computes the transformation matrix.
-            transfmatrix = np.eye(3 * ii) - np.dot(D.T, D)
+            transfmatrix = np.eye(3 * ii) - np.dot(D.T, D)  # this is the projection operator that projects out translation and rotation dof.
             hm = np.dot(transfmatrix.T, np.dot(dynmat, transfmatrix))
 
         elif asr == "crystal":
@@ -120,7 +121,7 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
     hmT = hm.T
     hm = (hmT + hm) / 2.0
 
-    d, w = np.linalg.eigh(hm)
+    d, w = np.linalg.eigh(hm)  # as we have projected out translation & rotational dof, there should be several eig close to 0 corresponds to such mode.
 
     # Count
     dd = (
@@ -164,8 +165,8 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
                 verbosity.high,
             )
 
-        d = np.delete(d, list(range(nneg.size, nneg.size + nzero.size)))
-        w = np.delete(w, list(range(nneg.size, nneg.size + nzero.size)), axis=1)
+        d = np.delete(d, list(range(nneg.size, nneg.size + nzero.size)))  # delete zero modes eigval. the eigenvalues and eigenvectors here are ordered
+        w = np.delete(w, list(range(nneg.size, nneg.size + nzero.size)), axis=1) # delete zero modes eigvec.
 
     if mofi:
         if asr == "poly":
