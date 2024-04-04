@@ -183,14 +183,14 @@ def get_imvector(h, m3):
         )
     m = 1.0 / (m3**0.5)
     mm = np.outer(m, m)
-    hm = np.multiply(h, mm)
+    hm = np.multiply(h, mm)  # mass weighted hessian.
 
-    # Simmetrize to use linalg.eigh
+    # Symmetrize to use linalg.eigh
     hmT = hm.T
     hm = (hmT + hm) / 2.0
 
     d, w = np.linalg.eigh(hm)
-    freq = np.sign(d) * np.absolute(d) ** 0.5 / (2 * np.pi * 3e10 * 2.4188843e-17)
+    freq = np.sign(d) * np.absolute(d) ** 0.5 / (2 * np.pi * 3e10 * 2.4188843e-17)  # np.sqrt(np.absolute(d))/(2*np.pi) is frequency. the rest is unit conversion
 
     info(" @GEOP: 1 frequency %4.1f cm^-1" % freq[0], verbosity.low)
     info(" @GEOP: 2 frequency %4.1f cm^-1" % freq[1], verbosity.low)
@@ -209,7 +209,7 @@ def get_imvector(h, m3):
         verbosity.low,
     )
 
-    imv = w[:, 0] * (m3[:] ** 0.5)
+    imv = w[:, 0] * (m3[:] ** 0.5)  # go back to coordinate.
     imv = imv / np.linalg.norm(imv)
 
     return imv.reshape(1, imv.size)
@@ -316,16 +316,18 @@ class Fix(object):
 
         self.fixatoms = fixatoms
 
-        self.mask0 = np.delete(np.arange(self.natoms), self.fixatoms)
+        # mask0, mask1, mask2 represent different ways of dealing with fixed atom for mass, pos, hessian etc.
+        # they are used in self.get_active_vector() to obtain system without fixed atoms.
+        self.mask0 = np.delete(np.arange(self.natoms), self.fixatoms)  # atom index without fixed atoms.
         self.nactive = len(self.mask0)
 
         mask1 = np.ones(3 * self.natoms, dtype=bool)
         for i in range(3):
             mask1[3 * self.fixatoms + i] = False
-        self.mask1 = np.arange(3 * self.natoms)[mask1]
+        self.mask1 = np.arange(3 * self.natoms)[mask1]  # atom & dof index without fixed atoms.
 
         mask2 = np.tile(mask1, self.nbeads)
-        self.mask2 = np.arange(3 * self.natoms * self.nbeads)[mask2]
+        self.mask2 = np.arange(3 * self.natoms * self.nbeads)[mask2] # bead & atom & dof index without fixed atoms.
 
         self.fixbeads = Beads(beads.natoms - len(fixatoms), beads.nbeads)
         self.fixbeads.q[:] = self.get_active_vector(beads.copy().q, 1)
@@ -364,7 +366,7 @@ class Fix(object):
                 or key == "initial_hessian"
             ):
                 t = -1
-            elif key == "old_x" or key == "old_f" or key == "d":
+            elif key == "old_x" or key == "old_f" or key == "d": # "d" : old direction
                 t = 1
             elif key == "hessian" or "eta0":
                 t = 2

@@ -307,7 +307,7 @@ frequency in your simulation to make i-PI faster. Use at your own risk!
         fflist = []
         for k, v in self.extra:
             if k == "system":
-                syslist.append(v.fetch())
+                syslist.append(v.fetch())  # initialize the system 
             elif k == "system_template":
                 # This will actually generate automatically a bunch
                 # of system objects with the desired properties set

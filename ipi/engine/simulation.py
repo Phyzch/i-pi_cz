@@ -92,7 +92,7 @@ class Simulation:
         # create the simulation object
         simulation = input_simulation.fetch()
 
-        # pipe between the components of the simulation
+        # pipe between the components of the simulation. This will call all bind function of component of simulation class (subclass like ensemble, motion, optimizer etc)
         simulation.bind(read_only)
 
         # echo the input file if verbose enough
@@ -315,6 +315,7 @@ class Simulation:
             if self.step % self.safe_stride == 0:
                 self.chk.store()
 
+            # evolve each system with s.motion.step 
             if len(self.syslist) > 0 and self.threading:
                 stepthreads = []
                 # steps through all the systems
@@ -333,6 +334,7 @@ class Simulation:
                 # Don't continue if we are about to exit.
                 break
 
+
             # does the "super motion" step
             if self.smotion is not None:
                 self.smotion.step(self.step)
@@ -341,6 +343,7 @@ class Simulation:
                 # Don't write if we are about to exit.
                 break
 
+                
             if self.threading:
                 stepthreads = []
                 for o in self.outputs:
