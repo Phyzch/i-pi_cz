@@ -226,7 +226,7 @@ class InputInst(InputDictionary):
             {
                 "dtype": str,
                 "default": "powell",
-                "options": ["powell", "recompute"],
+                "options": ["powell", "recompute", "DFP"],
                 "help": "How to update the hessian after each step.",
             },
         ),

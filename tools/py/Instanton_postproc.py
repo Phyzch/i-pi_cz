@@ -432,7 +432,7 @@ if case == "reactant":
     aux = np.zeros(nzeros)
     dd = np.concatenate((aux, hess_eigval))
 
-    # now convert to frequency in cm^-1 unit
+    # TODO: bug in the code. now convert to frequency in cm^-1 unit
     dd_freq = np.sqrt(dd) 
     
     np.savetxt(outfile, dd_freq.reshape(1, dd.size))

@@ -51,6 +51,8 @@ Functions:
              (R. Fletcher. Practical Methods of Optimization. 2nd ed.(1987)
         nichols: nichols algorithm for optimization (minimum or transition state)
         Simons, J. and Nichols, J. (1990), Int. J. Quantum Chem., 38: 263-276.
+
+        Davidon_Fletcher_Powell: DFP algorithm. (https://en.wikipedia.org/wiki/Davidon%E2%80%93Fletcher%E2%80%93Powell_formula)
 """
 
 # TODO: CLEAN UP BFGS, L-BFGS, L-BFGS_nls TO NOT EXIT WITHIN MINTOOLS.PY
@@ -1534,10 +1536,10 @@ def L_BFGS_nls(
 
 def nichols(f0, d, dynmax, m3, big_step, mode=1):
     """Find new movement direction. JCP 92,340 (1990)
-    IN    f       = physical + spring forces        (n,)
-          d       = dynmax eigenvalues
-          dynmax  = dynmax       (n x n-m) with m = # external modes
-          m3      = mass vector
+    IN    f       = physical + spring forces        shape (nbeads, 3 * natoms)
+          d       = dynmax eigenvalues, shape[3 * natoms * nbeads - asr_zeros]  asr_zeros = 6 for 'poly', 3 for 'crystal' , 0 for 'none'
+          dynmax  = dynmax       (n x n-m) with m = # external modes.  dynmax[:,i]: eigenvector for hessian with index i. 
+          m3      = mass vector. shape (nbeads , 3 * natoms)
     OUT   DX      = displacement in cartesian basis
 
     INTERNAL
@@ -1560,8 +1562,8 @@ def nichols(f0, d, dynmax, m3, big_step, mode=1):
 
     # Change of basis to eigenvector space
     d = d[:, np.newaxis]  # dimension nx1
-    gEt = -np.dot(f, dynmax)  # Change of basis  #
-    gE = gEt.T  # dimension (n-m)x1
+    gEt = -np.dot(f, dynmax)  # Change of basis  # forces on eigenstate of hessian basis.
+    gE = gEt.T  # dimension (n-m)x 1.
     # The step has the general form:
     # d_x[j] =  alpha *( gE[j] )  / ( lambda-d[j] )
 
@@ -1578,11 +1580,12 @@ def nichols(f0, d, dynmax, m3, big_step, mode=1):
 
     elif mode == 1:
         if d[0] > 0:
+            # h1 < lambda < h2 (1- alpha/2 )
             if d[1] / 2 > d[0]:
                 alpha = 1
                 lamb = (2 * d[0] + d[1]) / 4
             else:
-                alpha = (d[1] - d[0]) / d[1]
+                alpha = (d[1] - d[0]) / d[1]  # with this choice of alpha,  h1 < lambda < (h1 + h2) /2 
                 lamb = (
                     3 * d[0] + d[1]
                 ) / 4  # midpoint between b[0] and b[1]*(1-alpha/2)
@@ -1592,7 +1595,8 @@ def nichols(f0, d, dynmax, m3, big_step, mode=1):
                 alpha = 1
                 lamb = (d[0] + 2 * d[1]) / 4
             else:
-                alpha = (d[0] - d[1]) / d[1]
+                # alpha = (d[0] - d[1]) / d[1]   # bug here. alpha = (d[0] - d[1]) / d[0]
+                alpha = (d[0] - d[1]) / d[0]
                 lamb = (d[0] + 3 * d[1]) / 4
 
         # elif d[1] < 0:  #Litman for Second Order Saddle point
@@ -1620,9 +1624,51 @@ def Powell(d, Dg, H):
            Dg = change in gradient
             H = Cartesian Hessian
 
-    Output: H = Cartesian Hessian"""
+    Output: H = Cartesian Hessian
+    Powell's method. See: section 2 of Journal of Mathematical Chemistry 25 (1999) 85–92.
+    This is not the DFP method.
+    """
 
     ddi = 1 / np.dot(d, d)
     y = Dg - np.dot(H, d)
     H += ddi * (np.outer(y, d) + np.outer(d, y) - np.dot(y, d) * np.outer(d, d) * ddi)
     return H
+
+def Davidon_Fletcher_Powell(s, y, B):
+    '''
+    Updating Cartesian Hessian using gradient. DFP method: https://en.wikipedia.org/wiki/Davidon%E2%80%93Fletcher%E2%80%93Powell_formula
+    Also see Numerical Optimization Jorge Nocedal, Stephen J. Wright, Second Edition, Chapter 6.1, eq.(6.13) for DFP formula.
+    Input: s = Change in position. 
+           y = Change in gradient. 
+           B = Cartesian Hessian. 
+    
+           math notation here: s: column vector, s^T: row vector
+
+    Output: B = Cartesian Hessian.
+    '''
+    rho = 1 / np.dot(y, s)
+    
+    Bs = np.matmul(B, s)
+    
+    # - rho * (y * (s^T B) + (B*s)y^T )
+    h1 = np.outer(Bs, y) 
+    h1_transpose = np.transpose(h1)
+    term1 = - rho * (h1 + h1_transpose)
+
+    # s^T * B * s
+    factor2 = np.dot(s, Bs)
+    # y * y^T
+    y_outer = np.outer(y,y)
+    
+    # rho^2 * (y * (s^T * B * s) * y^T)
+    term2 = np.power(rho,2) * y_outer * factor2 
+
+    # rho * y * y^T
+    term3 = rho * y_outer
+
+    # change of Hessian according to DFP formula
+    term = term1 + term2 + term3 
+
+    B = B + term 
+
+    return B 

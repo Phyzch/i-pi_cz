@@ -24,7 +24,7 @@ from ipi.utils.depend import dstrip
 from ipi.utils.softexit import softexit
 from ipi.utils.messages import verbosity, info
 from ipi.utils import units
-from ipi.utils.mintools import nichols, Powell
+from ipi.utils.mintools import nichols, Powell, Davidon_Fletcher_Powell
 from ipi.engine.motion.geop import L_BFGS
 from ipi.utils.instools import (
     banded_hessian,
@@ -408,7 +408,7 @@ class PesMapper(object):
         e = self.pot.copy()
         g = -self.f.copy()
 
-        e = e * (self.coef[1:] + self.coef[:-1]) / 2
+        e = e * (self.coef[1:,0] + self.coef[:-1,0]) / 2  # TODO bug here, should be self.coef[1:, 0]
         g = g * (self.coef[1:] + self.coef[:-1]) / 2
 
         return e, g
@@ -879,10 +879,10 @@ class Mapper(object):
     def initialize(self, q, forces):
         self.gm.initialize(q, forces)
 
-        e1, g1 = self.gm.evaluate()  # compute physical potential e1 & gradient g1
+        e1, g1 = self.gm.evaluate()  # compute physical potential e1 & gradient g1.  e1 is a matrix of shape [nbeads]
         e2, g2 = self.sm(q)   # compute spring potential e2 and gradient g2
         g = self.fix.get_active_vector(g1 + g2, 1)
-        e = np.sum(e1 + e2)
+        e = np.sum(e1) + np.sum(e2) 
 
         self.save(e, g)
 
@@ -926,9 +926,9 @@ class Mapper(object):
 
     def __call__(self, x, mode="all", apply_fix=True, new_disc=True, ret=True):
         if mode == "all":
-            e1, g1 = self.sm(x, new_disc)
-            e2, g2 = self.gm(x, new_disc)
-            e = e1 + e2
+            e1, g1 = self.sm(x, new_disc)  # e1 is a number: energy term of spring potential.
+            e2, g2 = self.gm(x, new_disc)  # e2 is an array of size [nbeads]. physical potential energy of each bead.
+            e = np.sum(e1) + np.sum(e2)
             g = np.add(g1, g2)
 
         elif mode == "physical":
@@ -1387,7 +1387,8 @@ class HessianOptimizer(DummyOptimizer):
         # Initialize all the mappers for potential and forces. compute forces & potential. 
         self.mapper.initialize(self.beads.q, self.forces)
 
-        # compute hessian for the initial instanton geometry.
+        # compute hessian for the initial instanton geometry. here full_hessian has shape [3 * natoms, 3 * natoms * nbeads]
+        # full_hessian is computed using finite difference method ( (f(x+h)-f(x-h))/(2h) )
         if self.options["hessian_init"]:
             full_hessian = get_hessian(
                 gm=self.mapper.gm,
@@ -1414,7 +1415,14 @@ class HessianOptimizer(DummyOptimizer):
         self.init = True
 
     def update_hessian(self, update, active_hessian, new_x, d_x, d_g):
-        """Update hessian"""
+        """Update hessian
+        :param: update: self.options["hessian_update"]: "powell" or "recompute"
+        :param: active_hessian: reduced physical hessian of active atoms. [3 * self.fix.fixbeads.natoms, 3 * self.fix.fixbeads.natoms * nbeads]. here self.fix.fixbeads.natoms is number of active atoms after subtracting fixed atoms.
+        :param: new_x: coordinate array of all atoms in new position. (including fixed atoms)  size: [nbeads, 3 * natoms]
+        :param: d_x: displacement array for active atoms, shape: [nbeads, 3 * self.fix.fixbeads.natoms]
+        :param: d_g: finite difference of gradient, shape [nbeads, 3 * self.fix.fixbeads.natoms]
+        Both hessian and active_hessian is updated.
+        """
 
         if update == "powell":
             i = self.fix.fixbeads.natoms * 3
@@ -1429,6 +1437,16 @@ class HessianOptimizer(DummyOptimizer):
                     "Powell update for friction hessian is not implemented. We move on without updating it. In all tested cases this is not a problem",
                     verbosity.medium,
                 )
+        elif update == "DFP":   # need to update dictionary "hessian_update" in /inputs/motion/instanton.py. add "DFP" to "options"
+            i = self.fix.fixbeads.natoms * 3 
+            for j in range(self.fix.fixbeads.nbeads):
+                aux = active_hessian[:, j * i : (j+1) * i]
+                dg = d_g[j, :]
+                dx = d_x[j, :]
+                Davidon_Fletcher_Powell(dx, dg, aux)  # here aux is updated in the program, thus active_hessian is also updated.
+            phys_hessian = active_hessian
+            info("Customary DFP method Using Davidon_Fletcher_Powell method to update  Hessian", verbosity.medium,)
+
 
         elif update == "recompute":
             active_hessian = get_hessian(
@@ -1448,8 +1466,9 @@ class HessianOptimizer(DummyOptimizer):
                 )
             else:
                 phys_hessian = active_hessian
-
-        self.optarrays["hessian"][:] = self.fix.get_full_vector(phys_hessian, 2)
+        
+        
+        self.optarrays["hessian"][:] = self.fix.get_full_vector(phys_hessian, 2)  # transform phys_hessian into full_hessian and assign to "hessian" in optarrays.
 
     def print_hess(self, step):
         if (
