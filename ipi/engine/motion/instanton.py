@@ -966,6 +966,9 @@ class DummyOptimizer:
         self.exit = False
         self.init = False
 
+        # output maximum gradient. 
+        self.gradient_file = None 
+
     def bind(self, geop):
         """
         Bind optimization options and call bind function of Mappers (get beads, cell,forces)
@@ -1073,7 +1076,7 @@ class DummyOptimizer:
         )
         # convert eigenvector for active dof into full dof by setting fixed atom index to 0.
         imvector = fix_onebead.get_full_vector(active_imvector, 1).flatten()
-        # extend beads along the imaginary vector direction.
+        # extend beads along the imaginary vector direction. note this is physical coordinate, not mass-weighted coordinate.
         for i in range(self.beads.nbeads):
             self.beads.q[i, :] += (
                 self.optarrays["delta"]
@@ -1187,6 +1190,22 @@ class DummyOptimizer:
 
         return False
 
+    def output_max_gradient(self, step):
+        '''
+        output gradient to self.gradient_file
+        '''
+        if self.gradient_file.closed:
+            warnings.warn("gradient file is closed when we try to output maximum gradient. Error")
+            self.exit = True 
+        else:
+            active_force = self.mapper.f 
+            maximum_force = np.amax(np.absolute(active_force))
+
+            precision = 10
+            formatted_max_force = "{:.{}f}".format(maximum_force,precision)
+            self.gradient_file.write(str(step) + "  ")
+            self.gradient_file.write(formatted_max_force + "\n")
+
     def update_pos_force(self):
         """Update positions and forces"""
 
@@ -1222,10 +1241,16 @@ class DummyOptimizer:
                 self.output_maker,
             )
 
+
+
     def pre_step(self, step=None, adaptative=False):
         """General tasks that have to be performed before actual step"""
 
         if self.exit:
+            # exit the program here.
+            # close the gradient output file
+            self.gradient_file.close()
+
             softexit.trigger(
                 status="success",
                 message="Geometry optimization converged. Exiting simulation",
@@ -1364,6 +1389,12 @@ class HessianOptimizer(DummyOptimizer):
         if step == 0:
             info(" @GEOP: Initializing INSTANTON", verbosity.low)
 
+            # open file that output maximum gradient at each time step.
+            gradient_file_name = self.options["prefix"]+"_gradient.txt"
+            gradient_file_name = self.output_maker.prefix + "." + gradient_file_name
+            self.gradient_file = open(gradient_file_name, "w")
+
+            # initialize the bead geometry by expanding along unstable mode
             if self.beads.nbeads == 1:
                 info(" @GEOP: Classical TS search", verbosity.low)
 
@@ -1513,6 +1544,8 @@ class HessianOptimizer(DummyOptimizer):
         #  Print geometry & hessian.
         self.print_geo(step)
         self.print_hess(step)
+
+        self.output_max_gradient(step)
 
         # Check Exit and only then update old arrays
         self.exit = self.exitstep(d_x_max, step)
