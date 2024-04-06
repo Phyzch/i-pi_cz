@@ -31,7 +31,7 @@ def banded_hessian(h, sm, masses=True, shift=0.001):
         for j in range(1, ndiag):
             href[j, (ndiag - 1 - j) + i * natoms * 3 : (i + 1) * natoms * 3] = np.diag(
                 h_aux, ndiag - 1 - j
-            )
+            )   # here ndiag -1 - j is offset.
 
     # add spring parts
     if nbeads > 1:
@@ -308,6 +308,10 @@ class Fix(object):
     """Class that applies a fixatoms type constrain"""
 
     def __init__(self, fixatoms, beads, nbeads=None):
+        '''
+        :param: fixatoms: indices of atoms that should be held fixed.
+        :params: beads: beads object
+        '''
         self.natoms = beads.natoms
         if nbeads is None:
             self.nbeads = beads.nbeads
@@ -319,7 +323,7 @@ class Fix(object):
         # mask0, mask1, mask2 represent different ways of dealing with fixed atom for mass, pos, hessian etc.
         # they are used in self.get_active_vector() to obtain system without fixed atoms.
         self.mask0 = np.delete(np.arange(self.natoms), self.fixatoms)  # atom index without fixed atoms.
-        self.nactive = len(self.mask0)
+        self.nactive = len(self.mask0)   # number of active atoms
 
         mask1 = np.ones(3 * self.natoms, dtype=bool)
         for i in range(3):
@@ -329,7 +333,7 @@ class Fix(object):
         mask2 = np.tile(mask1, self.nbeads)
         self.mask2 = np.arange(3 * self.natoms * self.nbeads)[mask2] # bead & atom & dof index without fixed atoms.
 
-        self.fixbeads = Beads(beads.natoms - len(fixatoms), beads.nbeads)
+        self.fixbeads = Beads(beads.natoms - len(fixatoms), beads.nbeads)   # self.fixbeads: beads for all active atoms.
         self.fixbeads.q[:] = self.get_active_vector(beads.copy().q, 1)
         self.fixbeads.m[:] = self.get_active_vector(beads.copy().m, 0)
         self.fixbeads.names[:] = self.get_active_vector(beads.copy().names, 0)

@@ -1579,6 +1579,7 @@ def nichols(f0, d, dynmax, m3, big_step, mode=1):
             d_x = alpha * (gE) / (lamb - d)
 
     elif mode == 1:
+        # finding saddle points
         if d[0] > 0:
             # h1 < lambda < h2 (1- alpha/2 )
             if d[1] / 2 > d[0]:
@@ -1595,7 +1596,7 @@ def nichols(f0, d, dynmax, m3, big_step, mode=1):
                 alpha = 1
                 lamb = (d[0] + 2 * d[1]) / 4
             else:
-                # alpha = (d[0] - d[1]) / d[1]   # bug here. alpha = (d[0] - d[1]) / d[0]
+                # alpha = (d[0] - d[1]) / d[1]   
                 alpha = (d[0] - d[1]) / d[0]
                 lamb = (d[0] + 3 * d[1]) / 4
 
@@ -1631,7 +1632,11 @@ def Powell(d, Dg, H):
 
     ddi = 1 / np.dot(d, d)
     y = Dg - np.dot(H, d)
-    H += ddi * (np.outer(y, d) + np.outer(d, y) - np.dot(y, d) * np.outer(d, d) * ddi)
+    
+    change = ddi * (np.outer(y, d) + np.outer(d, y) - np.dot(y, d) * np.outer(d, d) * ddi)
+    
+    H = H + change 
+
     return H
 
 def Davidon_Fletcher_Powell(s, y, B):
@@ -1671,4 +1676,6 @@ def Davidon_Fletcher_Powell(s, y, B):
 
     B = B + term 
 
+
     return B 
+

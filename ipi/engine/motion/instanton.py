@@ -1563,7 +1563,7 @@ class NicholsOptimizer(HessianOptimizer):
                 )
             h = np.add(h, h_fric)
 
-        # Get eigenvalues and eigenvector.
+        # Get eigenvalues and eigenvector of hessian.  excluding rotational & translational dof.
         d, w = clean_hessian(
             h,
             self.fix.fixbeads.q,
@@ -1614,6 +1614,7 @@ class NicholsOptimizer(HessianOptimizer):
                 activearrays["big_step"],
             )
         elif self.options["mode"] == "splitting":
+            # splitting corresponds to the kink path, which is minimum value of a linear polymer connecting two minimums.
             d_x = nichols(
                 self.mapper.f,
                 d,
@@ -1654,20 +1655,21 @@ class NROptimizer(HessianOptimizer):
         activearrays = self.pre_step(step)
 
         dyn_mat = get_dynmat(
-            activearrays["hessian"], self.sm.dbeads.m3, self.sm.dbeads.nbeads
+            #activearrays["hessian"], self.mapper.sm.dbeads.m3, self.mapper.sm.dbeads.nbeads  
+            activearrays["hessian"], self.fix.fixbeads.m3, self.fix.fixbeads.nbeads
         )
         h_up_band = banded_hessian(
-            dyn_mat, self.sm, masses=False, shift=0.0000001
-        )  # create upper band matrix
+            dyn_mat, self.mapper.sm, masses=False, shift=0.0000001
+        )  # create upper band dynmat matrix
 
         fff = activearrays["old_f"] * (self.mapper.coef[1:] + self.mapper.coef[:-1]) / 2
-        f = (fff + self.sm.f).reshape(
-            self.sm.dbeads.natoms * 3 * self.sm.dbeads.nbeads, 1
+        f = (fff + self.mapper.sm.f).reshape(                        # here f is spring force + physical force
+            self.mapper.sm.dbeads.natoms * 3 * self.mapper.sm.dbeads.nbeads, 1
         )
-        f = np.multiply(f, self.sm.dbeads.m3.reshape(f.shape) ** -0.5)
+        f = np.multiply(f, self.mapper.sm.dbeads.m3.reshape(f.shape) ** -0.5)  # mass weighted coordinate
 
-        d_x = invmul_banded(h_up_band, f).reshape(self.sm.dbeads.q.shape)
-        d_x = np.multiply(d_x, self.sm.dbeads.m3**-0.5)
+        d_x = invmul_banded(h_up_band, f).reshape(self.mapper.sm.dbeads.q.shape)  # inverse of hessian * force. NR step.
+        d_x = np.multiply(d_x, self.mapper.sm.dbeads.m3**-0.5)  # transform back to physical coordinate.
 
         # Rescale step if necessary
         if np.amax(np.absolute(d_x)) > activearrays["big_step"]:

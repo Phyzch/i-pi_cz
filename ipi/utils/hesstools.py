@@ -26,8 +26,8 @@ def get_dynmat(h, m3, nbeads=1):
     ismT = m3[0].reshape((-1, 1)) ** (-0.5)
 
     dynmat = np.zeros(h.shape)
-    for i in range(nbeads):
-        dynmat = np.multiply(ismT, np.multiply(h, ism))
+#    for i in range(nbeads):
+    dynmat = np.multiply(ismT, np.multiply(h, ism))
     return dynmat
 
 
