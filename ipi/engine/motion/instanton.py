@@ -1409,6 +1409,9 @@ class HessianOptimizer(DummyOptimizer):
                         " @GEOP: Starting from the provided geometry in the extended phase space",
                         verbosity.low,
                     )
+                    # in case hessian is of size [3*natom, 3*natom]: hessian of a single bead. 
+                    # self.optarrays["initial_hessian"] = hessian. See bind() function for optimizer.
+                    # otherwise, self.optarrays["initial_hessian"] = None , hessian is already provided from the file
                     if not (self.optarrays["initial_hessian"] is None):
                         raise ValueError(
                             " You have to provided a hessian with size (3 x natoms)^2 but also geometry in"
@@ -1740,8 +1743,8 @@ class LanczosOptimizer(HessianOptimizer):
             self.fix.fixbeads.natoms * 3 * self.fix.fixbeads.nbeads, 1
         )
 
-        banded = False
-        banded = True
+        # banded = False
+        banded = True   # choose the banded form.
         if banded:
             # BANDED Version
             # MASS-scaled
@@ -1756,7 +1759,7 @@ class LanczosOptimizer(HessianOptimizer):
             # CARTESIAN
             # h_up_band = banded_hessian(activearrays["hessian"], self.sm.masses=True)  # create upper band matrix
 
-            d = diag_banded(h_up_band)
+            d = diag_banded(h_up_band)  # three lowest eigenvalues of hessian 
         else:
             # FULL dimensions version
             h_0 = red2comp(
@@ -1808,17 +1811,15 @@ class LanczosOptimizer(HessianOptimizer):
                 lamb = (2 * d[0] + d[1]) / 4
             else:
                 alpha = (d[1] - d[0]) / d[1]
-                lamb = (
-                    3 * d[0] + d[1]
-                ) / 4  # midpoint between b[0] and b[1]*(1-alpha/2)
+                lamb = (3 * d[0] + d[1]) / 4  # midpoint between b[0] and b[1]*(1-alpha/2)
         elif d[1] < 0:  # Jeremy Richardson
             if d[1] >= d[0] / 2:
                 alpha = 1
                 lamb = (d[0] + 2 * d[1]) / 4
             else:
-                alpha = (d[0] - d[1]) / d[1]
+                alpha = (d[0] - d[1]) / d[0]
                 lamb = (d[0] + 3 * d[1]) / 4
-        # elif d[1] < 0:  #Litman for Second Order Saddle point
+        # elif d[1] < 0:  # Litman for Second Order Saddle point
         #    alpha = 1
         #    lamb = (d[1] + d[2]) / 4
         #    print 'WARNING: We are not using the standard Nichols'
@@ -1829,11 +1830,11 @@ class LanczosOptimizer(HessianOptimizer):
             lamb = (d[0] + d[1]) / 4
 
         if banded:
-            h_up_band[-1, :] += -np.ones(h_up_band.shape[1]) * lamb
-            d_x = invmul_banded(h_up_band, f)
+            h_up_band[-1, :] = h_up_band[-1, :] - np.ones(h_up_band.shape[1]) * lamb  # B - lamb * I. change diagonal part
+            d_x = invmul_banded(h_up_band, f) * alpha             # FIXME: bug here. dx = invmul_banded(h_up_band, f) * alpha.
         else:
-            h_test = alpha * (h_test - np.eye(h_test.shape[0]) * lamb)
-            d_x = np.linalg.solve(h_test, f)
+            h_test =  h_test - np.eye(h_test.shape[0]) * lamb   # FIXME: bug here, the right one should be : h_test = h_test - np.eye(h_test.shape[0]) * lamb.  d_x = np.linalg.solve(h_test,f) * alpha
+            d_x = np.linalg.solve(h_test, f) * alpha 
 
         d_x.shape = self.fix.fixbeads.q.shape
 
