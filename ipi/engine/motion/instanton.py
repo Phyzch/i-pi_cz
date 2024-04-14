@@ -1178,12 +1178,12 @@ class DummyOptimizer:
                 # self.optarrays["hessian"][:] = self.fix.get_full_vector(phys_hessian, 2) #ALBERTO
                 self.optarrays["hessian"][:] = phys_hessian  # ALBERTO
 
-                print_instanton_hess(
-                    self.options["prefix"] + "_FINAL",
-                    step,
-                    self.optarrays["hessian"],
-                    self.output_maker,
-                )
+            print_instanton_hess(
+                self.options["prefix"] + "_FINAL",
+                step,
+                self.optarrays["hessian"],
+                self.output_maker,
+            )
 
             return True
             # If we just exit here, the last step (including the last hessian) will not be in the RESTART file
@@ -1394,7 +1394,7 @@ class HessianOptimizer(DummyOptimizer):
             gradient_file_name = self.output_maker.prefix + "." + gradient_file_name
             self.gradient_file = open(gradient_file_name, "w")
 
-            # initialize the bead geometry by expanding along unstable mode
+            # for nbeads = 1, using Nichols' algorithm (walking uphill along one direction), we will reach the transition state. Thus (bead = 1) == Classical TS search. 
             if self.beads.nbeads == 1:
                 info(" @GEOP: Classical TS search", verbosity.low)
 
@@ -1402,6 +1402,7 @@ class HessianOptimizer(DummyOptimizer):
                 # If the coordinates in all the imaginary time slices are the same
                 if ((self.beads.q - self.beads.q[0]) == 0).all():
                     self.initial_geo()  # initialize the geometry of instanton by stretching along imaginary frequency mode.
+                    
                     self.options["hessian_init"] = True
 
                 else:
@@ -1442,6 +1443,12 @@ class HessianOptimizer(DummyOptimizer):
 
             # self.optarrays["hessian"][:] = self.fix.get_full_vector(phys_hessian, 2) #ALBERTO
             self.optarrays["hessian"][:] = phys_hessian
+
+            # save hessian.
+            print_instanton_hess(self.options["prefix"] + "_initial",
+                                0, 
+                                self.optarrays["hessian"],
+                                self.output_maker)
 
         #   self.gm.save(self.forces.pots, self.forces.f)
         self.update_old_pos_force()

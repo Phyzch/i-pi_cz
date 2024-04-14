@@ -196,10 +196,10 @@ def get_hessian(
     info(" @get_hessian: Computing hessian", verbosity.low)
     fixdofs = list()
     for i in fixatoms:
-        fixdofs.extend([3 * i, 3 * i + 1, 3 * i + 2])
+        fixdofs.extend([3 * i, 3 * i + 1, 3 * i + 2])  # add all fixdofs attached to fix atoms.
     ii = natoms * 3
     activedof = np.delete(np.arange(ii), fixdofs)
-    ncalc = ii - len(fixdofs)
+    ncalc = ii - len(fixdofs)  #for each bead, # of free dofs need calculation.
     if x0.size != natoms * 3 * nbeads:
         raise ValueError(
             "The position vector is not consistent with the number of atoms/beads."

@@ -147,7 +147,7 @@ def diag_banded(A, n=2):
 
     d = eig_banded(
         A, select="i", select_range=(0, n), eigvals_only=True, check_finite=False
-    )
+    )  # compute eigenvalues with indices in range [0,n]
 
     return d
 
