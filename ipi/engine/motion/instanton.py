@@ -1318,16 +1318,17 @@ class HessianOptimizer(DummyOptimizer):
         self.optarrays["initial_hessian"] = None
         print(geop.optarrays["hessian"].size)
 
+        # You either provide hessian for one bead to initialize at barrier top or provide full hessian for all beads.
         if geop.optarrays["hessian"].size != (
             self.beads.natoms * 3 * self.beads.q.size
-        ):
-            if geop.optarrays["hessian"].size == (self.beads.natoms * 3) ** 2:
+        ):           # here size of hessian not equal to [3 * natom , 3 * natom * nbeads]
+            if geop.optarrays["hessian"].size == (self.beads.natoms * 3) ** 2:   # here hessian of one bead is provided. 
                 self.optarrays["initial_hessian"] = geop.optarrays["hessian"].copy()
                 geop.optarrays["hessian"] = np.zeros(
                     (self.beads.natoms * 3, self.beads.q.size), float
                 )
 
-            elif geop.optarrays["hessian"].size == 0 and geop.options["hessian_init"]:
+            elif geop.optarrays["hessian"].size == 0 and geop.options["hessian_init"]:  # hessian not provided and compute of initial hessian required.
                 info(
                     " Initial hessian is not provided. We are going to compute it.",
                     verbosity.low,
@@ -1338,7 +1339,7 @@ class HessianOptimizer(DummyOptimizer):
 
                 if (
                     (self.beads.q - self.beads.q[0]) == 0
-                ).all() and self.beads.nbeads > 1:
+                ).all() and self.beads.nbeads > 1:         # case instanton beads are all at barrier top. 
                     raise ValueError(
                         """We need an initial hessian in order to create our initial
                     instanton geometry. Please provide a (1-bead) hessian or an initial instanton geometry."""
@@ -1771,18 +1772,18 @@ class LanczosOptimizer(HessianOptimizer):
             # FULL dimensions version
             h_0 = red2comp(
                 activearrays["hessian"],
-                self.sm.dbeads.nbeads,
-                self.sm.dbeads.natoms,
+                self.mapper.sm.dbeads.nbeads,
+                self.mapper.sm.dbeads.natoms,
                 self.mapper.coef,
             )
-            h_test = np.add(self.sm.h, h_0)  # add spring terms to the physical hessian
+            h_test = np.add(self.sm.h, h_0)  # add spring terms to the physical hessian.  FIXME: They only treat asr = None case here. What about 'poly' & 'crystal' case?
             d, w = clean_hessian(
                 h_test,
-                self.sm.dbeads.q,
-                self.sm.dbeads.natoms,
-                self.sm.dbeads.nbeads,
-                self.sm.dbeads.m,
-                self.sm.dbeads.m3,
+                self.mapper.sm.dbeads.q,
+                self.mapper.sm.dbeads.natoms,
+                self.mapper.sm.dbeads.nbeads,
+                self.mapper.sm.dbeads.m,
+                self.mapper.sm.dbeads.m3,
                 None,
             )
             # CARTESIAN
