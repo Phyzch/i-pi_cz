@@ -5,6 +5,7 @@
 # See the "licenses" directory for full license information.
 
 import numpy as np
+import scipy 
 from ipi.utils.messages import verbosity, info
 import os
 
@@ -31,7 +32,7 @@ def get_dynmat(h, m3, nbeads=1):
     return dynmat
 
 
-def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
+def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False, neigs = None):
     """
     Removes the translations and rotations modes.
     IN  h      = hessian (3*natoms*nbeads, 3*natoms*nbeads)
@@ -121,7 +122,17 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False):
     hmT = hm.T
     hm = (hmT + hm) / 2.0
 
-    d, w = np.linalg.eigh(hm)  # as we have projected out translation & rotational dof, there should be several eig close to 0 corresponds to such mode.
+    if neigs == None:
+        d, w = np.linalg.eigh(hm)  # as we have projected out translation & rotational dof, there should be several eig close to 0 corresponds to such mode.
+    else:
+        if asr == 'poly':
+            neigs_to_solve = neigs + 6
+        elif asr == 'crystal':
+            neigs_to_solve = neigs + 3
+        else:
+            neigs_to_solve = neigs 
+
+        d, w = scipy.sparse.linalg.eigsh(hm, k = neigs_to_solve, which = 'SA')  # solve smallest eigenvalues up to neigs_to_solve
 
     # Count
     dd = (

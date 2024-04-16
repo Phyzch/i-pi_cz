@@ -134,7 +134,7 @@ def invmul_banded(A, B, posdef=False):
         return linalg.solve_banded((lu, u), newA, B)
 
 
-def diag_banded(A, n=2):
+def diag_banded(A,  asr='none'):
     """A is in upper banded form.
     Returns the smallest n eigenvalue and its corresponding eigenvector.
     """
@@ -144,6 +144,15 @@ def diag_banded(A, n=2):
         info("Import of scipy successful", verbosity.high)
     except ImportError:
         raise ValueError(" ")
+
+    if asr == 'none':
+        n = 2
+    elif asr == 'crystal':
+        n = 5
+    elif asr == 'poly':
+        n = 8
+    else:
+        NotImplementedError("Asr must be equal to none / poly / crystal for solving eigenvalues of Lanczos matrices.")
 
     d = eig_banded(
         A, select="i", select_range=(0, n), eigvals_only=True, check_finite=False

@@ -1544,10 +1544,18 @@ class HessianOptimizer(DummyOptimizer):
         f = self.fix.get_active_vector(self.mapper.gm.f, t=1)
         d_g = np.subtract(activearrays["old_f"], f)
 
-        # Update hessian.
-        self.update_hessian(
-            self.options["hessian_update"], activearrays["hessian"], new_x, d_x, d_g
-        )
+        d_x_threshold = np.power(10.0 , -3)
+
+        if d_x_max > d_x_threshold:
+            # Update hessian. 
+            # We stop updating hessian when step size becomes too small. As this combines with noisy potential will degrade the hessian.
+            self.update_hessian(
+                self.options["hessian_update"], activearrays["hessian"], new_x, d_x, d_g
+            )
+        else:
+            info("@Hessian update: maximum step size {} , smaller than threshold dx : {}. Stop to update Hessian".format(d_x_max, d_x_threshold),
+                 verbosity.low)
+
 
         # Update position and forces. in the optimization class
         self.update_pos_force()
@@ -1732,7 +1740,8 @@ class NROptimizer(HessianOptimizer):
 
 class LanczosOptimizer(HessianOptimizer):
     """Class that implements a modified Nichols algorithm based on Lanczos diagonalization to avoid constructing and diagonalizing
-    the full (3*natoms*nbeads)^2 matrix"""
+    the full (3*natoms*nbeads)^2 matrix
+    """
 
     def bind(self, geop):
         # call bind function from HessianOptimizer
@@ -1752,7 +1761,8 @@ class LanczosOptimizer(HessianOptimizer):
         )
 
         # banded = False
-        banded = True   # choose the banded form.
+        banded = True
+
         if banded:
             # BANDED Version
             # MASS-scaled
@@ -1767,7 +1777,8 @@ class LanczosOptimizer(HessianOptimizer):
             # CARTESIAN
             # h_up_band = banded_hessian(activearrays["hessian"], self.sm.masses=True)  # create upper band matrix
 
-            d = diag_banded(h_up_band)  # three lowest eigenvalues of hessian 
+            d = diag_banded(h_up_band, asr=self.options["hessian_asr"])  # three lowest eigenvalues of hessian 
+
         else:
             # FULL dimensions version
             h_0 = red2comp(
@@ -1776,7 +1787,7 @@ class LanczosOptimizer(HessianOptimizer):
                 self.mapper.sm.dbeads.natoms,
                 self.mapper.coef,
             )
-            h_test = np.add(self.sm.h, h_0)  # add spring terms to the physical hessian.  FIXME: They only treat asr = None case here. What about 'poly' & 'crystal' case?
+            h_test = np.add(self.mapper.sm.h, h_0)  # add spring terms to the physical hessian.  FIXME: They only treat asr = None case here. What about 'poly' & 'crystal' case?
             d, w = clean_hessian(
                 h_test,
                 self.mapper.sm.dbeads.q,
@@ -1784,49 +1795,49 @@ class LanczosOptimizer(HessianOptimizer):
                 self.mapper.sm.dbeads.nbeads,
                 self.mapper.sm.dbeads.m,
                 self.mapper.sm.dbeads.m3,
-                None,
+                self.options["hessian_asr"],
+                neigs = 3
             )
             # CARTESIAN
             # d,w =np.linalg.eigh(h_test) #Cartesian
-        info(
-            "\n@Lanczos: 1st freq {} cm^-1".format(
-                units.unit_to_user(
-                    "frequency", "inversecm", np.sign(d[0]) * np.sqrt(np.absolute(d[0]))
-                )
-            ),
-            verbosity.medium,
-        )
-        info(
-            "@Lanczos: 2nd freq {} cm^-1".format(
-                units.unit_to_user(
-                    "frequency", "inversecm", np.sign(d[1]) * np.sqrt(np.absolute(d[1]))
-                )
-            ),
-            verbosity.medium,
-        )
-        info(
-            "@Lanczos: 3rd freq {} cm^-1\n".format(
-                units.unit_to_user(
-                    "frequency", "inversecm", np.sign(d[2]) * np.sqrt(np.absolute(d[2]))
-                )
-            ),
-            verbosity.medium,
-        )
+        
+        freq_output_num = 2  # case for asr = none
+        if self.options["hessian_asr"] == 'poly':
+            freq_output_num = freq_output_num + 6
+            info("\n @Lanczos: asr = poly. Note the frequency below include zero modes due to translation & rotation")
+        elif self.options["hessian_asr"] == 'crystal':
+            freq_output_num = freq_output_num + 3
+            info("\n @Lanczos : asr = crystal. Note the frequency below include zero mode due to translation")
+        
+        for i in range(freq_output_num):
+            info(
+                "\n@Lanczos: # {} mode freq {} cm^-1".format(
+                    i, 
+                    units.unit_to_user(
+                        "frequency", "inversecm", np.sign(d[i]) * np.sqrt(np.absolute(d[i]))
+                    )
+                ),
+                verbosity.medium,
+            )
+        
 
-        if d[0] > 0:
-            if d[1] / 2 > d[0]:
+        d0 = d[0]  # lowest eigenvalues after excluding zero modes
+        d1 = d[1]  # second lowest eigenvalues after excluding zero modes.
+
+        if d0 > 0:
+            if d1 / 2 > d0:
                 alpha = 1
-                lamb = (2 * d[0] + d[1]) / 4
+                lamb = (2 * d0 + d1) / 4
             else:
-                alpha = (d[1] - d[0]) / d[1]
-                lamb = (3 * d[0] + d[1]) / 4  # midpoint between b[0] and b[1]*(1-alpha/2)
-        elif d[1] < 0:  # Jeremy Richardson
-            if d[1] >= d[0] / 2:
+                alpha = (d1 - d0) / d1
+                lamb = (3 * d0 + d1) / 4  # midpoint between b[0] and b[1]*(1-alpha/2)
+        elif d1 < 0:  # Jeremy Richardson
+            if d1 >= d0 / 2:
                 alpha = 1
-                lamb = (d[0] + 2 * d[1]) / 4
+                lamb = (d0 + 2 * d1) / 4
             else:
-                alpha = (d[0] - d[1]) / d[0]
-                lamb = (d[0] + 3 * d[1]) / 4
+                alpha = (d0 - d1) / d0
+                lamb = (d0 + 3 * d1) / 4
         # elif d[1] < 0:  # Litman for Second Order Saddle point
         #    alpha = 1
         #    lamb = (d[1] + d[2]) / 4
@@ -1835,7 +1846,7 @@ class LanczosOptimizer(HessianOptimizer):
 
         else:  # Only d[0] <0
             alpha = 1
-            lamb = (d[0] + d[1]) / 4
+            lamb = (d0 + d1) / 4
 
         if banded:
             h_up_band[-1, :] = h_up_band[-1, :] - np.ones(h_up_band.shape[1]) * lamb  # B - lamb * I. change diagonal part
