@@ -41,7 +41,7 @@ class NEBGradientMapper(object):
     def __init__(self, tangent=None):
         self.kappa = None
         self.allpots = None
-        self.tangent = tangent
+        self.tangent = tangent  # which tangent method 'plain' or 'improved' to use.
         info(
             "NEBGradientMapper: Using %s tangent." % tangent,
             verbosity.low,
@@ -63,7 +63,7 @@ class NEBGradientMapper(object):
             self.fixatoms_mask[3 * ens.fixatoms + 1] = 0
             self.fixatoms_mask[3 * ens.fixatoms + 2] = 0
 
-        # Create reduced bead and force object
+        # Create reduced bead and force object  (exclude the two ends.)
         self.rbeads = Beads(ens.beads.natoms, ens.beads.nbeads - 2)
         self.rbeads.q[:] = ens.beads.q[1:-1]
         self.rforces = ens.forces.copy(self.rbeads, self.dcell)

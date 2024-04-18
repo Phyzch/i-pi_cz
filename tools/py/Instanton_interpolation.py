@@ -2,7 +2,7 @@
 Reads a hessian file  and/or a positions file (xyz format) and creates an interpolation
 that can be used in a further instanton optimization with more beads
 
-Syntax manual:    python  Instanton_interpolation.py -m -xyz <geometry file> -h <hessian file> -n <new-beads(half-polymer)>
+Syntax manual:    python  Instanton_interpolation.py -m -xyz <geometry file> -hess <hessian file> -n <new-beads(half-polymer)>
 Syntax chk:       python  Instanton_interpolation.py -chk  <checkpoint_file>  -n <new-beads(half-polymer)>
 
 Example:   python  Instanton_interpolation.py  -xyz INSTANTON.xyz  -hess  INSTANTON.hess -n 30

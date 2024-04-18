@@ -503,7 +503,7 @@ elif case == "instanton":
         else:
             logQvib = 0.0
 
-        BN = 2 * np.sum(beads.m3[1:, :] * (beads.q[1:, :] - beads.q[:-1, :]) ** 2)
+        BN = 2 * np.sum(beads.m3[1:, :] * (beads.q[1:, :] - beads.q[:-1, :]) ** 2)  # 2 * : account for full ring-polymer
         factor = 1.0000  # default
         action1 = (2 * pots.sum() * factor - nbeads * V0) * 1.0 / (temp * nbeads * kb)   # \beta \hbar \sum(Vi - V0) potential contribution to the action
         action2 = spring_pot(nbeads, pos, omega2, m3) / (temp * nbeads * kb)  # free spring term contribution to the action.
@@ -513,6 +513,9 @@ elif case == "instanton":
                 nbeads, nbeads / 2
             )
         )
+
+        print("V0  {} eV ( {} Kcal/mol) ".format(V0 / eV2au, V0 / cal2au / 1000))
+        
         print(
             "   {:8s} {:8s}  | {:11s} | {:11s} | {:11s} | {:8s} ( {:8s},{:8s} ) |".format(
                 "BN",
