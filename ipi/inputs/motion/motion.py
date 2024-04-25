@@ -45,6 +45,7 @@ from ipi.engine.motion import (
     AlKMC,
     SCPhononsMover,
     NormalModeMover,
+    MAPNEBMover
 )
 from ipi.utils.inputvalue import *
 from ipi.inputs.thermostats import *
@@ -63,6 +64,7 @@ from .atomswap import InputAtomSwap
 from .planetary import InputPlanetary
 from .ramp import InputTemperatureRamp, InputPressureRamp
 from .al6xxx_kmc import InputAlKMC
+from .neb_instanton import InputNebInst 
 from ipi.utils.units import *
 
 __all__ = ["InputMotion"]
@@ -107,6 +109,7 @@ class InputMotionBase(Input):
                     "dummy",
                     "scp",
                     "normalmodes",
+                    "nebinstanton"
                 ],
             },
         )
@@ -211,6 +214,12 @@ class InputMotionBase(Input):
             InputPlanetary,
             {"default": {}, "help": "Option for planetary model calculator"},
         ),
+        "nebinstanton":(
+            InputNebInst, 
+            {
+                "default" : {}, "help": "Options for using nudged elastic band to find instanton path"
+            },
+        ),
     }
     dynamic = {}
 
@@ -289,6 +298,10 @@ class InputMotionBase(Input):
         elif type(sc) is AlKMC:
             self.mode.store("al-kmc")
             self.al6xxx_kmc.store(sc)
+            tsc = 1
+        elif type(sc) is MAPNEBMover:
+            self.mode.store("nebinstanton")
+            self.nebinstanton.store(sc)
             tsc = 1
         else:
             raise ValueError("Cannot store Mover calculator of type " + str(type(sc)))
@@ -414,6 +427,12 @@ class InputMotionBase(Input):
                 fixcom=self.fixcom.fetch(),
                 fixatoms=self.fixatoms.fetch(),
                 **self.al6xxx_kmc.fetch()
+            )
+        elif self.mode.fetch() == "nebinstanton":
+            sc = MAPNEBMover(
+                fixcom = self.fixcom.fetch(),
+                fixatoms= self.fixatoms.fetch(),
+                **self.nebinstanton.fetch()
             )
         else:
             sc = Motion()

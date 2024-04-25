@@ -283,6 +283,37 @@ def get_rp_freq(w0, nbeads, temp, mode="rate"):
         sys.exit()
 
 
+def print_instanton_path(beads,pots, filename = "instanton_path.xyz"):
+    '''
+    output the instanton path in the format of:  natoms // energy // atom x, y, z. 
+    :param: beads: bead object in i-pi
+    :param: pots: potential of each bead.
+    '''
+    nbeads = beads.nbeads
+    natoms = beads.natoms
+    names = beads.names 
+    q = np.copy(beads.q)   # coordinate
+
+    q_au_to_angstrom = 0.529
+    q = q * q_au_to_angstrom  # transform to unit of angstrom.
+     
+    print("instanton path is printed to file: " + str(filename))
+    with open(filename, "w") as f:
+        for bead_index in range(nbeads):
+            f.write("                    " + str(natoms) + "\n")  # natoms
+            energy = pots[bead_index]
+            f.write("energy=   " + str(energy)+"\n")  # energy
+            for atom_index in range(natoms):
+                name = names[atom_index]
+                f.write(name + "          ")  # name
+                f.write( str(q[bead_index][atom_index * 3] ) + "  " 
+                        + str(q[bead_index][atom_index * 3 + 1]) + "  "
+                        + str(q[bead_index][atom_index * 3 + 2]) + "\n"
+                        )  # coordinate
+    
+
+
+
 # -----END of some functions-----------------
 
 # -----READ---------------------------------
@@ -474,6 +505,8 @@ elif case == "TS":
     )
 
 elif case == "instanton":
+    print_instanton_path(beads, pots)  # print instanton path to file: instanton_path.txt
+
     if mode == "rate":
         Qtras = ((np.sum(m)) / (2 * np.pi * beta * hbar**2)) ** 1.5  # see eq.(58) in review paper: https://doi.org/10.1080/0144235X.2018.1472353 
 
