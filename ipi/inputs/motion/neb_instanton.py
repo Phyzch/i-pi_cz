@@ -49,7 +49,7 @@ class InputNebInst(InputDictionary):
                 "options": ["gradient"],
                  "default": [5e-3],
                  "help": "Convergence criteria for neb optimization",
-                 "dimension": ["undefined", "force", "length"]
+                 "dimension": ["undefined"]
             },
         ),
 
@@ -67,8 +67,17 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default" : np.power(10.0, -3),
+                "default" : 1.00,
                 "help": "time step for evolve neb beads",
+                "dimension": "time"
+            }
+        ),
+        "instanton_time_step":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 1.00,
+                "help": "time step to evolve dynamics along Minimum action path to generate ring-polymer instanton",
                 "dimension": "time"
             }
         ),
@@ -101,6 +110,14 @@ class InputNebInst(InputDictionary):
                 "default": 0.00,
                 "help": "the end beads energy for minimum action path. with respect to the energy shift.",
                 "dimension": "energy"
+            }
+        ),
+        "path_interpolation_bead_number":(
+            InputValue,
+            {
+                "dtype": int,
+                "default": 50,
+                "help": "the number of interpolation point along the minimum action path to compute imaginary time t = beta * hbar"
             }
         ),
 
@@ -172,8 +189,9 @@ class InputNebInst(InputDictionary):
         self.kappa.store(optarrays["kappa"])
         self.instanton_path_energy.store(optarrays["instanton_path_energy"])
         self.time_step.store(optarrays["time_step"])
+        self.instanton_time_step.store(optarrays["instanton_time_step"])
         self.instanton_bead_number.store(optarrays["instanton_bead_number"])
-        
+        self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
 
 
 

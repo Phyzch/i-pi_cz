@@ -12,6 +12,7 @@ Algorithm for using li-neb to search instanton path.
 
 import numpy as np
 from numpy.linalg import norm as npnorm
+import scipy 
 import time
 from ipi.utils import units
 from ipi.engine.motion import Motion
@@ -20,7 +21,7 @@ from ipi.utils.softexit import softexit
 from ipi.utils.mintools import Damped_BFGS, FIRE
 from ipi.utils.messages import verbosity, info
 from ipi.engine.beads import Beads
-from ipi.utils.nebinstool import print_neb_instanton_geo
+import ipi.utils.nebinstool
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
@@ -41,8 +42,8 @@ class LINEBGradientMapper(object):
     """
 
     def __init__(self):
-        self.spring_k = None    # spring constants for internal beads  TODO: convert unit from anstrom^-2 to internal unit
-        self.kappa = None   # spring constants for beads at two ends.  TODO: convert unit from eV-1 angstrom^-1 to internal unit.
+        self.spring_k = None    # spring constants for internal beads  
+        self.kappa = None   # spring constants for beads at two ends.  
 
         self.init_allpots = None   #  initial potential for all beads. This potential will not be updated.
         self.action_forces = None  # minus gradient of abbreviated action 
@@ -214,6 +215,24 @@ class LINEBGradientMapper(object):
 
         return action_force 
     
+    def compute_force_tangent_vector_inner_product(self, mscaled_f, btau, nimage):
+        '''
+        compute inner product of unit vector of f (force) and btau (tangent vector).
+        For the converged calculation, two unit vector should be almost aligned with each other
+        :param: mscaled_f: force in mass scaled coordinate
+        :param: btau: tangent vector for inner beads
+        :param: nimage: number of replica
+        '''
+        force_norm = npnorm(mscaled_f, axis = 1)
+        mscaled_f_unit_vector = np.transpose(np.transpose(mscaled_f) / force_norm)
+
+        f_tau_inner_product = np.zeros([nimage])
+        for i in range(1, nimage - 1):
+            inner_product = np.inner(mscaled_f_unit_vector[i], btau[i])
+            f_tau_inner_product[i] = inner_product 
+        
+        return f_tau_inner_product
+
     def compute_neb_optimization_force(self, nimage, natom, btau, mscaled_q, beads_energy, mscaled_f):
         '''
         compute the optimization forces for nudged elastic band beads. See eq.(15 - 22) in J. Chem. Phys. 148, 102334 (2018).
@@ -269,23 +288,7 @@ class LINEBGradientMapper(object):
 
         return neb_optimization_force 
     
-    def compute_force_tangent_vector_inner_product(self, mscaled_f, btau, nimage):
-        '''
-        compute inner product of unit vector of f (force) and btau (tangent vector).
-        For the converged calculation, two unit vector should be almost aligned with each other
-        :param: mscaled_f: force in mass scaled coordinate
-        :param: btau: tangent vector for inner beads
-        :param: nimage: number of replica
-        '''
-        force_norm = npnorm(mscaled_f, axis = 1)
-        mscaled_f_unit_vector = np.transpose(np.transpose(mscaled_f) / force_norm)
 
-        f_tau_inner_product = np.zeros([nimage])
-        for i in range(1, nimage - 1):
-            inner_product = np.inner(mscaled_f_unit_vector[i], btau[i])
-            f_tau_inner_product[i] = inner_product 
-        
-        return f_tau_inner_product
 
 
     def __call__(self, x):
@@ -349,12 +352,377 @@ class LINEBGradientMapper(object):
         return neb_optimization_force, self.action 
     
 
+class RP_MAP(object):
+    '''
+    Generate Ring polymer for Minimum Action Path (MAP) obtained by NEB method.
+    Evolve dynamics of particle on inverted potential along minimum action path. 
+    The period T of periodic motion (here 2 * total_time for travel from one end to another end) gives beta * hbar (temperature).
+    The Ring-polymer for instanton is chosen as evenly spaced beads in time.
+    Attributes:
+
+    '''
+    def __init__(self):
+        """
+        Initializatioin of RP_MAP
+        """
+        self.bead_path_x = None  # coordinate of interpolated beads along MAP
+        self.bead_path_r = None  # cumulative sum of distance along MAP
+
+        self.imag_time_period = 0
+
+    def bind(self, nebmover):
+        """
+        bind function for RP_MAP
+        nebmover: MAPNEBMover instance.
+        """
+        self.prefix = nebmover.options["prefix"]
+        self.energy_shift = nebmover.optarrays["energy_shift"]
+        self.output_maker = nebmover.output_maker
+
+        self.path_interpolation_bead_number = nebmover.optarrays["path_interpolation_bead_number"]  # bead number for cubic interpolation of neb beads along minimum action path.
+                # for cubic interpolation of neb_beads
+
+        self.neb_beads = nebmover.beads.copy()
+        self.dcell = nebmover.cell.copy()
+        self.fixatoms = nebmover.fixatoms.copy()
+
+        self.time_step = nebmover.optarrays["instanton_time_step"]  # time step for dynamics along instanton path.
+        self.instanton_path_energy = nebmover.optarrays["instanton_path_energy"]
+
+        # Mask to exclude fixed atoms from 3N-arrays
+        self.fixatoms_mask = np.ones(3 * nebmover.beads.natoms, dtype=bool)
+        if len(nebmover.fixatoms) > 0:
+            self.fixatoms_mask[3 * nebmover.fixatoms] = 0
+            self.fixatoms_mask[3 * nebmover.fixatoms + 1] = 0
+            self.fixatoms_mask[3 * nebmover.fixatoms + 2] = 0
+
+        # ring polymer beads.
+        self.rp_bead_number = nebmover.optarrays["instanton_bead_number"] # bead number for instanton ring polymer
+        self.rp_beads = Beads(self.neb_beads.natoms, self.rp_bead_number)  # bead object for instanton ring polymer
+        self.rp_forces = nebmover.forces.copy(self.rp_beads, self.dcell)
+
+        # particle that perform classical dynamics on inverted potential.
+        self.cl_bead = Beads(self.neb_beads.natoms, 1)
+        self.m3 = np.copy(dstrip(nebmover.beads.m3[0]))  # mass of atoms.
+        self.cl_forces = nebmover.forces.copy(self.cl_bead, self.dcell)
+    
+    def initialize(self, neb_beads, neb_forces, neb_final_step):
+        '''
+        initialize the RP_MAP dynamics. This should be called after beads have converged to minimum action path using nudged elastic band method.
+        :param: neb_beads: beads in MAPNEBMover, with optimized geometry for Minimum Action Path.
+        :param: neb_forces: LINEBGradientMapper.rforces object. 
+        :param: step: final step in MAPNEBMover simulation. (Used for output of instanton geometry.)
+        '''
+        self.neb_beads.q[:] = neb_beads.q[:]  # initialize neb beads position.
+        self.cl_bead.q[:] = [neb_beads.q[0]]  # classical particle is initialized at one end of optimized neb beads
+
+        # initialize potential and forces for cl_forces object (forces object for classical particle moving on inverted potential.)
+        tmp_v = np.array([dstrip(neb_forces.pots).copy()[0]])   # all beads potential.
+        tmp_f = np.array([dstrip(neb_forces.f).copy()[0]])    # all beads forces
+        
+        self.cl_forces.transfer_forces_manual(
+            new_q = [self.cl_bead.q],
+            new_v = [tmp_v],
+            new_forces = [tmp_f],
+        )
+    
+        # Cubic interpolation of neb beads to enable accurate dynamics evolution.
+        # self.bead_path_x, self.bead_path_r = \
+        #         ipi.utils.nebinstool.path_cubic_interpolation(self.neb_beads.q, self.path_interpolation_bead_number) 
+
+        # TODO for debug. NO interpolation for bead path. 
+        self.path_interpolation_bead_number = len(self.neb_beads.q)
+        self.bead_path_x = self.neb_beads.q 
+        bead_path_distance = npnorm(self.bead_path_x[1:] - self.bead_path_x[:-1], axis = 1)
+        self.bead_path_r = np.cumsum(bead_path_distance)
+        self.bead_path_r = np.concatenate([ [0], self.bead_path_r ])
+
+        print("use cubic interpolation to generate MAP path. The cumulative distance r along the path:  " + str(self.bead_path_r))
+
+        # for debugging. print the interpolation beads' potential.
+        # pot_file_path = "path_pots.txt"
+        # self.print_path_potential(self.bead_path_x, pot_file_path)
+
+        self.final_step = neb_final_step 
+
+    def print_path_potential(self, bead_path_x, pot_file_path):
+        '''
+        construct forces unit and compute the potential of beads.
+        '''
+        # for debug. compute potential energy along the path.
+        bead_number = len(bead_path_x)
+        path_beads = Beads(self.neb_beads.natoms, bead_number)
+        path_forces = self.rp_forces.copy(path_beads, self.dcell)
+
+        path_pots = path_forces.pots
+
+        path_pots = path_pots - self.energy_shift  # ground state energy shift
+        path_pots = units.unit_to_user("energy", "electronvolt", path_pots)   # convert to eV unit.
+        with open(pot_file_path, "w") as f:
+            for i in range(bead_number):
+                pot = path_pots[i]
+                print(str(pot) + ",  ")
+        
+
+    def cl_dynamics_along_MEP(self):
+        '''
+        classical dynamics on the inverted potential -V(x) 
+        the final time will be 1/2 of the imaginary period.
+        :return:  t_list: a list of time of trajectories.
+                  v_list: a list of velocity of trajectories.
+                  x_list: a list of coordinate of trajectories.
+        '''
+        t = 0
+        r = 0    # distance traveled along MEP
+        x = np.copy(self.bead_path_x[0])  # coordinate
+        self.cl_bead.q[0] = np.copy(x)  # update bead location.  
+        v = np.zeros([3 * self.cl_bead.natoms])   # velocity
+        
+        end_bead_index = 1 
+        end_bead_r = self.bead_path_r[end_bead_index]  # cumulative sum of distance along Minimum action path (MAP).
+
+        tau = self.bead_path_x[end_bead_index] - self.bead_path_x[end_bead_index - 1]  
+        tau = tau / np.linalg.norm(tau)       # tangent direction of the path
+
+        f = - dstrip(self.cl_forces.f).copy()[0]  # compute negative force (force in inverted potential)
+        a = f / self.m3 # acceleration
+        a = np.dot(a , tau) * tau  # project acceleration along the tangent direction of the path.
+
+        pot = self.cl_forces.pots[0]
+
+        x_list = [x]
+        v_list = [v]
+        a_list = [a]
+        t_list = [t]
+        r_list = [r]
+        pot_list = [pot]
+
+        while end_bead_index < self.path_interpolation_bead_number:
+            tau, t, x, v, a, r, end_bead_index, end_bead_r = \
+                        self.cl_dynamics_step(tau, t, x, v, a, r, end_bead_index, end_bead_r)  # evolve particle along Minimum action path on inverted potential with one time step.
+            
+            pot = self.cl_forces.pots[0]
+
+            # for debug:
+            if abs(r - self.bead_path_r[-1]/2 ) < 0.01:
+                print("At middle of instanton path for symmetric case.")
+
+            x_list.append(x)
+            v_list.append(v)
+            t_list.append(t)
+            r_list.append(r)
+            a_list.append(a)
+            pot_list.append(pot)
+
+        x_list = np.array(x_list)
+        v_list = np.array(v_list)        
+        t_list = np.array(t_list)
+        r_list = np.array(r_list)
+        a_list = np.array(a_list)
+        pot_list = np.array(pot_list)
+
+        pot_list = pot_list - self.energy_shift  # ground state energy shift
+        pot_list = units.unit_to_user("energy", "electronvolt", pot_list)   # convert to eV unit.
+
+        a_norm = npnorm(a_list, axis = 1)
+
+        self.imag_time_period = 2 * t_list[-1]  # period of periodic motion is twice of time move from one end to another end. (= beta hbar corresponds to imaginary time.)
+        
+        info("finish evolution of dynamics along Minimum action path, the period of motion is : {} " + str(self.imag_time_period) )
+
+        # for debug.
+        print("list of time for dynamic evolution of each time step: " + str(t_list) )
+        print("\n")
+        print("list of distance along path for dynamics evolution of each time step: " + str(r_list) )
+        print("\n")
+        print("acceleration amplitude :  " + str(a_norm) )
+        print("\n")
+        print("potential of points (eV): " + str(pot_list) )
+        print("\n")
+        print("velocity value (sanity check):" + str( npnorm(v_list, axis = 1) ))
+        print("\n")
+
+        return t_list, v_list, x_list 
+
+    def cl_dynamics_step(self, tau, t, x, v, a, r, end_bead_index, end_bead_r):
+        '''
+        evolve dynamics for one step with dt = self.time_step
+        :param: tau: tangent direction along path
+                t: time
+                x: coordinate
+                v: velocity
+                a: acceleration
+                r: cumulative distance along the path.
+                end_bead_index: the bead index for the end point of the current segment. The dynamics is along current straight segement line.
+                end_bead_r: cumulative distance along the path until the end point.
+        '''
+        dt = self.time_step
+        
+        dx = v * dt + 0.5 * a * np.power(dt, 2)
+        dr = np.linalg.norm(dx)
+
+        if (r + dr) > end_bead_r :
+            # move bead to interpolated bead position.
+            dr = end_bead_r - r 
+            
+            # depend on acceleration a align with direction of motion tau or not.
+            tau_a_angle = np.dot(a, tau) / npnorm(a)
+            if abs(tau_a_angle) < 0.5:
+                print("angle between a and tau: " + str(tau_a_angle))
+                print("tau does not align with acceleration a well along MAP path.")
+
+            if tau_a_angle > 0:
+                a_tangent = npnorm(a)
+            else:
+                a_tangent = - npnorm(a)
+            
+            dt = (np.sqrt(np.power(npnorm(v), 2) + 2 * a_tangent * dr ) - npnorm(v) ) / a_tangent 
+
+            # record x & r at previous step.
+            old_r = r
+
+            # update x & r.
+            r = end_bead_r 
+            x = np.copy(self.bead_path_x[end_bead_index])
+            self.cl_bead.q[0] = np.copy(x) 
+
+            # sanity check
+            dx1 = v * dt + 0.5 * a * np.power(dt, 2)
+            r1 = npnorm(dx1) + old_r 
+            if abs((r -r1)/ r) > 0.01:
+                print("r: " + str(r) + " r1: " + str(r1))
+                raise ValueError("value of dt for motion towards interpolation point is wrong. distance dr is inaccurate.")
+
+            # update acceleration
+            old_a = np.copy(a) 
+            a = - dstrip(self.cl_forces.f).copy()[0] / self.m3   # negative force (-f), force in inverted potential.
+            a = np.dot(a , tau) * tau 
+
+            # update velocity.
+            dv = 0.5 * (a + old_a) * dt 
+            v = v + dv 
+
+            # update time.
+            t = t + dt 
+
+            # update end_bead_index, end_bead_r, tau
+            end_bead_index = end_bead_index + 1
+
+            if end_bead_index > self.path_interpolation_bead_number - 1:
+                # the end of path.
+                return tau, t, x, v, a, r, end_bead_index, end_bead_r
+            
+            end_bead_r = self.bead_path_r[end_bead_index]
+            
+            tau = self.bead_path_x[end_bead_index] - self.bead_path_x[end_bead_index - 1]  
+            tau = tau / np.linalg.norm(tau)       # update tangent direction of the path
+
+            # reorient velocity and acceleration along new tangent direction.
+            v = np.linalg.norm(v) * tau 
+            a = np.linalg.norm(a) * tau
+        
+        else:
+            # update x & r 
+            r = r + dr 
+            x = x + dx 
+            self.cl_bead.q[0] = np.copy(x)  # update cl_bead to enable the update of force.
+
+            # update accelaration a
+            old_a = np.copy(a) 
+            a = - dstrip(self.cl_forces.f).copy()[0] / self.m3  # negative force (-f), force in inverted potential.
+            a = np.dot(a , tau) * tau 
+
+            # update velocity.
+            dv = 0.5 * (a + old_a) * dt 
+            v = v + dv 
+
+            # update time 
+            t = t + dt 
+        
+
+        return tau, t, x, v, a, r, end_bead_index, end_bead_r
+
+    
+    def interpolate_ring_polymer_beads(self, t_list, v_list, x_list):
+        '''
+        interpolate ring polymer beads from the imaginary time trajectory along Minimum Action Path (MAP).
+        t_list , v_list, x_list: list of time / velocity / trajectory from MD simulation along path.
+        '''
+        # interpolate to get ring polymer position.
+        rp_t_list, rp_x_list = ipi.utils.nebinstool.interpolate_ring_polymer_beads(self.imag_time_period, t_list, x_list, v_list, self.rp_bead_number)
+
+        ipi.utils.nebinstool.print_instanton_rp_time("rp_time_FINAL", self.imag_time_period, rp_t_list, self.output_maker)
+
+        self.rp_beads.q = rp_x_list 
+
+        # print ring polymer instanton geometry. 
+        pots = self.rp_forces.pots 
+        ipi.utils.nebinstool.print_neb_instanton_geo(
+            "instanton_FINAL",
+            self.final_step,
+            self.rp_beads.nbeads,
+            self.rp_beads.natoms,
+            self.neb_beads.names,
+            self.rp_beads.q,
+            pots,
+            self.dcell,
+            self.energy_shift,
+            self.output_maker
+        )
+
+    def print_temperature(self):
+        '''
+        output temperature to the log file and a separate file
+        '''
+        beta = self.imag_time_period
+
+        temp = 1 / beta   # temperature in internal unit.
+        temp_kelvin = units.unit_to_user("temperature", "kelvin", temp)  # temperature in "kelvin" unit
+
+        print("temperature for instanton path : {} K".format(temp_kelvin))
+
+        # output temperature to a separate file
+        outfile = self.output_maker.get_output( "instanton_temperature.txt", "w")
+        print("temperature for instanton path : (K)", file = outfile)
+        print(str(temp_kelvin), file = outfile)
+        outfile.close_stream()
+
+    def generate_ring_polymer_beads(self, neb_beads, neb_forces, neb_final_step):
+        '''
+        Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
+        '''
+        self.initialize(neb_beads, neb_forces, neb_final_step)
+        
+        # start classical dynamics along minimum action path (MEP) on inverted potential.
+        t_list, v_list, x_list  = self.cl_dynamics_along_MEP()
+
+        # print the temperature for the found minimum action path in Kelvin unit.
+        self.print_temperature()
+
+        # interpolate the ring polymer beads from the generated trajectory. 
+        self.interpolate_ring_polymer_beads(t_list, v_list, x_list)
+
+
+        
+
+
 
 
 class MAPNEBMover(Motion):
     """Nudged elastic band routine. for minimum action path (MAP)
-
+    See J. Chem. Phys. 148, 102334 (2018)
     Attributes:
+    mode: optimization method to optimize the Nudged elastic band 
+    prefix: prefix for output file
+    tolerances: convergence tolerance.  "gradient" : gradient criteria for action gradient for interior beads and end beads.
+    energy_shift: Set the zero energy (unit Hatree). For DFT, it's usually set as the energy of the ground state.
+    time_step: time step for MD simulation used in Verlet algorithm of Nudged elastic band
+    stage: stage of calculation.  default : "neb"
+    instanton_bead_number: The number (P) of ring-polymer generated along Minimum action path (MAP).  Do not confuse it with nbeads, which is the NEB replica number (N). typicallly P > N.
+    instanton_path_energy: the energy for the dynamics on the inverted PES. = the potential energy (V) of the end beads for minimum action Path.
+    spring_k : spring constant between Nudged elastic band. (for force on mass-scaled coordinate)
+    kappa: energy restraint term on end beads. (for force on mass-scaled coordinate)
+    alt_out: step # to output neb beads & energy information.
     """
 
     def __init__(
@@ -365,9 +733,11 @@ class MAPNEBMover(Motion):
         prefix = "neb_instanton",
         tolerances = { "gradient": 5e-3},
         energy_shift = 0.00,
-        time_step = np.power(10.0 , -3),
+        time_step = 1.0,
+        instanton_time_step = 1.0,
         stage = "neb",
         instanton_bead_number = 20,
+        path_interpolation_bead_number = 50,
         instanton_path_energy = 0.00,
         spring_k = 10,
         kappa = 1000,
@@ -399,7 +769,8 @@ class MAPNEBMover(Motion):
         self.optarrays["instanton_path_energy"] = instanton_path_energy 
         self.optarrays["time_step"] = time_step
         self.optarrays["instanton_bead_number"] = instanton_bead_number
-
+        self.optarrays["instanton_time_step"] = instanton_time_step
+        self.optarrays["path_interpolation_bead_number"] = path_interpolation_bead_number
 
         # convert unit for spring_k , kappa 
         self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
@@ -409,6 +780,7 @@ class MAPNEBMover(Motion):
         self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
 
         self.nebgm = LINEBGradientMapper()
+        self.rp_map = RP_MAP()  # ring-polymer minimum action path.
 
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
@@ -426,6 +798,8 @@ class MAPNEBMover(Motion):
             self.fixatoms_mask[3 * self.fixatoms + 2] = 0
 
         self.nebgm.bind(self)
+        self.rp_map.bind(self)
+        
             
 
     def step(self, step=None):
@@ -442,7 +816,34 @@ class MAPNEBMover(Motion):
             )
 
         if self.options["stage"] == "neb":
+            # use nudged elastic band method to find minmum action path.
+            # then we will switch to the stage "instanton"
             self.step_neb(step)
+
+        if self.options["stage"] == "instanton":
+            # print neb beads geometry and energy.
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"] + "_neb_FINAL",
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
+
+            # generate instanton ring polymer beads from minimum action path found by NEB.
+            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
+            self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
+
+            self.options["stage"] = "converged"
+            softexit.trigger(
+                status="success",
+                message="finish computing ring polymer for instanton path.",
+            )
 
 
 
@@ -491,12 +892,14 @@ class MAPNEBMover(Motion):
             )
 
         
-        # check convergence
-        # transverse gradient for interior beads.
-        grad_interior_beads_max = np.amax(np.abs(self.nebgm.neb_transverse_force))
-        # optimization gradient at end beads.
-        grad_end_beads_max = np.amax(np.abs([self.nebgm.neb_optimization_force[0], self.nebgm.neb_optimization_force[nbeads - 1]]))
-        grad_max = np.max([grad_end_beads_max, grad_interior_beads_max])
+        # check convergence of calculation. 
+        # # transverse gradient for interior beads.
+        # grad_interior_beads_max = np.amax(np.abs(self.nebgm.neb_transverse_force))
+        # # optimization gradient at end beads.
+        # grad_end_beads_max = np.amax(np.abs([self.nebgm.neb_optimization_force[0], self.nebgm.neb_optimization_force[nbeads - 1]]))
+        # grad_max = np.max([grad_end_beads_max, grad_interior_beads_max])
+
+        grad_max = np.amax(np.abs(self.nebgm.neb_optimization_force))
 
         self.neb_instanton_exit(step, grad_max)
 
@@ -516,7 +919,7 @@ class MAPNEBMover(Motion):
         self.f_mscaled, self.action = self.nebgm(self.x)  # forces at current step on mass scaled coordinate 
 
 
-    def neb_instanton_exit(self, step,grad_max):
+    def neb_instanton_exit(self, step, grad_max):
         '''
         check the neb convergence and output info about convergence check
         '''
@@ -550,30 +953,35 @@ class MAPNEBMover(Motion):
 
         print("\n")
 
-
+ 
         if(
           grad_max <= tolerances["gradient"]
         ):
             info( "@Exit step: NEB_instanton: path optimization converged. Step %i \n" % step, verbosity.low)
-            self.stage = "converged"
+            self.options["stage"] = "instanton"
 
             # print neb beads geometry and energy.
-            print_neb_instanton_geo(
+            ipi.utils.nebinstool.print_neb_instanton_geo(
                 self.options["prefix"] + "_neb_FINAL",
                 step,
                 self.beads.nbeads,
                 self.beads.natoms,
                 self.beads.names,
                 self.beads.q,
-                self.nebgm.rforces.pots,
+                self.forces.pots,
                 self.cell,
                 self.optarrays["energy_shift"],
                 self.output_maker
             )
 
+            # using rp_map class to generate ring polymer beads.
+            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
+            self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
+
+            self.options["stage"] = "converged"
             softexit.trigger(
                 status = "success",
-                message = "NEB finished successfully at step %i" % step
+                message = "NEB finished successfully at step %i. Finish computing ring polymer instanton path." % step
             )
         
     def print_geometry(self, step):
@@ -583,7 +991,7 @@ class MAPNEBMover(Motion):
         if (
             self.options["alt_out_step"] > 0 and np.mod(step, self.options["alt_out_step"]) == 0
         ):
-            print_neb_instanton_geo(
+            ipi.utils.nebinstool.print_neb_instanton_geo(
                 self.options["prefix"],
                 step,
                 self.beads.nbeads,
@@ -596,5 +1004,6 @@ class MAPNEBMover(Motion):
                 self.output_maker
             )
 
+    
 
 

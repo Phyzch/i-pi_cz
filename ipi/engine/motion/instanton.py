@@ -1553,7 +1553,7 @@ class HessianOptimizer(DummyOptimizer):
                 self.options["hessian_update"], activearrays["hessian"], new_x, d_x, d_g
             )
         else:
-            info("@Hessian update: maximum step size {} , smaller than threshold dx : {}. Stop to update Hessian".format(d_x_max, d_x_threshold),
+            info("@Hessian update: maximum step size {} , smaller than threshold dx : {}. Stop updating Hessian".format(d_x_max, d_x_threshold),
                  verbosity.low)
 
 
