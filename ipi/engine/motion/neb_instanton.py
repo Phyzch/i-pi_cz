@@ -431,7 +431,7 @@ class RP_MAP(object):
         self.bead_path_x, self.bead_path_r = \
                 ipi.utils.nebinstool.path_cubic_interpolation(self.neb_beads.q, self.path_interpolation_bead_number) 
 
-        # TODO for debug. NO interpolation for bead path. 
+        # for debug. NO interpolation for bead path. 
         # self.path_interpolation_bead_number = len(self.neb_beads.q)
         # self.bead_path_x = self.neb_beads.q 
         # bead_path_distance = npnorm(self.bead_path_x[1:] - self.bead_path_x[:-1], axis = 1)
@@ -440,30 +440,8 @@ class RP_MAP(object):
 
         print("use cubic interpolation to generate MAP path. The cumulative distance r along the path:  " + str(self.bead_path_r))
 
-        # for debugging. print the interpolation beads' potential.
-        # pot_file_path = "path_pots.txt"
-        # self.print_path_potential(self.bead_path_x, pot_file_path)
-
         self.final_step = neb_final_step 
-
-    def print_path_potential(self, bead_path_x, pot_file_path):
-        '''
-        construct forces unit and compute the potential of beads.
-        '''
-        # for debug. compute potential energy along the path.
-        bead_number = len(bead_path_x)
-        path_beads = Beads(self.neb_beads.natoms, bead_number)
-        path_forces = self.rp_forces.copy(path_beads, self.dcell)
-
-        path_pots = path_forces.pots
-
-        path_pots = path_pots - self.energy_shift  # ground state energy shift
-        path_pots = units.unit_to_user("energy", "electronvolt", path_pots)   # convert to eV unit.
-        with open(pot_file_path, "w") as f:
-            for i in range(bead_number):
-                pot = path_pots[i]
-                print(str(pot) + ",  ")
-        
+   
 
     def cl_dynamics_along_MEP(self):
         '''
@@ -919,10 +897,11 @@ class MAPNEBMover(Motion):
         print("old action: " + str(self.old_action) + "  new action: " + str(self.action))
         print("inner product between tangent and force direction: " + str(self.nebgm.f_tau_inner_product[1:self.beads.nbeads - 1]))
         print("beads optimization gradient: " + str(npnorm(self.nebgm.neb_optimization_force, axis = 1)))
+        print("beads potential relative to instanton path energy (eV): " + str( (self.nebgm.rforces.pots - self.optarrays["instanton_path_energy"]) * units.unit_to_user("energy", "electronvolt", 1)  ))
         print("\n")
         
         # for debug
-        # print("beads potential relative to instanton path energy (kcal/mol): " + str( (self.nebgm.rforces.pots - self.optarrays["instanton_path_energy"]) * 627.503  ))
+        
         # print("distance between beads in mass scaled coordinate: " + str( self.nebgm.beads_mscaled_distance ))
         # print("\n")
 
@@ -941,7 +920,6 @@ class MAPNEBMover(Motion):
           grad_max <= tolerances["gradient"]
         ):
             info( "@Exit step: NEB_instanton: path optimization converged. Step %i \n" % step, verbosity.low)
-            self.options["stage"] = "instanton"
 
             # print neb beads geometry and energy.
             ipi.utils.nebinstool.print_neb_instanton_geo(
@@ -957,11 +935,12 @@ class MAPNEBMover(Motion):
                 self.output_maker
             )
 
-            # using rp_map class to generate ring polymer beads.
-            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
-            self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
+            self.options["stage"] = "instanton"
 
-            self.options["stage"] = "converged"
+            # using rp_map class to generate ring polymer beads.
+            # info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
+            # self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
+            # self.options["stage"] = "converged"
             softexit.trigger(
                 status = "success",
                 message = "NEB finished successfully at step %i. Finish computing ring polymer instanton path." % step
