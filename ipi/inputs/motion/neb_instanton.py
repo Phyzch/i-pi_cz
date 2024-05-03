@@ -116,7 +116,7 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": int,
-                "default": 50,
+                "default": 20,
                 "help": "the number of interpolation point along the minimum action path to compute imaginary time t = beta * hbar"
             }
         ),

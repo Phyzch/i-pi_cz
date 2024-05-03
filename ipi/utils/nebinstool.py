@@ -4,6 +4,7 @@ from ipi.engine.beads import Beads
 from ipi.utils.messages import verbosity, info
 from ipi.utils import units
 import ipi.utils.mathtools as mt
+from ipi.utils.depend import dstrip
 
 
 def print_neb_instanton_geo(
@@ -152,3 +153,51 @@ def interpolate_ring_polymer_beads(period, t_list, x_list, v_list, instanton_bea
     rp_x_list = np.array(rp_x_list)
     
     return rp_t_list, rp_x_list 
+
+def RK4(y , t , dydt , param , h):
+    '''
+    Evolve system one step further using 4th order Runge_Kutta method.
+    :param t: time
+    :param y: variable
+    :param dydt : first order derivative function. dydt (y,t , param)
+    :param param: parameter for dydt function
+    :param h: time step
+    :return:
+    '''
+    k1 = h * dydt( y , t, param )
+    k2 = h * dydt( y + 0.5 * k1 , t + 0.5 * h , param)
+    k3 = h * dydt( y + 0.5 * k2 , t + 0.5 * h , param)
+    k4 = h * dydt( y + k3 , t + h , param)
+
+    y = y + 1/6 * (k1 + 2 * k2 + 2 * k3 + k4 )
+
+    return y
+
+def dydt_inverted_pot(y, t, param):
+    '''
+    y=[x,v]. That is y[0] = x. y[1] = v.
+    dydt[0] = v. dydt[1] = a (inverted pot)
+    param = [cl_beads, cl_forces, m3, tau]
+    cl_beads: bead object that record the coordinate of current particle
+    cl_forces: force object that connect to force engine to compute force (Depending on bead object's location)
+    m3 : mass. size : [3 * natom]
+    tau: tangent direction of motion. unit vector.
+    '''
+    x = y[0]
+    v = y[1]
+
+    cl_beads = param[0]
+    cl_forces = param[1]
+    m3 = param[2]
+    tau = param[3]
+
+    # update coordinate of bead object to enable the forces object to compute force
+    if (cl_beads.q[0] != x).any() :
+        cl_beads.q[0] = np.copy(x)
+
+    a = -dstrip(cl_forces.f).copy()[0] / m3  # negative force (-f), force in inverted potential.
+    a = np.dot(a, tau) * tau 
+
+    dydt = np.array([ v, a ])
+
+    return dydt 

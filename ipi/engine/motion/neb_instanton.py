@@ -22,6 +22,7 @@ from ipi.utils.mintools import Damped_BFGS, FIRE
 from ipi.utils.messages import verbosity, info
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
+from ipi.utils.nebinstool import RK4, dydt_inverted_pot
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
@@ -427,15 +428,15 @@ class RP_MAP(object):
         )
     
         # Cubic interpolation of neb beads to enable accurate dynamics evolution.
-        # self.bead_path_x, self.bead_path_r = \
-        #         ipi.utils.nebinstool.path_cubic_interpolation(self.neb_beads.q, self.path_interpolation_bead_number) 
+        self.bead_path_x, self.bead_path_r = \
+                ipi.utils.nebinstool.path_cubic_interpolation(self.neb_beads.q, self.path_interpolation_bead_number) 
 
         # TODO for debug. NO interpolation for bead path. 
-        self.path_interpolation_bead_number = len(self.neb_beads.q)
-        self.bead_path_x = self.neb_beads.q 
-        bead_path_distance = npnorm(self.bead_path_x[1:] - self.bead_path_x[:-1], axis = 1)
-        self.bead_path_r = np.cumsum(bead_path_distance)
-        self.bead_path_r = np.concatenate([ [0], self.bead_path_r ])
+        # self.path_interpolation_bead_number = len(self.neb_beads.q)
+        # self.bead_path_x = self.neb_beads.q 
+        # bead_path_distance = npnorm(self.bead_path_x[1:] - self.bead_path_x[:-1], axis = 1)
+        # self.bead_path_r = np.cumsum(bead_path_distance)
+        # self.bead_path_r = np.concatenate([ [0], self.bead_path_r ])
 
         print("use cubic interpolation to generate MAP path. The cumulative distance r along the path:  " + str(self.bead_path_r))
 
@@ -497,6 +498,7 @@ class RP_MAP(object):
         r_list = [r]
         pot_list = [pot]
 
+
         while end_bead_index < self.path_interpolation_bead_number:
             tau, t, x, v, a, r, end_bead_index, end_bead_r = \
                         self.cl_dynamics_step(tau, t, x, v, a, r, end_bead_index, end_bead_r)  # evolve particle along Minimum action path on inverted potential with one time step.
@@ -556,92 +558,73 @@ class RP_MAP(object):
                 end_bead_index: the bead index for the end point of the current segment. The dynamics is along current straight segement line.
                 end_bead_r: cumulative distance along the path until the end point.
         '''
+        # param for RK4.
+        param = [self.cl_bead, self.cl_forces, self.m3, tau]
         dt = self.time_step
         
-        dx = v * dt + 0.5 * a * np.power(dt, 2)
+        old_x = np.copy(x)
+        old_v = np.copy(v)
+        y = np.array([ np.copy(x), np.copy(v) ])
+        
+        new_y = RK4(y, t, dydt_inverted_pot, param, dt)
+        x = np.copy(new_y[0])
+        v = np.copy(new_y[1])
+
+        dx = x - old_x 
         dr = np.linalg.norm(dx)
 
-        if (r + dr) > end_bead_r :
-            # move bead to interpolated bead position.
-            dr = end_bead_r - r 
+        if (r + dr) < end_bead_r :
+            # move bead normally along tau.
             
-            # depend on acceleration a align with direction of motion tau or not.
-            tau_a_angle = np.dot(a, tau) / npnorm(a)
-            if abs(tau_a_angle) < 0.5:
-                print("angle between a and tau: " + str(tau_a_angle))
-                print("tau does not align with acceleration a well along MAP path.")
+            # update r and bead location in cl_bead
+            r = r + dr 
+            self.cl_bead.q[0] = np.copy(x)
 
-            if tau_a_angle > 0:
-                a_tangent = npnorm(a)
-            else:
-                a_tangent = - npnorm(a)
+            # update accleration:
+            a = -dstrip(self.cl_forces.f).copy()[0] / self.m3  # negative force (-f), force in inverted potential.
+            a = np.dot(a, tau) * tau 
+
+            # update time:
+            t = t + dt 
+        else:
+            # linear intepolation for this time step.
+            new_dr = end_bead_r - r 
+            ratio = new_dr / dr # ratio of time step we should actually take to arrive at bead point.
+            dt = self.time_step * ratio
             
-            dt = (np.sqrt(np.power(npnorm(v), 2) + 2 * a_tangent * dr ) - npnorm(v) ) / a_tangent 
-
-            # record x & r at previous step.
-            old_r = r
-
-            # update x & r.
-            r = end_bead_r 
+            # update x & r 
+            r = end_bead_r
             x = np.copy(self.bead_path_x[end_bead_index])
-            self.cl_bead.q[0] = np.copy(x) 
+            self.cl_bead.q[0] = np.copy(x)
 
-            # sanity check
-            dx1 = v * dt + 0.5 * a * np.power(dt, 2)
-            r1 = npnorm(dx1) + old_r 
-            if abs((r -r1)/ r) > 0.01:
-                print("r: " + str(r) + " r1: " + str(r1))
-                raise ValueError("value of dt for motion towards interpolation point is wrong. distance dr is inaccurate.")
+            # update velocity
+            v = old_v + (v - old_v) * ratio 
 
-            # update acceleration
-            old_a = np.copy(a) 
-            a = - dstrip(self.cl_forces.f).copy()[0] / self.m3   # negative force (-f), force in inverted potential.
-            a = np.dot(a , tau) * tau 
+            # update acceleration:
+            a = -dstrip(self.cl_forces.f).copy()[0] / self.m3  # negative force (-f), force in inverted potential.
+            a = np.dot(a, tau) * tau 
 
-            # update velocity.
-            dv = 0.5 * (a + old_a) * dt 
-            v = v + dv 
-
-            # update time.
+            # update time:
             t = t + dt 
 
-            # update end_bead_index, end_bead_r, tau
+            # update end_bead_index:
             end_bead_index = end_bead_index + 1
 
             if end_bead_index > self.path_interpolation_bead_number - 1:
-                # the end of path.
+                # the end of path
                 return tau, t, x, v, a, r, end_bead_index, end_bead_r
             
             end_bead_r = self.bead_path_r[end_bead_index]
-            
-            tau = self.bead_path_x[end_bead_index] - self.bead_path_x[end_bead_index - 1]  
-            tau = tau / np.linalg.norm(tau)       # update tangent direction of the path
 
-            # reorient velocity and acceleration along new tangent direction.
+            # update tangent vector of discretized path.
+            tau = self.bead_path_x[end_bead_index] - self.bead_path_x[end_bead_index - 1]
+            tau = tau / npnorm(tau)  
+
+            # reorient velocity and acceleration:
             v = np.linalg.norm(v) * tau 
-            a = np.linalg.norm(a) * tau
-        
-        else:
-            # update x & r 
-            r = r + dr 
-            x = x + dx 
-            self.cl_bead.q[0] = np.copy(x)  # update cl_bead to enable the update of force.
-
-            # update accelaration a
-            old_a = np.copy(a) 
-            a = - dstrip(self.cl_forces.f).copy()[0] / self.m3  # negative force (-f), force in inverted potential.
-            a = np.dot(a , tau) * tau 
-
-            # update velocity.
-            dv = 0.5 * (a + old_a) * dt 
-            v = v + dv 
-
-            # update time 
-            t = t + dt 
-        
+            a = np.linalg.norm(a) * tau 
 
         return tau, t, x, v, a, r, end_bead_index, end_bead_r
-
     
     def interpolate_ring_polymer_beads(self, t_list, v_list, x_list):
         '''
@@ -737,7 +720,7 @@ class MAPNEBMover(Motion):
         instanton_time_step = 1.0,
         stage = "neb",
         instanton_bead_number = 20,
-        path_interpolation_bead_number = 50,
+        path_interpolation_bead_number = 20,
         instanton_path_energy = 0.00,
         spring_k = 10,
         kappa = 1000,
