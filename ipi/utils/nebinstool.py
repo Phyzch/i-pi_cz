@@ -4,6 +4,7 @@ from ipi.engine.beads import Beads
 from ipi.utils.messages import verbosity, info
 from ipi.utils import units
 import ipi.utils.mathtools as mt
+import os 
 from ipi.utils.depend import dstrip
 
 
@@ -201,3 +202,98 @@ def dydt_inverted_pot(y, t, param):
     dydt = np.array([ v, a ])
 
     return dydt 
+
+
+def get_hessian(
+    rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001
+):
+    """
+    Adopted from hesstool.py
+    Compute the physical hessian given a function to evaluate energy and forces (gm).
+    The intermediate steps are written as a temporary files so the full hessian calculations is only ONE step.
+
+    IN     rp_beads: bead object for ring polymer
+           rp_forces: forces object for ring polymer
+           x0       = position vector
+           natoms   = number of atoms
+           nbeads   = number of beads
+           fixatoms = indexes of fixed atoms
+           d        = displacement
+
+    OUT    h       = physical hessian ( (natoms-len(fixatoms) )*3 , nbeads*( natoms-len(fixatoms) )*3)
+    """
+
+    info(" @get_hessian: Computing hessian", verbosity.low)
+    fixdofs = list()
+    for i in fixatoms:
+        fixdofs.extend([3 * i, 3 * i + 1, 3 * i + 2])  # add all fixdofs attached to fix atoms.
+    ii = natoms * 3
+    activedof = np.delete(np.arange(ii), fixdofs)
+    ncalc = ii - len(fixdofs)  #for each bead, # of free dofs need calculation.
+    if x0.size != natoms * 3 * nbeads:
+        raise ValueError(
+            "The position vector is not consistent with the number of atoms/beads."
+        )
+
+    h = np.zeros((ii, ii * nbeads), float)
+
+    # Check if there is a temporary file:
+    i0 = -1
+
+    for i in range(ii, -1, -1):
+        try:
+            b = np.loadtxt("hessian_" + str(i) + ".tmp")
+        except IOError:
+            pass
+        else:
+            h[:, :] = b[:, :]
+            i0 = i
+            print(("We have found a temporary file ( hessian_" + str(i) + ".tmp). "))
+            if (
+                b.shape == h.shape
+            ):  # Check that the last temporary file was properly written
+                break
+            else:
+                continue
+
+    # Start calculation:
+    for j in range(i0 + 1, ii):
+        if j in fixdofs:
+            continue
+        else:
+            ndone = len(activedof[activedof < j])
+            info(
+                " @get_hessian: Computing hessian: %d of %d" % (ndone + 1, ncalc),
+                verbosity.low,
+            )
+            x = x0.copy()
+
+            # PLUS
+            x[:, j] = x0[:, j] + d
+            rp_beads.q = x  # update bead location.
+            g1 = -rp_forces.f  # gradient = - force.
+
+            # Minus
+            x[:, j] = x0[:, j] - d
+            rp_beads.q = x 
+            g2 = -rp_forces.f # gradient = - force.
+
+            # COMBINE
+            g = (g1 - g2) / (2 * d)
+            h[j, :] = g.flatten()
+
+            # save hessian temporary file (record hessian up to row j.)
+            file = open("hessian_" + str(j) + ".tmp", "w")
+            np.savetxt(file, h)
+            file.close()
+
+    
+    # remove hessian temporary file
+    for i in range(ii):
+        try:
+            os.remove("hessian_" + str(i) + ".tmp")
+        except OSError:
+            pass
+
+    
+    return h

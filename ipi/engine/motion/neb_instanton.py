@@ -16,381 +16,377 @@ from numpy.linalg import norm as npnorm
 import scipy 
 import time
 from ipi.utils import units
+from ipi.engine.normalmodes import NormalModes
 from ipi.engine.motion import Motion
 from ipi.utils.depend import dstrip
 from ipi.utils.softexit import softexit
 from ipi.utils.mintools import Damped_BFGS, FIRE
 from ipi.utils.messages import verbosity, info
 from ipi.engine.beads import Beads
-from ipi.utils.instools import ms_pathway
 import ipi.utils.nebinstool
 from ipi.utils.nebinstool import RK4, dydt_inverted_pot
+
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
 __all__ = ["LINEBGradientMapper", "MAPNEBMover"]
 
 
-
-class PesMapper(object):
-    """Creation of the multi-dimensional function to compute the physical potential and forces
-    adapted from instanton.py written by Y.Litman
+class MAPNEBMover(Motion):
+    """Nudged elastic band routine. for minimum action path (MAP)
+    See J. Chem. Phys. 148, 102334 (2018)
     Attributes:
-        dbeads:  copy of the bead object
-        dcell:   copy of the cell object
-        dforces: copy of the forces object
+    mode: optimization method to optimize the Nudged elastic band 
+    prefix: prefix for output file
+    tolerances: convergence tolerance.  "gradient" : gradient criteria for action gradient for interior beads and end beads.
+    energy_shift: Set the zero energy (unit Hatree). For DFT, it's usually set as the energy of the ground state.
+    time_step: time step for MD simulation used in Verlet algorithm of Nudged elastic band
+    stage: stage of calculation.  default : "neb"
+    instanton_bead_number: The number (P) of ring-polymer generated along Minimum action path (MAP).  Do not confuse it with nbeads, which is the NEB replica number (N). typicallly P > N.
+    instanton_path_energy: the energy for the dynamics on the inverted PES. = the potential energy (V) of the end beads for minimum action Path.
+    spring_k : spring constant between Nudged elastic band. (for force on mass-scaled coordinate)
+    kappa: energy restraint term on end beads. (for force on mass-scaled coordinate)
+    alt_out: step # to output neb beads & energy information.
     """
 
-    def __init__(self):
-        self.fcount = 0
-        pass
+    def __init__(
+        self,
+        fixcom=False,
+        fixatoms=None,
+        mode = "verlet",
+        prefix = "neb_instanton",
+        tolerances = { "gradient": 5e-3},
+        energy_shift = 0.00,
+        time_step = 4.0,
+        instanton_time_step = 4.0,
+        stage = "neb",
+        instanton_bead_number = 20,
+        instanton_path_energy = 0.00,
+        instanton_temperature = 1.0,
+        instanton_bead_q = np.zeros(0, float),
+        instanton_bead_pot = np.zeros(0, float),
+        instanton_hessian =  np.eye(0,0,0, float),
+        path_interpolation_bead_number = 20,
+        spring_k = 0.1,
+        kappa = 50,
+        final_hessian_bool = True,
+        alt_out = 5,
+    ):
+        """Initialises NEBMover.
 
-    def bind(self, mapper):
-        self.dbeads = mapper.beads.copy()
-        self.dcell = mapper.cell.copy()
-        self.dforces = mapper.forces.copy(self.dbeads, self.dcell)
-
-        if self.dbeads.nbeads > 1:
-            self.C = mapper.nm.transform._b2o_nm
-        else:
-            self.C = 1
-
-        self.omegak = mapper.rp_factor * mapper.nm.get_o_omegak()
-
-        self.fix = mapper.fix
-        self.coef = mapper.coef
-
-        max_ms = mapper.options["max_ms"]
-        max_e = mapper.options["max_e"]
-
-        if max_ms > 0 or max_e > 0:
-            self.spline = True
-
-            if max_ms > 0:
-                self.max_ms = max_ms
-            else:
-                self.max_ms = 1000000
-            if max_e > 0:
-                self.max_e = max_e
-            else:
-                self.max_e = 10000000
-        else:
-            self.spline = False
-
-    def initialize(self, q, forces):
-        """Initialize potential and forces"""
-        self.save(forces.pots, -forces.f)
-
-    def set_pos(self, x):
-        """Set the positions"""
-        self.dbeads.q = x
-
-    def save(self, e, g):
-        """Stores potential and forces in this class for convenience"""
-        self.pot = e
-        self.f = -g
-
-    def interpolation(self, full_q, full_mspath, get_all_info=False):
-        """Creates the reduced bead object from which energy and forces will be
-        computed and interpolates the results to the full size
+        Args:
+           fixcom: An optional boolean which decides whether the centre of mass
+              motion will be constrained or not. Defaults to False.
         """
-        if self.spline:
-            # implement reduced beads. evaluate forces and energy with reduced beads number.
-            try:
-                from scipy.interpolate import interp1d
-            except ImportError:
-                softexit.trigger(
-                    status="bad", message="Scipy required to use  max_ms >0"
-                )
+        super(MAPNEBMover, self).__init__(fixcom=fixcom, fixatoms=fixatoms)
 
-            indexes = list()
-            indexes.append(0)
-            old_index = 0
-            for i in range(1, self.dbeads.nbeads):
-                if (full_mspath[i] - full_mspath[old_index] > self.max_ms) or (
-                    np.absolute(self.pot[i] - self.pot[old_index]) > self.max_e
-                ):
-                    indexes.append(i)
-                    old_index = i
-            if self.dbeads.nbeads - 1 not in indexes:
-                indexes.append(self.dbeads.nbeads - 1)
-            info(
-                "The reduced RP for this step has {} beads.".format(len(indexes)),
-                verbosity.low,
+        # parameters to pass in from input.xml
+        self.options = {}
+        
+        # mode for optimization
+        self.options["mode"] = mode  
+
+        self.options["stage"] = stage
+        self.options["tolerances"] = tolerances
+        self.options["alt_out_step"] = alt_out   # step to output geometry.
+        self.options["prefix"] = prefix 
+        self.options["final_hessian_bool"] = final_hessian_bool
+        
+        # numerical values / arrays. option from input.xml
+        self.optarrays = {}
+        self.optarrays["energy_shift"] = energy_shift 
+        
+        self.optarrays["spring_k"] = spring_k
+        self.optarrays["kappa"] = kappa
+
+
+        self.optarrays["time_step"] = time_step
+        self.optarrays["instanton_time_step"] = instanton_time_step
+
+         # number of beads to interpolate MAP path to generate instanton beads.
+        self.optarrays["path_interpolation_bead_number"] = path_interpolation_bead_number
+
+        # input variable for instanton 
+        self.optarrays["instanton_path_energy"] = instanton_path_energy 
+        self.optarrays["instanton_bead_number"] = instanton_bead_number
+
+        # for store the instanton result in RESTART file
+        self.optarrays["instanton_temperature"] = instanton_temperature
+        self.optarrays["instanton_bead_q"] = instanton_bead_q
+        self.optarrays["instanton_bead_pot"] = instanton_bead_pot 
+        self.optarrays["instanton_hessian"] = instanton_hessian 
+
+        self.nebgm = LINEBGradientMapper()
+        self.rp_map = RP_MAP()  # ring-polymer minimum action path.
+
+        # variables for neb move
+        self.velocity_mscaled = None 
+        self.x = None 
+        self.action = None 
+        self.f_mscaled = None 
+
+    def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
+        super(MAPNEBMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
+        if len(self.fixatoms) == len(self.beads[0]):
+            softexit.trigger(
+                status="bad",
+                message="WARNING: all atoms are fixed, geometry won't change. Exiting simulation.",
             )
-            if len(indexes) <= 2:
-                softexit.trigger(
-                    status="bad",
-                    message="Too few beads fulfill criteria. Please reduce max_ms or max_e",
-                )
-        else:
-            indexes = np.arange(self.dbeads.nbeads)
 
-        # Create reduced bead and force object and evaluate forces
-        reduced_b = Beads(self.dbeads.natoms, len(indexes))
-        reduced_b.q[:] = full_q[indexes]  # reduced beads' position
-        reduced_b.m[:] = self.dbeads.m    # reduced beads' mass for different atoms.
-        reduced_b.names[:] = self.dbeads.names
-
-        reduced_cell = self.dcell.copy()
-        reduced_forces = self.dforces.copy(reduced_b, reduced_cell)
-
-        # Evaluate energy and forces (and maybe friction)
-        rpots = reduced_forces.pots  # reduced energy
-        rforces = reduced_forces.f  # reduced gradient
-
-        # Interpolate if necessary to get full pot and forces
-        if self.spline:
-            red_mspath = full_mspath[indexes]
-            spline = interp1d(red_mspath, rpots.T, kind="cubic")  # create interpolation function: V = V(s), here s is mean-square path length.
-            full_pot = spline(full_mspath).T  # interpolate to get the potential of full beads polymer
-            spline = interp1d(red_mspath, rforces.T, kind="cubic")  # create interpolation function: F = F(s), here s is mean-square path length
-            full_forces = spline(full_mspath).T  # interpolate to get the force of full beads polymer.
-        else:
-            full_pot = rpots
-            full_forces = rforces
-        if get_all_info:
-            return full_pot, full_forces, indexes, reduced_forces
-        else:
-            return full_pot, full_forces
-
-    def __call__(self, x, new_disc=True):
-        """Computes energy and gradient for optimization step"""
-        self.fcount += 1
-        full_q = x.copy()
-        full_mspath = ms_pathway(full_q, self.dbeads.m3)  # mass scaled pathway, full_mspath : list, path length until bead i.
-        full_pot, full_forces = self.interpolation(full_q, full_mspath)
-        self.dbeads.q[:] = x[:]
-         # update coordinate (full_q), potential (full_pot) and forces (full_forces) in self.dforces (Forces class) object
-        self.dforces.transfer_forces_manual([full_q], [full_pot], [full_forces]) 
-        info("UPDATE of forces and extras", verbosity.debug)
-
-        self.save(full_pot, -full_forces)  # update self.pot & self.f (potential & force)
-        return self.evaluate()
-
-    def evaluate(self):
-        """Evaluate the energy and forces including:
-        - non uniform discretization
-        - friction term (if required)
-        """
-
-        e = self.pot.copy()
-        g = -self.f.copy()
-
-        e = e * (self.coef[1:,0] + self.coef[:-1,0]) / 2  
-        g = g * (self.coef[1:] + self.coef[:-1]) / 2
-
-        return e, g
-
-class SpringMapper(object):
-    """Creation of the multi-dimensional function to compute full or half ring polymer potential
-    and forces.
-    adapted from instanton.py written by Y.Litman
-    """
-
-    def __init__(self):
-        self.pot = None
-        self.f = None
-        pass
-
-    def bind(self, mapper):
-        self.temp = mapper.temp
-        self.fix = mapper.fix
-        self.coef = mapper.coef
-        self.dbeads = mapper.beads.copy()
-
-        if self.dbeads.nbeads > 1:
-            self.C = mapper.nm.transform._b2o_nm
-        else:
-            self.C = 1
-        self.omegak = mapper.rp_factor * mapper.nm.get_o_omegak()
-        self.omegan = mapper.rp_factor * mapper.nm.omegan
-
-        # Computes the spring hessian 
-        self.h = self.spring_hessian(
-            natoms=self.fix.fixbeads.natoms,
-            nbeads=self.fix.fixbeads.nbeads,
-            m3=self.fix.fixbeads.m3[0],
-            omega2=(self.omegan) ** 2,
-            coef=self.coef,
+        # Redefine normal modes
+        self.nm = NormalModes(
+            transform_method="matrix", open_paths=np.arange(self.beads.natoms)
         )
 
-    def set_coef(self, coef):
-        """Sets coefficients for non-uniform instanton calculation"""
-        self.coef = coef.reshape(-1, 1)
+        self.nm.bind(self.ensemble, self, Beads(self.beads.natoms, self.beads.nbeads))
 
-    def save(self, e, g):
-        """Stores potential and forces in this class for convenience"""
-        self.pot = e
-        self.f = -g
+        # fixatoms mask.
+        self.fixatoms_mask = np.ones(3 * self.beads.natoms, dtype=bool)
+        if len(self.fixatoms) > 0:
+            self.fixatoms_mask[3 * self.fixatoms] = 0
+            self.fixatoms_mask[3 * self.fixatoms + 1] = 0
+            self.fixatoms_mask[3 * self.fixatoms + 2] = 0
 
-    def __call__(self, x, ret=True, new_disc=True):
-        """Computes spring energy and gradient for instanton optimization step"""
-        if x.shape[0] == 1:  # only one bead
-            self.dbeads.q = x
-            e = 0.0
-            g = np.zeros(x.shape[1])
-            self.save(e, g)
+        self.nebgm.bind(self)
+        self.rp_map.bind(self)
+        
+            
 
-        else:
-            self.dbeads.q = x
-            e = 0.00
-            g = np.zeros(self.dbeads.q.shape, float)
-
-            # OLD reference
-            # for i in range(self.dbeads.nbeads - 1):
-            #    dq = self.dbeads.q[i + 1, :] - self.dbeads.q[i, :]
-            #    e += self.omega2 * 0.5 * np.dot(self.dbeads.m3[0] * dq, dq)
-            # for i in range(0, self.dbeads.nbeads - 1):
-            #    #g[i, :] += self.omega2 * (self.dbeads.q[i, :] - self.dbeads.q[i + 1, :])
-            #    g[i, :] += self.dbeads.m3[i, :] * self.omega2 * (self.dbeads.q[i, :] - self.dbeads.q[i + 1, :])
-            # for i in range(1, self.dbeads.nbeads):
-            #    #g[i, :] +=  self.omega2 * (self.dbeads.q[i, :] - self.dbeads.q[i - 1, :])
-            #    g[i, :] += self.dbeads.m3[i, :] * self.omega2 * (self.dbeads.q[i, :] - self.dbeads.q[i - 1, :])
-            gq_k = np.dot(self.C, self.dbeads.q)  # normal mode coordinates. 
-            g = self.dbeads.m3[0] * np.dot(
-                self.C.T, gq_k * (self.omegak**2)[:, np.newaxis]
-            )
-
-            e = 0.5 * np.sum( np.power(self.omegak,2)[:, np.newaxis] * (self.dbeads.m3 * np.power(gq_k, 2)) )
-
-            self.save(e, g)
-
-        if ret:
-            return e, g
-
-    @staticmethod
-    def spring_hessian(natoms, nbeads, m3, omega2, mode="half", coef=None):
-        """Compute the 'spring hessian'
-
-        OUT    h       = hessian with only the spring terms ('spring hessian')
+    def step(self, step=None):
+        """Does one simulation time step.
         """
-        if coef is None:
-            coef = np.ones(nbeads + 1).reshape(-1, 1)
 
-        # Check size of discretization:
-        if coef.size != nbeads + 1:
-            print("@spring_hessian: discretization size error")
-            sys.exit()
+        info(" @NEB STEP %d, stage: %s" % (step, self.options["stage"]), verbosity.debug)
 
-        info(" @spring_hessian", verbosity.high)
-        ii = natoms * 3
-        h = np.zeros([ii * nbeads, ii * nbeads])
-
-        if nbeads == 1:
-            return h
-
-        # Diagonal
-        h_sp = m3 * omega2
-        diag1 = np.diag(h_sp)
-        # diag2 = np.diag(2.0 * h_sp)
-
-        if mode == "half":
-            i = 0
-            h[i * ii : (i + 1) * ii, i * ii : (i + 1) * ii] += diag1 / coef[1]
-            i = nbeads - 1
-            h[i * ii : (i + 1) * ii, i * ii : (i + 1) * ii] += diag1 / coef[-2]
-            for i in range(1, nbeads - 1):
-                h[i * ii : (i + 1) * ii, i * ii : (i + 1) * ii] += diag1 * (
-                    1.0 / coef[i] + 1.0 / coef[i + 1]
-                )
-        elif mode == "splitting" or mode == "full":
-            for i in range(0, nbeads):
-                h[i * ii : (i + 1) * ii, i * ii : (i + 1) * ii] += diag1 * (
-                    1.0 / coef[i] + 1.0 / coef[i + 1]
-                )
-        else:
-            raise ValueError("We can't compute the spring hessian.")
-
-        # Non-Diagonal
-        ndiag = np.diag(-h_sp)
-        # Quasi-band
-        for i in range(0, nbeads - 1):
-            h[i * ii : (i + 1) * ii, (i + 1) * ii : (i + 2) * ii] += ndiag * (
-                1.0 / coef[i + 1]
-            )
-            h[(i + 1) * ii : (i + 2) * ii, i * ii : (i + 1) * ii] += ndiag * (
-                1.0 / coef[i + 1]
+        # print initial geometry and energy of neb path.
+        if step == 0:
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"] + "_initial_",
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
             )
 
-        # Corner
-        if mode == "full":
-            h[0:ii, (nbeads - 1) * ii : (nbeads) * ii] += ndiag / coef[0]
-            h[(nbeads - 1) * ii : (nbeads) * ii, 0:ii] += ndiag / coef[0]
+            # convert unit for spring_k , kappa. only do it for STEP = 0, not for RESTART simulation. 
+            self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
+            self.optarrays["kappa"] = self.optarrays["kappa"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
+            self.nebgm.spring_k = self.optarrays["spring_k"]
+            self.nebgm.kappa = self.optarrays["kappa"]
 
-        return h
-
-
-class Mapper(object):
-    """Creation of the multi-dimensional function that is the proxy between all the energy and force components and the optimization algorithm.
-    It also handles fixatoms
-    adapted from instanton.py written by Y.Litman
-    """
-
-    def __init__(self, esum=False):
-        self.sm = SpringMapper()  # spring term
-        self.gm = PesMapper()  # physical potential energy term
-        self.esum = esum
-
-    def initialize(self, q, forces):
-        self.gm.initialize(q, forces)
-
-        e1, g1 = self.gm.evaluate()  # compute physical potential e1 & gradient g1.  e1 is a matrix of shape [nbeads]
-        e2, g2 = self.sm(q)   # compute spring potential e2 and gradient g2
-        g = self.fix.get_active_vector(g1 + g2, 1)
-        e = np.sum(e1) + np.sum(e2) 
-
-        self.save(e, g)
-
-    def save(self, e, g):
-        self.pot = e
-        self.f = -g
-
-    def bind(self, dumop):
-        self.temp = dumop.temp
-        self.beads = dumop.beads
-        self.forces = dumop.forces
-        self.cell = dumop.cell
-        self.nm = dumop.nm
-        self.rp_factor = 2  # for rate calculation, rp_factor = 2.
-
-        self.fixatoms = dumop.fixatoms
-        self.fix = dumop.fix
-        self.fixbeads = self.fix.fixbeads
-
-        self.options = dumop.options
-
-        self.coef = np.ones(self.beads.nbeads + 1).reshape(-1, 1)
-
-        self.gm.bind(self)
-        self.sm.bind(self)
+            # Only do it for initial calculation. Not for restart.
+            self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
+            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
+            self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
 
 
-    def __call__(self, x, mode="all", apply_fix=True, new_disc=True, ret=True):
-        if mode == "all":
-            e1, g1 = self.sm(x, new_disc)  # e1 is a number: energy term of spring potential.
-            e2, g2 = self.gm(x, new_disc)  # e2 is an array of size [nbeads]. physical potential energy of each bead.
-            e = np.sum(e1) + np.sum(e2)
-            g = np.add(g1, g2)
+        # Check if we restarted a converged calculation (by mistake)
+        if self.options["stage"] == "converged":
+            softexit.trigger(
+                status="success",
+                message="NEB has already converged. Exiting simulation.",
+            )
 
-        elif mode == "physical":
-            e, g = self.gm(x, new_disc)
-        elif mode == "springs":
-            e, g = self.sm(x, new_disc)
+        if self.options["stage"] == "neb":
+            # use nudged elastic band method to find minmum action path.
+            # then we will switch to the stage "instanton"
+            self.step_neb(step)
+
+        if self.options["stage"] == "instanton":
+            # print neb beads geometry and energy.
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"] + "_neb_FINAL",
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
+
+            # generate instanton ring polymer beads from minimum action path found by NEB.
+            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
+            self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
+
+            # save the potential , q, temperature, hessian of instanton beads for RESTART.
+            self.save_instanton_ring_polymer()
+
+            self.options["stage"] = "converged"
+            softexit.trigger(
+                status="success",
+                message="finish computing ring polymer for instanton path.",
+            )
+
+
+
+# --------- NEB method -----------------------
+    def step_neb(self, step):
+        n_activedim = self.beads.q[0].size - len(self.fixatoms) * 3
+        nbeads = self.beads.nbeads
+        dt = self.optarrays["time_step"]
+
+        # For first step when we RESTART simulation or when step = 0 (just start simulation.)
+        if np.all(self.velocity_mscaled) == None:
+            self.neb_initialize()
+
+        self.print_geometry(step)
+            
+        if self.options["mode"] == "verlet":
+            # Only initialize velocity for fresh start, not for RESTART
+            dx_mscaled = dt * self.velocity_mscaled + 0.5 * self.f_mscaled * np.power(dt, 2)
+            dx = dx_mscaled / np.sqrt(self.beads.m3[:, self.fixatoms_mask])
+
+            # update position
+            self.old_x = np.copy(self.x) 
+            self.x = self.x + dx 
+            self.beads.q[:, self.fixatoms_mask] = self.x 
+
+            self.old_f_mscaled = np.copy(self.f_mscaled) # record old force
+            self.old_action = self.action 
+            self.f_mscaled, self.action = self.nebgm(self.x)  # evaluate the force & action using the updated position
+
+            self.velocity_mscaled = self.velocity_mscaled + dt * (self.old_f_mscaled + self.f_mscaled) / 2
+            
+            # project velocity along the direction of the current force
+            f_unit_vector = self.f_mscaled / np.linalg.norm(self.f_mscaled)
+
+            v_f_inner_product = np.inner( f_unit_vector.flatten() , self.velocity_mscaled.flatten() )
+
+            if v_f_inner_product < 0:
+                self.velocity_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])
+            else:
+                self.velocity_mscaled = v_f_inner_product * f_unit_vector 
+            
+
         else:
-            softexit.trigger("Mode not recognized when calling  FullMapper")
+            softexit.trigger(
+                status="bad",
+                message="Only projected velocity verlet is implemented. set mode == 'verlet' ",
+            )
 
-        if apply_fix:
-            g = self.fix.get_active_vector(g, 1)
+        
+        # check convergence of calculation. 
+        # # transverse gradient for interior beads.
+        # grad_interior_beads_max = np.amax(np.abs(self.nebgm.neb_transverse_force))
+        # # optimization gradient at end beads.
+        # grad_end_beads_max = np.amax(np.abs([self.nebgm.neb_optimization_force[0], self.nebgm.neb_optimization_force[nbeads - 1]]))
+        # grad_max = np.max([grad_end_beads_max, grad_interior_beads_max])
 
-        if mode == "all":
-            self.save(np.sum(e), g)
+        grad_max = np.amax(np.abs(self.nebgm.neb_optimization_force))
 
-        if self.esum:
-            e = np.sum(e)
+        self.neb_instanton_exit(step, grad_max)
 
-        if ret:
-            return e, g
+
+    def neb_initialize(self):
+        info(
+            " @NEB: calling NEBGradientMapper at step 0",
+            verbosity.debug,
+        )
+
+        self.velocity_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])  # velocity of free moving particles on mass scaled coordinate.
+        self.old_f_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])  # forces (in the nudged elastic band algorithm) from previous step on mass scaled coordinate
+        self.x = np.copy(self.beads.q[:, self.fixatoms_mask])  # coordinate of free moving atoms
+        self.old_x = None 
+        self.action = None # current action
+        self.old_action = None   # action at previous step 
+        self.f_mscaled, self.action = self.nebgm(self.x)  # forces at current step on mass scaled coordinate 
+
+
+    def neb_instanton_exit(self, step, grad_max):
+        '''
+        check the neb convergence and output info about convergence check
+        '''
+        tolerances = self.options["tolerances"]
+
+        info("@Exit step : max force gradient {:4.2e} , (condition {:4.2e})".format(
+                grad_max, tolerances["gradient"]
+            ),
+            verbosity.low
+            )
+
+
+       
+        print("old action: " + str(self.old_action) + "  new action: " + str(self.action))
+        print("inner product between tangent and force direction: " + str(self.nebgm.f_tau_inner_product[1:self.beads.nbeads - 1]))
+        print("beads optimization gradient: " + str(npnorm(self.nebgm.neb_optimization_force, axis = 1)))
+        print("beads potential relative to instanton path energy (eV): " + str( (self.nebgm.rforces.pots - self.optarrays["instanton_path_energy"]) * units.unit_to_user("energy", "electronvolt", 1)  ))
+        print("distance between beads in mass scaled coordinate: " + str( self.nebgm.beads_mscaled_distance ))
+        print("\n")
+
+        # for debug
+        # print("beads action gradient: " + str(npnorm(self.nebgm.action_forces, axis = 1)))
+        # print("beads spring force: " + str(npnorm(self.nebgm.spring_forces, axis = 1) ))
+        # print("beads energy constraint force at two ends: " + str(npnorm(self.nebgm.end_bead_energy_constraint_forces, axis = 1)) )
+        # print("maximum force: " + str( np.amax(np.abs(self.nebgm.rforces.f)) ))
+
+        print("\n")
+        print("finish step {}".format(step))
+
+        print("\n")
+
+ 
+        if(
+          grad_max <= tolerances["gradient"]
+        ):
+            info( "@Exit step: NEB_instanton: path optimization converged. Step %i \n" % step, verbosity.low)
+
+            # print neb beads geometry and energy.
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"] + "_neb_FINAL",
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
+
+            # this will make the program switch to "instanton" at next step() function.
+            self.options["stage"] = "instanton"
+            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
+
+        
+    def print_geometry(self, step):
+        '''
+        print beads geometry and beads energy.
+        '''
+        if (
+            self.options["alt_out_step"] > 0 and np.mod(step, self.options["alt_out_step"]) == 0
+        ):
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"],
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.nebgm.rforces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
+
+    def save_instanton_ring_polymer(self):
+        '''
+        save the ring polymer instanton computed in RP_MAP class.
+        Therefore, the result can be stored in RESTART file
+        '''
+        self.optarrays["instanton_temperature"] = self.rp_map.instanton_temp
+        self.optarrays["instanton_bead_q"] = self.rp_map.rp_beads.q 
+        self.optarrays["instanton_bead_pot"] = self.rp_map.rp_forces.pots
+        self.optarrays["instanton_hessian"] = self.rp_map.rp_hessian 
+
 
 
 class LINEBGradientMapper(object):
@@ -735,6 +731,8 @@ class RP_MAP(object):
         self.bead_path_r = None  # cumulative sum of distance along MAP
 
         self.imag_time_period = 0
+        self.instanton_temp = 0
+
 
     def bind(self, nebmover):
         """
@@ -753,6 +751,7 @@ class RP_MAP(object):
         self.neb_beads = nebmover.beads.copy()
         self.dcell = nebmover.cell.copy()
         self.fixatoms = nebmover.fixatoms.copy()
+
 
         self.time_step = nebmover.optarrays["instanton_time_step"]  # time step for dynamics along instanton path.
         self.instanton_path_energy = nebmover.optarrays["instanton_path_energy"]
@@ -774,6 +773,10 @@ class RP_MAP(object):
         self.cl_bead = Beads(self.neb_beads.natoms, 1)
         self.m3 = np.copy(dstrip(nebmover.beads.m3[0]))  # mass of atoms.
         self.cl_forces = nebmover.forces.copy(self.cl_bead, self.dcell)
+
+
+
+
     
     def initialize(self, neb_beads, neb_forces, neb_final_step):
         '''
@@ -799,12 +802,6 @@ class RP_MAP(object):
         self.bead_path_x, self.bead_path_r = \
                 ipi.utils.nebinstool.path_cubic_interpolation(self.neb_beads.q, self.path_interpolation_bead_number) 
 
-        # for debug. NO interpolation for bead path. 
-        # self.path_interpolation_bead_number = len(self.neb_beads.q)
-        # self.bead_path_x = self.neb_beads.q 
-        # bead_path_distance = npnorm(self.bead_path_x[1:] - self.bead_path_x[:-1], axis = 1)
-        # self.bead_path_r = np.cumsum(bead_path_distance)
-        # self.bead_path_r = np.concatenate([ [0], self.bead_path_r ])
 
         print("use cubic interpolation to generate MAP path. The cumulative distance r along the path:  " + str(self.bead_path_r))
 
@@ -871,7 +868,7 @@ class RP_MAP(object):
         a_norm = npnorm(a_list, axis = 1)
 
         self.imag_time_period = 2 * t_list[-1]  # period of periodic motion is twice of time move from one end to another end. (= beta hbar corresponds to imaginary time.)
-        
+        self.instanton_temp = 1 / self.imag_time_period  # temperature of instanton path.
         info("finish evolution of dynamics along Minimum action path, the period of motion is : {} " + str(self.imag_time_period) )
 
         # for debug.
@@ -995,17 +992,32 @@ class RP_MAP(object):
             self.output_maker
         )
 
-        # if final_hessian_bool = True, compute the hessian and store it.
+    def compute_ring_polymer_hessian(self):
+        '''
+        compute hessian of ring polymer
+        '''
+        if self.final_hessian_bool:
+            # compute final hessian.
+
+            # create bead and forces object for computing hessian.
+            hess_rp_beads = self.rp_beads.copy() 
+            hess_forces = self.rp_forces.copy(hess_rp_beads, self.dcell)
+
+            self.rp_hessian = ipi.utils.nebinstool.get_hessian(
+                hess_rp_beads,
+                hess_forces,
+                self.rp_beads.q,
+                self.rp_beads.natoms,
+                self.rp_beads.nbeads,
+                self.fixatoms
+            )
 
 
     def print_temperature(self):
         '''
         output temperature to the log file and a separate file
         '''
-        beta = self.imag_time_period
-
-        temp = 1 / beta   # temperature in internal unit.
-        temp_kelvin = units.unit_to_user("temperature", "kelvin", temp)  # temperature in "kelvin" unit
+        temp_kelvin = units.unit_to_user("temperature", "kelvin", self.instanton_temp)  # temperature in "kelvin" unit
 
         print("temperature for instanton path : {} K".format(temp_kelvin))
 
@@ -1030,347 +1042,11 @@ class RP_MAP(object):
         # interpolate the ring polymer beads from the generated trajectory. 
         self.interpolate_ring_polymer_beads(t_list, v_list, x_list)
 
-
+        # compute hessian of ring polymers
+        self.compute_ring_polymer_hessian()
         
 
 
-
-
-class MAPNEBMover(Motion):
-    """Nudged elastic band routine. for minimum action path (MAP)
-    See J. Chem. Phys. 148, 102334 (2018)
-    Attributes:
-    mode: optimization method to optimize the Nudged elastic band 
-    prefix: prefix for output file
-    tolerances: convergence tolerance.  "gradient" : gradient criteria for action gradient for interior beads and end beads.
-    energy_shift: Set the zero energy (unit Hatree). For DFT, it's usually set as the energy of the ground state.
-    time_step: time step for MD simulation used in Verlet algorithm of Nudged elastic band
-    stage: stage of calculation.  default : "neb"
-    instanton_bead_number: The number (P) of ring-polymer generated along Minimum action path (MAP).  Do not confuse it with nbeads, which is the NEB replica number (N). typicallly P > N.
-    instanton_path_energy: the energy for the dynamics on the inverted PES. = the potential energy (V) of the end beads for minimum action Path.
-    spring_k : spring constant between Nudged elastic band. (for force on mass-scaled coordinate)
-    kappa: energy restraint term on end beads. (for force on mass-scaled coordinate)
-    alt_out: step # to output neb beads & energy information.
-    """
-
-    def __init__(
-        self,
-        fixcom=False,
-        fixatoms=None,
-        mode = "verlet",
-        prefix = "neb_instanton",
-        tolerances = { "gradient": 5e-3},
-        energy_shift = 0.00,
-        time_step = 4.0,
-        instanton_time_step = 4.0,
-        stage = "neb",
-        instanton_bead_number = 20,
-        instanton_path_energy = 0.00,
-        instanton_temperature = 1.0,
-        instanton_bead_q = np.zeros(0, float),
-        instanton_bead_pot = np.zeros(0, float),
-        instanton_hessian =  np.eye(0,0,0, float),
-        path_interpolation_bead_number = 20,
-        spring_k = 0.1,
-        kappa = 50,
-        final_hessian_bool = False,
-        alt_out = 5
-    ):
-        """Initialises NEBMover.
-
-        Args:
-           fixcom: An optional boolean which decides whether the centre of mass
-              motion will be constrained or not. Defaults to False.
-        """
-        super(MAPNEBMover, self).__init__(fixcom=fixcom, fixatoms=fixatoms)
-
-        # parameters to pass in from input.xml
-        self.options = {}
-        
-        # mode for optimization
-        self.options["mode"] = mode  
-
-        self.options["stage"] = stage
-        self.options["tolerances"] = tolerances
-        self.options["alt_out_step"] = alt_out   # step to output geometry.
-        self.options["prefix"] = prefix 
-        self.options["final_hessian_bool"] = final_hessian_bool
-
-        # numerical values / arrays. option from input.xml
-        self.optarrays = {}
-        self.optarrays["energy_shift"] = energy_shift 
-        
-        self.optarrays["spring_k"] = spring_k
-        self.optarrays["kappa"] = kappa
-
-
-        self.optarrays["time_step"] = time_step
-        self.optarrays["instanton_time_step"] = instanton_time_step
-
-         # number of beads to interpolate MAP path to generate instanton beads.
-        self.optarrays["path_interpolation_bead_number"] = path_interpolation_bead_number
-
-        # input variable for instanton 
-        self.optarrays["instanton_path_energy"] = instanton_path_energy 
-        self.optarrays["instanton_bead_number"] = instanton_bead_number
-
-        # for store the instanton result in RESTART file
-        self.optarrays["instanton_temperature"] = instanton_temperature
-        self.optarrays["instanton_bead_q"] = instanton_bead_q
-        self.optarrays["instanton_bead_pot"] = instanton_bead_pot 
-        self.optarrays["instanton_hessian"] = instanton_hessian 
-
-        self.nebgm = LINEBGradientMapper()
-        self.rp_map = RP_MAP()  # ring-polymer minimum action path.
-
-        # variables for neb move
-        self.velocity_mscaled = None 
-        self.x = None 
-        self.action = None 
-        self.f_mscaled = None 
-
-    def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
-        super(MAPNEBMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
-        if len(self.fixatoms) == len(self.beads[0]):
-            softexit.trigger(
-                status="bad",
-                message="WARNING: all atoms are fixed, geometry won't change. Exiting simulation.",
-            )
-
-        # fixatoms mask.
-        self.fixatoms_mask = np.ones(3 * self.beads.natoms, dtype=bool)
-        if len(self.fixatoms) > 0:
-            self.fixatoms_mask[3 * self.fixatoms] = 0
-            self.fixatoms_mask[3 * self.fixatoms + 1] = 0
-            self.fixatoms_mask[3 * self.fixatoms + 2] = 0
-
-        self.nebgm.bind(self)
-        self.rp_map.bind(self)
-        
-            
-
-    def step(self, step=None):
-        """Does one simulation time step.
-        """
-
-        info(" @NEB STEP %d, stage: %s" % (step, self.options["stage"]), verbosity.debug)
-
-        # print initial geometry and energy of neb path.
-        if step == 0:
-            ipi.utils.nebinstool.print_neb_instanton_geo(
-                self.options["prefix"] + "_initial_",
-                step,
-                self.beads.nbeads,
-                self.beads.natoms,
-                self.beads.names,
-                self.beads.q,
-                self.forces.pots,
-                self.cell,
-                self.optarrays["energy_shift"],
-                self.output_maker
-            )
-
-            # convert unit for spring_k , kappa. only do it for STEP = 0, not for RESTART simulation. 
-            self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
-            self.optarrays["kappa"] = self.optarrays["kappa"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
-            self.nebgm.spring_k = self.optarrays["spring_k"]
-            self.nebgm.kappa = self.optarrays["kappa"]
-
-            # Only do it for initial calculation. Not for restart.
-            self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
-            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
-            self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
-
-
-        # Check if we restarted a converged calculation (by mistake)
-        if self.options["stage"] == "converged":
-            softexit.trigger(
-                status="success",
-                message="NEB has already converged. Exiting simulation.",
-            )
-
-        if self.options["stage"] == "neb":
-            # use nudged elastic band method to find minmum action path.
-            # then we will switch to the stage "instanton"
-            self.step_neb(step)
-
-        if self.options["stage"] == "instanton":
-            # print neb beads geometry and energy.
-            ipi.utils.nebinstool.print_neb_instanton_geo(
-                self.options["prefix"] + "_neb_FINAL",
-                step,
-                self.beads.nbeads,
-                self.beads.natoms,
-                self.beads.names,
-                self.beads.q,
-                self.forces.pots,
-                self.cell,
-                self.optarrays["energy_shift"],
-                self.output_maker
-            )
-
-            # generate instanton ring polymer beads from minimum action path found by NEB.
-            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
-            self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
-
-            self.options["stage"] = "converged"
-
-            softexit.trigger(
-                status="success",
-                message="finish computing ring polymer for instanton path.",
-            )
-
-
-
-# --------- NEB method -----------------------
-    def step_neb(self, step):
-        n_activedim = self.beads.q[0].size - len(self.fixatoms) * 3
-        nbeads = self.beads.nbeads
-        dt = self.optarrays["time_step"]
-
-        # For first step when we RESTART simulation or when step = 0 (just start simulation.)
-        if np.all(self.velocity_mscaled) == None:
-            self.neb_initialize()
-
-        self.print_geometry(step)
-            
-        if self.options["mode"] == "verlet":
-            # Only initialize velocity for fresh start, not for RESTART
-            dx_mscaled = dt * self.velocity_mscaled + 0.5 * self.f_mscaled * np.power(dt, 2)
-            dx = dx_mscaled / np.sqrt(self.beads.m3[:, self.fixatoms_mask])
-
-            # update position
-            self.old_x = np.copy(self.x) 
-            self.x = self.x + dx 
-            self.beads.q[:, self.fixatoms_mask] = self.x 
-
-            self.old_f_mscaled = np.copy(self.f_mscaled) # record old force
-            self.old_action = self.action 
-            self.f_mscaled, self.action = self.nebgm(self.x)  # evaluate the force & action using the updated position
-
-            self.velocity_mscaled = self.velocity_mscaled + dt * (self.old_f_mscaled + self.f_mscaled) / 2
-            
-            # project velocity along the direction of the current force
-            f_unit_vector = self.f_mscaled / np.linalg.norm(self.f_mscaled)
-
-            v_f_inner_product = np.inner( f_unit_vector.flatten() , self.velocity_mscaled.flatten() )
-
-            if v_f_inner_product < 0:
-                self.velocity_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])
-            else:
-                self.velocity_mscaled = v_f_inner_product * f_unit_vector 
-            
-
-        else:
-            softexit.trigger(
-                status="bad",
-                message="Only projected velocity verlet is implemented. set mode == 'verlet' ",
-            )
-
-        
-        # check convergence of calculation. 
-        # # transverse gradient for interior beads.
-        # grad_interior_beads_max = np.amax(np.abs(self.nebgm.neb_transverse_force))
-        # # optimization gradient at end beads.
-        # grad_end_beads_max = np.amax(np.abs([self.nebgm.neb_optimization_force[0], self.nebgm.neb_optimization_force[nbeads - 1]]))
-        # grad_max = np.max([grad_end_beads_max, grad_interior_beads_max])
-
-        grad_max = np.amax(np.abs(self.nebgm.neb_optimization_force))
-
-        self.neb_instanton_exit(step, grad_max)
-
-
-    def neb_initialize(self):
-        info(
-            " @NEB: calling NEBGradientMapper at step 0",
-            verbosity.debug,
-        )
-
-        self.velocity_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])  # velocity of free moving particles on mass scaled coordinate.
-        self.old_f_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])  # forces (in the nudged elastic band algorithm) from previous step on mass scaled coordinate
-        self.x = np.copy(self.beads.q[:, self.fixatoms_mask])  # coordinate of free moving atoms
-        self.old_x = None 
-        self.action = None # current action
-        self.old_action = None   # action at previous step 
-        self.f_mscaled, self.action = self.nebgm(self.x)  # forces at current step on mass scaled coordinate 
-
-
-    def neb_instanton_exit(self, step, grad_max):
-        '''
-        check the neb convergence and output info about convergence check
-        '''
-        tolerances = self.options["tolerances"]
-
-        info("@Exit step : max force gradient {:4.2e} , (condition {:4.2e})".format(
-                grad_max, tolerances["gradient"]
-            ),
-            verbosity.low
-            )
-
-
-       
-        print("old action: " + str(self.old_action) + "  new action: " + str(self.action))
-        print("inner product between tangent and force direction: " + str(self.nebgm.f_tau_inner_product[1:self.beads.nbeads - 1]))
-        print("beads optimization gradient: " + str(npnorm(self.nebgm.neb_optimization_force, axis = 1)))
-        print("beads potential relative to instanton path energy (eV): " + str( (self.nebgm.rforces.pots - self.optarrays["instanton_path_energy"]) * units.unit_to_user("energy", "electronvolt", 1)  ))
-        print("distance between beads in mass scaled coordinate: " + str( self.nebgm.beads_mscaled_distance ))
-        print("\n")
-
-        # for debug
-        # print("beads action gradient: " + str(npnorm(self.nebgm.action_forces, axis = 1)))
-        # print("beads spring force: " + str(npnorm(self.nebgm.spring_forces, axis = 1) ))
-        # print("beads energy constraint force at two ends: " + str(npnorm(self.nebgm.end_bead_energy_constraint_forces, axis = 1)) )
-        # print("maximum force: " + str( np.amax(np.abs(self.nebgm.rforces.f)) ))
-
-        print("\n")
-        print("finish step {}".format(step))
-
-        print("\n")
-
- 
-        if(
-          grad_max <= tolerances["gradient"]
-        ):
-            info( "@Exit step: NEB_instanton: path optimization converged. Step %i \n" % step, verbosity.low)
-
-            # print neb beads geometry and energy.
-            ipi.utils.nebinstool.print_neb_instanton_geo(
-                self.options["prefix"] + "_neb_FINAL",
-                step,
-                self.beads.nbeads,
-                self.beads.natoms,
-                self.beads.names,
-                self.beads.q,
-                self.forces.pots,
-                self.cell,
-                self.optarrays["energy_shift"],
-                self.output_maker
-            )
-
-            # this will make the program switch to "instanton" at next step() function.
-            self.options["stage"] = "instanton"
-            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
-
-        
-    def print_geometry(self, step):
-        '''
-        print beads geometry and beads energy.
-        '''
-        if (
-            self.options["alt_out_step"] > 0 and np.mod(step, self.options["alt_out_step"]) == 0
-        ):
-            ipi.utils.nebinstool.print_neb_instanton_geo(
-                self.options["prefix"],
-                step,
-                self.beads.nbeads,
-                self.beads.natoms,
-                self.beads.names,
-                self.beads.q,
-                self.nebgm.rforces.pots,
-                self.cell,
-                self.optarrays["energy_shift"],
-                self.output_maker
-            )
 
     
 

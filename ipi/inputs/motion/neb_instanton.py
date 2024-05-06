@@ -126,7 +126,7 @@ class InputNebInst(InputDictionary):
         ),
 
         "instanton_bead_q":(
-            InputValue,
+            InputArray,
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
@@ -136,7 +136,7 @@ class InputNebInst(InputDictionary):
         ),
 
         "instanton_bead_pot":(
-            InputValue,
+            InputArray,
             {
                 "dtype": float,
                 "default" : input_default(factory=np.eye, args=(0,)),
@@ -145,7 +145,7 @@ class InputNebInst(InputDictionary):
         ),
         
         "instanton_hessian":(
-            InputValue,
+            InputArray,
             {
                 "dtype": float,
                 "default" : input_default(factory=np.eye, args=(0,)),
@@ -189,7 +189,7 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype" : bool,
-                "default": False,
+                "default": True,
                 "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory."
             }
         ),
