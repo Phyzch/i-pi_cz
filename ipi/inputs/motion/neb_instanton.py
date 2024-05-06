@@ -67,7 +67,7 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default" : 1.00,
+                "default" : 4.00,
                 "help": "time step for evolve neb beads",
                 "dimension": "time"
             }
@@ -76,7 +76,7 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 1.00,
+                "default": 4.00,
                 "help": "time step to evolve dynamics along Minimum action path to generate ring-polymer instanton",
                 "dimension": "time"
             }
@@ -125,7 +125,7 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 10,
+                "default": 0.1,
                 "help": "the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2)"
             }
         ),
@@ -134,7 +134,7 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": float, 
-                "default": 1000,
+                "default": 50,
                 "help": """the spring constraint term for beads at two ends to confine beads at iso-energy contour. 
                 unit: (eV^(-1) angstrom^(-1) * atomic_mass^-1/2)
                 See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018)

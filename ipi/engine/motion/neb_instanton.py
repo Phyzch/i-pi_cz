@@ -82,8 +82,9 @@ class LINEBGradientMapper(object):
         self.rbeads.q[:] = ens.beads.q[:]
         self.rforces = ens.forces.copy(self.rbeads, self.dcell)
 
-        self.spring_k = ens.optarrays["spring_k"] # bind spring force spring_k from NEBMover
-        self.kappa = ens.optarrays["kappa"] # bind energy constraint force kappa from NEBMover 
+        self.spring_k = ens.optarrays["spring_k"] # bind spring force spring_k from NEBMover.
+        self.kappa = ens.optarrays["kappa"] # bind energy constraint force kappa from NEBMover. 
+
         self.energy_shift = ens.optarrays["energy_shift"]
 
     def initialize_rforces(self):
@@ -483,10 +484,6 @@ class RP_MAP(object):
             
             pot = self.cl_forces.pots[0]
 
-            # for debug:
-            if abs(r - self.bead_path_r[-1]/2 ) < 0.01:
-                print("At middle of instanton path for symmetric case.")
-
             x_list.append(x)
             v_list.append(v)
             t_list.append(t)
@@ -619,7 +616,7 @@ class RP_MAP(object):
         # print ring polymer instanton geometry. 
         pots = self.rp_forces.pots 
         ipi.utils.nebinstool.print_neb_instanton_geo(
-            "instanton_FINAL",
+            "instanton_along_MAP_FINAL",
             self.final_step,
             self.rp_beads.nbeads,
             self.rp_beads.natoms,
@@ -694,14 +691,14 @@ class MAPNEBMover(Motion):
         prefix = "neb_instanton",
         tolerances = { "gradient": 5e-3},
         energy_shift = 0.00,
-        time_step = 1.0,
-        instanton_time_step = 1.0,
+        time_step = 4.0,
+        instanton_time_step = 4.0,
         stage = "neb",
         instanton_bead_number = 20,
         path_interpolation_bead_number = 20,
         instanton_path_energy = 0.00,
-        spring_k = 10,
-        kappa = 1000,
+        spring_k = 0.1,
+        kappa = 50,
         alt_out = 5
     ):
         """Initialises NEBMover.
@@ -712,7 +709,7 @@ class MAPNEBMover(Motion):
         """
         super(MAPNEBMover, self).__init__(fixcom=fixcom, fixatoms=fixatoms)
 
-        # TODO parameters to pass in from input.xml
+        # parameters to pass in from input.xml
         self.options = {}
         
         # mode for optimization
@@ -725,23 +722,24 @@ class MAPNEBMover(Motion):
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
         self.optarrays["energy_shift"] = energy_shift 
+        
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
+
         self.optarrays["instanton_path_energy"] = instanton_path_energy 
         self.optarrays["time_step"] = time_step
         self.optarrays["instanton_bead_number"] = instanton_bead_number
         self.optarrays["instanton_time_step"] = instanton_time_step
         self.optarrays["path_interpolation_bead_number"] = path_interpolation_bead_number
 
-        # convert unit for spring_k , kappa 
-        self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
-        self.optarrays["kappa"] = self.optarrays["kappa"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
-
-        # need to figure out how the program handle unit.
-        self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
-
         self.nebgm = LINEBGradientMapper()
         self.rp_map = RP_MAP()  # ring-polymer minimum action path.
+
+        # variables for neb move
+        self.velocity_mscaled = None 
+        self.x = None 
+        self.action = None 
+        self.f_mscaled = None 
 
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
@@ -768,6 +766,32 @@ class MAPNEBMover(Motion):
         """
 
         info(" @NEB STEP %d, stage: %s" % (step, self.options["stage"]), verbosity.debug)
+
+        # print initial geometry and energy of neb path.
+        if step == 0:
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"] + "_initial_",
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
+
+            # convert unit for spring_k , kappa. only do it for STEP = 0, not for RESTART simulation. 
+            self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
+            self.optarrays["kappa"] = self.optarrays["kappa"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
+            self.nebgm.spring_k = self.optarrays["spring_k"]
+            self.nebgm.kappa = self.optarrays["kappa"]
+
+            # Only do it for initial calculation. Not for restart.
+            self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
+            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
+            self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
 
         # Check if we restarted a converged calculation (by mistake)
         if self.options["stage"] == "converged":
@@ -816,7 +840,13 @@ class MAPNEBMover(Motion):
 
         if step == 0:
             self.neb_initialize()
-        
+
+        # For first step when we RESTART simulation.
+        if np.all(self.velocity_mscaled) == None:
+            self.velocity_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])
+            self.x = np.copy(self.beads.q[:, self.fixatoms_mask])  # coordinate of free moving atoms
+            self.f_mscaled, self.action = self.nebgm(self.x)  # forces at current step on mass scaled coordinate 
+
         self.print_geometry(step)
             
         if self.options["mode"] == "verlet":
@@ -825,11 +855,11 @@ class MAPNEBMover(Motion):
             dx = dx_mscaled / np.sqrt(self.beads.m3[:, self.fixatoms_mask])
 
             # update position
-            self.old_x = self.x 
+            self.old_x = np.copy(self.x) 
             self.x = self.x + dx 
             self.beads.q[:, self.fixatoms_mask] = self.x 
 
-            self.old_f_mscaled = self.f_mscaled # record old force
+            self.old_f_mscaled = np.copy(self.f_mscaled) # record old force
             self.old_action = self.action 
             self.f_mscaled, self.action = self.nebgm(self.x)  # evaluate the force & action using the updated position
 
@@ -898,12 +928,11 @@ class MAPNEBMover(Motion):
         print("inner product between tangent and force direction: " + str(self.nebgm.f_tau_inner_product[1:self.beads.nbeads - 1]))
         print("beads optimization gradient: " + str(npnorm(self.nebgm.neb_optimization_force, axis = 1)))
         print("beads potential relative to instanton path energy (eV): " + str( (self.nebgm.rforces.pots - self.optarrays["instanton_path_energy"]) * units.unit_to_user("energy", "electronvolt", 1)  ))
+        print("distance between beads in mass scaled coordinate: " + str( self.nebgm.beads_mscaled_distance ))
         print("\n")
-        
+
         # for debug
-        
-        # print("distance between beads in mass scaled coordinate: " + str( self.nebgm.beads_mscaled_distance ))
-        # print("\n")
+    
 
         # print("beads action gradient: " + str(npnorm(self.nebgm.action_forces, axis = 1)))
         # print("beads spring force: " + str(npnorm(self.nebgm.spring_forces, axis = 1) ))
@@ -938,9 +967,10 @@ class MAPNEBMover(Motion):
             self.options["stage"] = "instanton"
 
             # using rp_map class to generate ring polymer beads.
-            # info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
-            # self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
-            # self.options["stage"] = "converged"
+            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
+            self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
+            self.options["stage"] = "converged"
+
             softexit.trigger(
                 status = "success",
                 message = "NEB finished successfully at step %i. Finish computing ring polymer instanton path." % step
