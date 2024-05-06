@@ -250,6 +250,7 @@ class InstantonMotion(Motion):
         )
 
         self.nm.bind(self.ensemble, self, Beads(self.beads.natoms, self.beads.nbeads))
+        
         if self.options["mode"] == "rate":
             self.rp_factor = 2
         elif self.options["mode"] == "splitting":
@@ -408,7 +409,7 @@ class PesMapper(object):
         e = self.pot.copy()
         g = -self.f.copy()
 
-        e = e * (self.coef[1:,0] + self.coef[:-1,0]) / 2  # TODO bug here, should be self.coef[1:, 0]
+        e = e * (self.coef[1:,0] + self.coef[:-1,0]) / 2  
         g = g * (self.coef[1:] + self.coef[:-1]) / 2
 
         return e, g

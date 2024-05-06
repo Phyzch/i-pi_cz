@@ -57,8 +57,8 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.000,
-                "help": "Set the zero of energy (unit Hatree)",
+                "default": 0.000,  
+                "help": "Set the zero of energy (unit Hatree). Choose it for energy of reactant state.",
                 "dimension": "energy"
             }
         ),
@@ -67,16 +67,17 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default" : 4.00,
+                "default" : 4.00,  # = 0.1 fs
                 "help": "time step for evolve neb beads",
                 "dimension": "time"
             }
         ),
+
         "instanton_time_step":(
             InputValue,
             {
                 "dtype": float,
-                "default": 4.00,
+                "default": 4.00,  # = 0.1 fs
                 "help": "time step to evolve dynamics along Minimum action path to generate ring-polymer instanton",
                 "dimension": "time"
             }
@@ -94,6 +95,7 @@ class InputNebInst(InputDictionary):
             }
         ),
 
+        # for instanton that we got from minimum action path doing MD along the path.
         "instanton_bead_number": (
             InputValue,
             {
@@ -112,6 +114,46 @@ class InputNebInst(InputDictionary):
                 "dimension": "energy"
             }
         ),
+
+        "instanton_temperature":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 1.00,
+                "help": "the final calculated temperature for minimum action path: inverse of period (beta hbar) for periodic motion. (Used for saving result in RESTART)",
+                "dimension": "temperature"
+            }
+        ),
+
+        "instanton_bead_q":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": input_default(factory=np.zeros, args=(0,)),
+                "help": "the bead coordinate for instanton beads (spaced equally along imaginary time) on the minimum action path. (Used for recording result in RESTART)",
+                "dimension": "length"
+            }
+        ),
+
+        "instanton_bead_pot":(
+            InputValue,
+            {
+                "dtype": float,
+                "default" : input_default(factory=np.eye, args=(0,)),
+                "help": "the potential energy for instanton beads (spaced equally along imaginary time) on the minimum action path. (Used for recording result in RESTART)"
+            }
+        ),
+        
+        "instanton_hessian":(
+            InputValue,
+            {
+                "dtype": float,
+                "default" : input_default(factory=np.eye, args=(0,)),
+                "help": "the calculated Hessian for instanton beads. (Used for recording result in RESTART)"
+            }
+        ),
+
+        # for MD along minimum actioin path.
         "path_interpolation_bead_number":(
             InputValue,
             {
@@ -121,6 +163,7 @@ class InputNebInst(InputDictionary):
             }
         ),
 
+        # for spring force term and energy constraint energy in nudged elastic band (NEB) algorithm
         "spring_k":(
             InputValue,
             {
@@ -139,6 +182,15 @@ class InputNebInst(InputDictionary):
                 unit: (eV^(-1) angstrom^(-1) * atomic_mass^-1/2)
                 See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018)
                         """
+            }
+        ),
+
+        "final_hessian_bool":(
+            InputValue,
+            {
+                "dtype" : bool,
+                "default": False,
+                "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory."
             }
         ),
 
@@ -182,17 +234,24 @@ class InputNebInst(InputDictionary):
         self.tolerances.store(options["tolerances"])
         self.alt_out.store(options["alt_out_step"])
         self.prefix.store(options["prefix"])
+        self.final_hessian_bool.store(options["final_hessian_bool"])
 
         # optarrays
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
         self.kappa.store(optarrays["kappa"])
-        self.instanton_path_energy.store(optarrays["instanton_path_energy"])
         self.time_step.store(optarrays["time_step"])
         self.instanton_time_step.store(optarrays["instanton_time_step"])
+
+        self.instanton_path_energy.store(optarrays["instanton_path_energy"])
         self.instanton_bead_number.store(optarrays["instanton_bead_number"])
         self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
 
+        # store result of instanton calculation
+        self.instanton_temperature = optarrays["instanton_temperature"]
+        self.instanton_bead_q = optarrays["instanton_bead_q"] 
+        self.instanton_bead_pot = optarrays["instanton_bead_pot"]
+        self.instanton_hessian = optarrays["instanton_hessian"]
 
 
     
