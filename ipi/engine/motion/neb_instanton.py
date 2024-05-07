@@ -69,7 +69,7 @@ class MAPNEBMover(Motion):
         path_interpolation_bead_number = 20,
         spring_k = 0.1,
         kappa = 50,
-        final_hessian_bool = True,
+        final_hessian_bool = False,
         alt_out = 5,
     ):
         """Initialises NEBMover.
@@ -189,7 +189,7 @@ class MAPNEBMover(Motion):
         if self.options["stage"] == "converged":
             softexit.trigger(
                 status="success",
-                message="NEB has already converged. Exiting simulation.",
+                message="neb calculation converged. Instanton geometry calculation finishes. Exiting simulation",
             )
 
         if self.options["stage"] == "neb":
@@ -198,6 +198,7 @@ class MAPNEBMover(Motion):
             self.step_neb(step)
 
         if self.options["stage"] == "instanton":
+
             # print neb beads geometry and energy.
             ipi.utils.nebinstool.print_neb_instanton_geo(
                 self.options["prefix"] + "_neb_FINAL",
@@ -219,11 +220,11 @@ class MAPNEBMover(Motion):
             # save the potential , q, temperature, hessian of instanton beads for RESTART.
             self.save_instanton_ring_polymer()
 
+            # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
+            # therefore, we set ["stage"] == "converged" and exit at next step.
             self.options["stage"] = "converged"
-            softexit.trigger(
-                status="success",
-                message="finish computing ring polymer for instanton path.",
-            )
+            
+            
 
 
 
@@ -387,7 +388,11 @@ class MAPNEBMover(Motion):
         self.optarrays["instanton_bead_pot"] = self.rp_map.rp_forces.pots
         self.optarrays["instanton_hessian"] = self.rp_map.rp_hessian 
 
-
+        # print hessian
+        ipi.utils.nebinstool.print_instanton_hess(
+        self.options["prefix"] + "_FINAL",
+        self.optarrays["instanton_hessian"],
+        self.output_maker)
 
 class LINEBGradientMapper(object):
     """Creation of the multi-dimensional function that will be minimized.
@@ -1011,6 +1016,8 @@ class RP_MAP(object):
                 self.rp_beads.nbeads,
                 self.fixatoms
             )
+        
+
 
 
     def print_temperature(self):

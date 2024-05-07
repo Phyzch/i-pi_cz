@@ -139,7 +139,7 @@ class InputNebInst(InputDictionary):
             InputArray,
             {
                 "dtype": float,
-                "default" : input_default(factory=np.eye, args=(0,)),
+                "default" : input_default(factory=np.zeros, args=(0,)),
                 "help": "the potential energy for instanton beads (spaced equally along imaginary time) on the minimum action path. (Used for recording result in RESTART)"
             }
         ),
@@ -189,7 +189,7 @@ class InputNebInst(InputDictionary):
             InputValue,
             {
                 "dtype" : bool,
-                "default": True,
+                "default": False,
                 "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory."
             }
         ),
@@ -248,10 +248,10 @@ class InputNebInst(InputDictionary):
         self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
 
         # store result of instanton calculation
-        self.instanton_temperature = optarrays["instanton_temperature"]
-        self.instanton_bead_q = optarrays["instanton_bead_q"] 
-        self.instanton_bead_pot = optarrays["instanton_bead_pot"]
-        self.instanton_hessian = optarrays["instanton_hessian"]
+        self.instanton_temperature.store(optarrays["instanton_temperature"])
+        self.instanton_bead_q.store(optarrays["instanton_bead_q"]) 
+        self.instanton_bead_pot.store(optarrays["instanton_bead_pot"])
+        self.instanton_hessian.store(optarrays["instanton_hessian"])
 
 
     

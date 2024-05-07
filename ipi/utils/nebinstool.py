@@ -204,11 +204,18 @@ def dydt_inverted_pot(y, t, param):
     return dydt 
 
 
+def print_instanton_hess(prefix, hessian, output_maker):
+    """Print physical part of the instanton hessian"""
+    outfile = output_maker.get_output(prefix + ".hess" , "w")
+    np.savetxt(outfile, hessian.reshape(1, hessian.size))
+    outfile.close_stream()
+
+
 def get_hessian(
     rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001
 ):
     """
-    Adopted from hesstool.py
+    Adapted from hesstool.py
     Compute the physical hessian given a function to evaluate energy and forces (gm).
     The intermediate steps are written as a temporary files so the full hessian calculations is only ONE step.
 
