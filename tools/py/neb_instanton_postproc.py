@@ -32,7 +32,9 @@ from ipi.engine.simulation import Simulation
 from ipi.utils.units import unit_to_internal, Constants
 from ipi.utils.instools import red2comp
 from ipi.utils.hesstools import clean_hessian
+from ipi.utils.depend import dstrip
 from ipi.engine.motion.instanton import SpringMapper
+
 
 # UNITS
 K2au = unit_to_internal("temperature", "kelvin", 1.0)
@@ -171,24 +173,25 @@ def Read_instanton_data(inputt, V00, temp, quiet):
         sys.exit()
     
     h0 = red2comp(hessian, nbeads, natoms)
-    pos_full_rp, nbeads, hessian2 = get_double(half_rp_beads_q, nbeads, natoms, h0)  # get position, nbeads and hessian for full ring polymer
+    full_rp_beads_q, nbeads, hessian2 = get_double(half_rp_beads_q, nbeads, natoms, h0)  # get position, nbeads and hessian for full ring polymer
 
     hessian = hessian2 
     
     # generate m3 for half ring polymer
-    m3_one_bead = np.repeat(m, 3)
-    m3_half_rp = np.tile(m3_one_bead, (nbeads, 1))
+    m3_one_bead = np.repeat(dstrip(m), 3)
+    m3_half_rp = np.tile(m3_one_bead, ( int(nbeads / 2) , 1))
     # now generate m3 for full ring polymer
     m3 = np.concatenate((m3_half_rp, m3_half_rp), axis = 0)
     omega2 = (temp * nbeads * kb / hbar) ** 2
 
+    h = 0
     if not quiet:
         spring = SpringMapper.spring_hessian(
             natoms, nbeads, m3_one_bead, omega2, mode = "full"
         )
         h = np.add(hessian, spring)
 
-    return neb_beads, m, nbeads, natoms, temp2, pots_half_rp, pos_full_rp, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2
+    return neb_beads, m, nbeads, natoms, temp2, pots_half_rp, full_rp_beads_q, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2
 
 
 # -----Some functions-----------------
@@ -353,10 +356,10 @@ def print_instanton_path(nbeads, natoms, names, bead_q ,pots, filename = "instan
                         )  # coordinate
 
 
-def compute_instanton_rate(inputt):
+def compute_instanton_rate():
     args, inputt, case, temp, asr, V00, filt, nbeadsR, input_freq, quiet, Verbosity, nzeros = parse_input()
 
-    neb_beads, m, nbeads, natoms, temp2, pots_half_rp, pos_full_rp, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2 = Read_instanton_data(inputt, V00, temp, quiet)
+    neb_beads, m, nbeads, natoms, temp2, pots_half_rp, full_rp_beads_q, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2 = Read_instanton_data(inputt, V00, temp, quiet)
 
     beta = 1.0 / (kb * temp)
     betaP = 1.0 / (kb * (nbeads) * temp)
@@ -370,7 +373,7 @@ def compute_instanton_rate(inputt):
     if not quiet:
         print("Diagonalization ... \n\n")
         # d: eigvalue for mass weighted hessian after deleting trans & rot dof. w: eigenvector, detI: determinant of momentum of inertia
-        hess_eigval, hess_eigvec, detI = clean_hessian(h, pos_full_rp, natoms, nbeads, m, m3, asr, mofi=True)  # remove the  translational and rotational modes.
+        hess_eigval, hess_eigvec, detI = clean_hessian(h, full_rp_beads_q, natoms, nbeads, m, m3, asr, mofi=True)  # remove the  translational and rotational modes.
         print("Final lowest 10 frequencies (cm^-1)")
         d10 = np.array2string(
             np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au,
@@ -381,7 +384,7 @@ def compute_instanton_rate(inputt):
         print(("{}".format(d10)))
     
     # print instanton path for half ring polymer
-    print_instanton_path(nbeads/2, natoms, neb_beads.names, half_rp_beads_q, pots_half_rp)
+    print_instanton_path( int(nbeads/2), natoms, neb_beads.names, half_rp_beads_q, pots_half_rp)
 
     Qtras = ((np.sum(m)) / (2 * np.pi * beta * hbar**2)) ** 1.5  # see eq.(58) in review paper: https://doi.org/10.1080/0144235X.2018.1472353
 
@@ -414,7 +417,7 @@ def compute_instanton_rate(inputt):
     BN = 2 * np.sum(m3_half_rp[1:, :] * (half_rp_beads_q[1:, :] - half_rp_beads_q[:-1, :]) ** 2)  # 2 * : account for full ring-polymer
     factor = 1.0000  # default
     action1 = (2 * pots_half_rp.sum() * factor - nbeads * V0) * 1.0 / (temp * nbeads * kb)   # \beta \hbar \sum(Vi - V0) potential contribution to the action
-    action2 = spring_pot(nbeads, pos_full_rp, omega2, m3) / (temp * nbeads * kb)  # free spring term contribution to the action.
+    action2 = spring_pot(nbeads, full_rp_beads_q, omega2, m3) / (temp * nbeads * kb)  # free spring term contribution to the action.
 
     print(
         "\nWe are done. Instanton rate. Nbeads {} (diff only {})".format(
