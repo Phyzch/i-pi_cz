@@ -174,15 +174,18 @@ class InputNebInst(InputDictionary):
         ),
 
         "kappa":(
-            InputValue,
+            InputDictionary,
             {
-                "dtype": float, 
-                "default": 50,
-                "help": """the spring constraint term for beads at two ends to confine beads at iso-energy contour. 
+                "dtype": float,
+                "options":["left", "right"], 
+                "default": [50, 50],
+                "help": """the energy constraint term for beads at two ends to confine beads at iso-energy contour. 
                 unit: (eV^(-1) angstrom^(-1) * atomic_mass^-1/2)
-                See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018)
+                See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018).
+                We need two different values of kappa for asymmetric potential. 
+                For symmetric potential, we can set left and right kappa to the same value.
                         """
-            }
+            },
         ),
 
         "final_hessian_bool":(

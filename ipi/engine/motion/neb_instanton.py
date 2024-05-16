@@ -68,7 +68,7 @@ class MAPNEBMover(Motion):
         instanton_hessian =  np.eye(0,0,0, float),
         path_interpolation_bead_number = 20,
         spring_k = 0.1,
-        kappa = 50,
+        kappa = { "left" : 50, "right": 50 },
         final_hessian_bool = False,
         alt_out = 5,
     ):
@@ -175,7 +175,8 @@ class MAPNEBMover(Motion):
 
             # convert unit for spring_k , kappa. only do it for STEP = 0, not for RESTART simulation. 
             self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
-            self.optarrays["kappa"] = self.optarrays["kappa"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
+            self.optarrays["kappa"]["left"] = self.optarrays["kappa"]["left"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
+            self.optarrays["kappa"]["right"] = self.optarrays["kappa"]["right"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
             self.nebgm.spring_k = self.optarrays["spring_k"]
             self.nebgm.kappa = self.optarrays["kappa"]
 
@@ -238,6 +239,9 @@ class MAPNEBMover(Motion):
         if np.all(self.velocity_mscaled) == None:
             self.neb_initialize()
 
+        # check if spring_k and kappa value is appropriate.
+        self.check_spring_k_kappa()
+
         self.print_geometry(step)
             
         if self.options["mode"] == "verlet":
@@ -284,6 +288,48 @@ class MAPNEBMover(Motion):
         grad_max = np.amax(np.abs(self.nebgm.neb_optimization_force))
 
         self.neb_instanton_exit(step, grad_max)
+
+    def check_spring_k_kappa(self):
+        '''
+        check the amplitude of spring k and kappa. to see if it is appropriate.
+        '''
+        dt = self.optarrays["time_step"]
+        spring_k = self.optarrays["spring_k"]
+        left_kappa = self.optarrays["kappa"]["left"]
+        right_kappa = self.optarrays["kappa"]["right"]
+
+        # check spring_k * (dt)^2. It should be smaller than 0.4 and larger than 0.1 (too small spring_k will make bead hard to reach equal distance)
+        # ideal value is 0.25
+        val1 = spring_k * np.power(dt, 2)
+        
+        # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2, it should be smaller than 1 and larger than 0.1 
+        # ideal value is 0.5
+        # check the left end bead.
+        max_force2 = np.max(np.abs(self.nebgm.rforces.f[0]))  # maximum gradient of left end bead.
+        m_H = 1837 # mass of hydrogen in atomic unit. 
+        val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
+
+        # check the right end bead.
+        max_force3 = np.max(np.abs(self.nebgm.rforces.f[-1]))  # maximum gradient of right end bead
+        val3 = max_force3 * np.power(dt,2) * right_kappa / np.sqrt(m_H)
+
+        print("srping_k criterion value: " + str(val1))
+        print("energy constraint criterion value(left): " + str(val2))
+        print("energy constraint criterion value(right): " + str(val3))
+        print("left bead potential gradient: " + str(max_force2) + "   right bead potential gradient: " + str(max_force3))
+
+        # scale spring_k, left_kappa and right_kappa
+        spring_k_scale = 0.25 / val1 
+        left_kappa_scale = 0.5 / val2 
+        right_kappa_scale = 0.5 / val3 
+
+        self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale 
+        self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale 
+
+        self.optarrays["kappa"]["left"] = self.optarrays["kappa"]["left"] * left_kappa_scale 
+        self.nebgm.kappa["left"] = self.nebgm.kappa["left"] * left_kappa_scale
+        self.optarrays["kappa"]["right"] = self.optarrays["kappa"]["right"] * right_kappa_scale
+        self.nebgm.kappa["right"] = self.nebgm.kappa["right"] * left_kappa_scale
 
 
     def neb_initialize(self):
@@ -613,7 +659,8 @@ class LINEBGradientMapper(object):
 
         :return: optimization_force: the optimization force for nudged elastic band. size: [nimag, 3 * natom]
         '''
-        kappa = self.kappa   # kappa: restraint force back to iso-energy contour
+        left_kappa = self.kappa["left"]   # kappa: restraint force back to iso-energy contour. kappa on the left side
+        right_kappa = self.kappa["right"] # kappa on the rigtht side
         spring_k = self.spring_k    # spring_k: spring force between beads.
 
         neb_optimization_force = np.zeros([nimage, 3 * natom])
@@ -636,8 +683,8 @@ class LINEBGradientMapper(object):
 
         # end_beads_spring_force: force to draw end beads back to isoenergy contours.
         end_beads_spring_force = np.zeros([2, 3 * natom])
-        end_beads_spring_force[0] = mscaled_f[0] / npnorm(mscaled_f[0]) * kappa * (beads_energy[0] - self.instanton_path_energy)  # kappa * (V(r) - E) * \hat{f}(r) for beads 0
-        end_beads_spring_force[1] = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1]) * kappa * (beads_energy[nimage -1] - self.instanton_path_energy)  # kappa * (V(r) - E) * \hat{f}(r) for beads n-1.
+        end_beads_spring_force[0] = mscaled_f[0] / npnorm(mscaled_f[0]) * left_kappa * (beads_energy[0] - self.instanton_path_energy)  # kappa * (V(r) - E) * \hat{f}(r) for beads 0
+        end_beads_spring_force[1] = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1]) * right_kappa * (beads_energy[nimage -1] - self.instanton_path_energy)  # kappa * (V(r) - E) * \hat{f}(r) for beads n-1.
 
         self.spring_forces = spring_force   # store the spring force between beads
         self.end_bead_energy_constraint_forces = end_beads_spring_force  # store energy constraint force for end beads.
