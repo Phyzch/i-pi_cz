@@ -25,3 +25,4 @@ from .atomswap import AtomSwap
 from .ramp import TemperatureRamp, PressureRamp
 from .al6xxx_kmc import AlKMC
 from .neb_instanton import MAPNEBMover
+from .neb_instanton_gpr import MAPNEBGPRMover

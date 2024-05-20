@@ -45,7 +45,8 @@ from ipi.engine.motion import (
     AlKMC,
     SCPhononsMover,
     NormalModeMover,
-    MAPNEBMover
+    MAPNEBMover,
+    MAPNEBGPRMover,
 )
 from ipi.utils.inputvalue import *
 from ipi.inputs.thermostats import *
@@ -65,6 +66,7 @@ from .planetary import InputPlanetary
 from .ramp import InputTemperatureRamp, InputPressureRamp
 from .al6xxx_kmc import InputAlKMC
 from .neb_instanton import InputNebInst 
+from .neb_instanton_gpr import InputNebInstGPR
 from ipi.utils.units import *
 
 __all__ = ["InputMotion"]
@@ -109,7 +111,8 @@ class InputMotionBase(Input):
                     "dummy",
                     "scp",
                     "normalmodes",
-                    "nebinstanton"
+                    "nebinstanton",
+                    "nebinstantongpr"
                 ],
             },
         )
@@ -220,6 +223,12 @@ class InputMotionBase(Input):
                 "default" : {}, "help": "Options for using nudged elastic band to find instanton path"
             },
         ),
+        "nebinstantongpr":(
+            InputNebInstGPR,
+            {
+                "default" : {}, "help": "Options for using nudged elastic band to find instanton path. Accelerated by Gaussian Process Regression (GPR)"
+            },
+        )
     }
     dynamic = {}
 
@@ -302,6 +311,10 @@ class InputMotionBase(Input):
         elif type(sc) is MAPNEBMover:
             self.mode.store("nebinstanton")
             self.nebinstanton.store(sc)
+            tsc = 1
+        elif type(sc) is MAPNEBGPRMover:
+            self.mode.store("nebinstantongpr")
+            self.nebinstantongpr.store(sc)
             tsc = 1
         else:
             raise ValueError("Cannot store Mover calculator of type " + str(type(sc)))
@@ -433,6 +446,12 @@ class InputMotionBase(Input):
                 fixcom = self.fixcom.fetch(),
                 fixatoms= self.fixatoms.fetch(),
                 **self.nebinstanton.fetch()
+            )
+        elif self.mode.fetch() == "nebinstantongpr":
+            sc = MAPNEBGPRMover(
+                fixcom = self.fixcom.fetch(),
+                fixatoms = self.fixatoms.fetch(),
+                **self.nebinstantongpr.fetch()
             )
         else:
             sc = Motion()
