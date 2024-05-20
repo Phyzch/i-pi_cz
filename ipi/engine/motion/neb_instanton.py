@@ -285,13 +285,13 @@ class MAPNEBMover(Motion):
         # grad_end_beads_max = np.amax(np.abs([self.nebgm.neb_optimization_force[0], self.nebgm.neb_optimization_force[nbeads - 1]]))
         # grad_max = np.max([grad_end_beads_max, grad_interior_beads_max])
 
-        grad_max = np.amax(np.abs(self.nebgm.neb_optimization_force))
+        grad_max = np.amax(npnorm(self.nebgm.neb_optimization_force, axis = 1))
 
         self.neb_instanton_exit(step, grad_max)
 
     def check_spring_k_kappa(self):
         '''
-        check the amplitude of spring k and kappa. to see if it is appropriate.
+        check the amplitude of spring k and kappa. to see if it is appropriate. If not, update it.
         '''
         dt = self.optarrays["time_step"]
         spring_k = self.optarrays["spring_k"]
@@ -435,10 +435,11 @@ class MAPNEBMover(Motion):
         self.optarrays["instanton_hessian"] = self.rp_map.rp_hessian 
 
         # print hessian
-        ipi.utils.nebinstool.print_instanton_hess(
-        self.options["prefix"] + "_FINAL",
-        self.optarrays["instanton_hessian"],
-        self.output_maker)
+        if self.options["final_hessian_bool"]:
+            ipi.utils.nebinstool.print_instanton_hess(
+                self.options["prefix"] + "_FINAL",
+                self.optarrays["instanton_hessian"],
+                self.output_maker)
 
 class LINEBGradientMapper(object):
     """Creation of the multi-dimensional function that will be minimized.

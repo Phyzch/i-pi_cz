@@ -169,7 +169,7 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": float,
                 "default": 0.1,
-                "help": "the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2)"
+                "help": "the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2).  Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)"
             }
         ),
 
@@ -184,6 +184,8 @@ class InputNebInst(InputDictionary):
                 See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018).
                 We need two different values of kappa for asymmetric potential. 
                 For symmetric potential, we can set left and right kappa to the same value.
+                Two kappa values will be updated accordingly during the simulation using force information |dV/dx|. So, choosing the value here is not that important.
+                        |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value)
                         """
             },
         ),
