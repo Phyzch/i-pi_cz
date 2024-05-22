@@ -149,8 +149,6 @@ class MAPNEBMover(Motion):
         self.nebgm.bind(self)
         self.rp_map.bind(self)
         
-            
-
     def step(self, step=None):
         """Does one simulation time step.
         """
@@ -225,9 +223,6 @@ class MAPNEBMover(Motion):
             self.options["stage"] = "converged"
             
             
-
-
-
 # --------- NEB method -----------------------
     def step_neb(self, step):
         n_activedim = self.beads.q[0].size - len(self.fixatoms) * 3
@@ -402,7 +397,6 @@ class MAPNEBMover(Motion):
             self.options["stage"] = "instanton"
             info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
 
-        
     def print_geometry(self, step):
         '''
         print beads geometry and beads energy.
@@ -859,7 +853,7 @@ class RP_MAP(object):
         self.final_step = neb_final_step 
    
 
-    def cl_dynamics_along_MEP(self):
+    def cl_dynamics_along_MAP(self):
         '''
         classical dynamics on the inverted potential -V(x) 
         the final time will be 1/2 of the imaginary period.
@@ -907,14 +901,21 @@ class RP_MAP(object):
             pot_list.append(pot)
 
         x_list = np.array(x_list)
-        v_list = np.array(v_list)        
+        v_list = np.array(v_list)
+
+        kinetic_energy_list = 0.5 * np.sum(np.array(self.m3) * np.power(v_list,2), axis = 1)
+
         t_list = np.array(t_list)
         r_list = np.array(r_list)
         a_list = np.array(a_list)
         pot_list = np.array(pot_list)
 
         pot_list = pot_list - self.energy_shift  # ground state energy shift
+        total_energy_list = kinetic_energy_list - pot_list  # total_E = K - V.
+
         pot_list = units.unit_to_user("energy", "electronvolt", pot_list)   # convert to eV unit.
+        total_energy_list = units.unit_to_user("energy", "electronvolt", total_energy_list)
+        kinetic_energy_list = units.unit_to_user("energy", "electronvolt", kinetic_energy_list)
 
         a_norm = npnorm(a_list, axis = 1)
 
@@ -931,10 +932,13 @@ class RP_MAP(object):
         print("\n")
         print("potential of points (eV): " + str(pot_list) )
         print("\n")
-        print("velocity value (sanity check):" + str( npnorm(v_list, axis = 1) ))
+        print("kinetic energy (eV): " + str( kinetic_energy_list ))
+        print("\n")
+        print("total energy (eV): " + str(total_energy_list))
         print("\n")
 
         return t_list, v_list, x_list 
+
 
     def cl_dynamics_step(self, tau, t, x, v, a, r, end_bead_index, end_bead_r):
         '''
@@ -977,42 +981,49 @@ class RP_MAP(object):
             # update time:
             t = t + dt 
         else:
-            # linear intepolation for this time step.
-            new_dr = end_bead_r - r 
-            ratio = new_dr / dr # ratio of time step we should actually take to arrive at bead point.
-            dt = self.time_step * ratio
+            # adjust the time step 
+            dt_right = self.time_step 
+            dt_left = 0
+            target_dr = end_bead_r - r 
+            # bisect search for the time step 
+            old_y = np.copy([np.copy(old_x), np.copy(old_v)])
             
-            # update x & r 
-            r = end_bead_r
+            dt , new_y = ipi.utils.nebinstool.bisect_dt(dt_right, dt_left, old_y, t, param, target_dr)
+
+            # update x & r
+            r = end_bead_r 
             x = np.copy(self.bead_path_x[end_bead_index])
             self.cl_bead.q[0] = np.copy(x)
 
             # update velocity
-            v = old_v + (v - old_v) * ratio 
+            v = np.copy(new_y[1])
 
-            # update acceleration:
-            a = -dstrip(self.cl_forces.f).copy()[0] / self.m3  # negative force (-f), force in inverted potential.
-            a = np.dot(a, tau) * tau 
-
-            # update time:
+            # update time 
             t = t + dt 
 
-            # update end_bead_index:
-            end_bead_index = end_bead_index + 1
-
+            # update end_bead_index
+            end_bead_index = end_bead_index + 1 
+            
             if end_bead_index > self.path_interpolation_bead_number - 1:
-                # the end of path
-                return tau, t, x, v, a, r, end_bead_index, end_bead_r
+                # end of path.
+                return tau, t, x, v, a, r, end_bead_index, end_bead_r 
             
             end_bead_r = self.bead_path_r[end_bead_index]
 
-            # update tangent vector of discretized path.
+            # update tangent vector
             tau = self.bead_path_x[end_bead_index] - self.bead_path_x[end_bead_index - 1]
-            tau = tau / npnorm(tau)  
+            tau = tau / npnorm(tau)
 
-            # reorient velocity and acceleration:
-            v = np.linalg.norm(v) * tau 
-            a = np.linalg.norm(a) * tau 
+            # update acceleration (acceleration should align along the new tau)
+            a = -dstrip(self.cl_forces.f).copy()[0] / self.m3  # negative force (-f), force in inverted potential.
+            a = np.dot(a, tau) * tau
+
+            # reorient velocity but keep the kinetic energy
+            scaled_v = np.sqrt(self.m3) * v 
+            scaled_tau = tau * np.sqrt(self.m3)
+            scaled_tau = scaled_tau / npnorm(scaled_tau)
+            scaled_v = npnorm(scaled_v) * scaled_tau   # re-orient sqrt(m) * v 
+            v = scaled_v / np.sqrt(self.m3)  # now v conserve the energy and align with direction of tau.
 
         return tau, t, x, v, a, r, end_bead_index, end_bead_r
     
@@ -1087,7 +1098,7 @@ class RP_MAP(object):
         self.initialize(neb_beads, neb_forces, neb_final_step)
         
         # start classical dynamics along minimum action path (MEP) on inverted potential.
-        t_list, v_list, x_list  = self.cl_dynamics_along_MEP()
+        t_list, v_list, x_list  = self.cl_dynamics_along_MAP()
 
         # print the temperature for the found minimum action path in Kelvin unit.
         self.print_temperature()
