@@ -102,10 +102,11 @@ def predict_latent_function_gp_with_derivative(model:GPModelWithDerivatives, tes
     the function that predict the posterior distribution latent function f(test_inputs) of the test_inputs.
     
     :param: model: instance of GPModelWithDerivatives. Gaussian process regression model using derivative information.
-    :param: test_inputs:  test data to compute posterior distribution
+    :param: test_inputs:  test data to compute posterior distribution. dtype: torch.tensor
     :param: covar_bool: bool variable to wether output covariance matrix.
     
-    return: mean: mean value of prediction for test_inputs
+    suppose output_dim = m.
+    return: mean: mean value of prediction for test_inputs. shape: [N, m]
 
             if covar_bool == True: return: test_covariance: [N * m , N * m]
             if covar_bool == False: return: test_var: [N, m]: each row is the variance of one data point. 
@@ -183,9 +184,9 @@ class GPModelWithDerivativesWrapper():
     def __init__(self, train_x, train_V, train_grad, natom, coordinate_transformer : non_redundant_coordinate_transformer):
         '''
         initialize the model.
-        :param: train_x: [N, 3 * natom]. initial N training points x. (Cartesian coordinate)
-        :param: train_V: [N]. initial N training potential V.
-        :param: train_grad: [N, 3 * natom], initial N training data. gradient of potential V. 
+        :param: train_x: [N, 3 * natom]. initial N training points x. (Cartesian coordinate)  numpy array.
+        :param: train_V: [N]. initial N training potential V.    numpy array.
+        :param: train_grad: [N, 3 * natom], initial N training data. gradient of potential V.  numpy array.
         :param: natom: number of atoms.
         :param: coordinate transformer: an instance of the class: non_redundant_coordinate_transformer. Responsible for transformation between external and internal coordinate. 
         '''
@@ -199,9 +200,95 @@ class GPModelWithDerivativesWrapper():
         self.coordinate_transformer = coordinate_transformer
 
         # transform cartesian coordinate x to internal coordinate q
-        
- 
-        
+        train_inputs = coordinate_transformer.get_internal_coordinate_q(train_x)
 
+        # shape: [N, 3 * natom - 6]
+        train_grad_q = coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(train_x, train_grad, hessian_bool = False)
+        # target data: [V, dV/dx1, ..., dV/dxn]
+        train_targets = np.concatenate( [ train_V[:, np.newaxis] , train_grad_q ], axis = 1 )
+
+        # transform input from numpy array to torch.tensor
+        train_inputs_tensor = torch.from_numpy(train_inputs)
+        train_targets_tensor = torch.from_numpy(train_targets)
+
+        # initialize the gaussian process regression model with inpt training data.
+        self.gpr_model = GPModelWithDerivatives(train_inputs_tensor, train_targets_tensor, input_dim, output_dim)
+
+        self.train_inputs = train_inputs
+        self.train_targets = train_targets
+        self.input_dim = input_dim
+        self.output_dim = output_dim 
+        self.natom = natom
+
+
+    def predict_latent_function(self, test_x):
+        '''
+        compute the predicted potential V and gradient dV/dx (mean value of latent prediction distribution) in Cartesian coordinate.
+        Also compute the variance of potential & gradients dV/dq. 
+        This function wraps predict_latent_function_gp_with_derivative.
+
+        :param: test_x: input Cartesian coordinate data [N, 3 * natom]. 
+        
+        :return: V: predicted potential energy.
+                grad_x: dV/dx, predicted gradient of potential energy. In Cartesian coordinate.
+                var_V: uncertainty (variance) of potential energy.
+                var_grad: variance of gradients along different internal coordinate. We can postprocess to get uncertainty about force prediction.
+        '''
+        assert np.shape(test_x)[1] == 3 * self.natom , "dim of coordinates for input data is not 3 * natom"
+
+        # transform to internal coordinate q.
+        test_q = self.coordinate_transformer.get_internal_coordinate_q(test_x)
+        test_q_tensor = torch.from_numpy(test_q)
+
+        # use Gaussian process regression to make prediction 
+        test_mean_tensor, test_var_tensor = predict_latent_function_gp_with_derivative(self.gpr_model, test_inputs = test_q_tensor, covar_bool = False)
+        test_mean = test_mean_tensor.detach().cpu().numpy()
+        test_var = test_var_tensor.detach().cpu().numpy()
+
+        V = test_mean[:, 0]
+        grad_q = test_mean[:, 1:]  # gradient dV/dq.
+        
+        # transform gradient from internal coordinate back to cartesian coordinate. 
+        grad_x = self.coordinate_transformer.transform_internal_g_h_to_cartesian_g_h(test_x, grad_q, hessian_bool = False)
+
+        var_V = test_var[:, 0]
+        var_grad = test_var[:, 1:]
+
+        return V, grad_x, var_V, var_grad
+    
+
+
+    def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad):
+        '''
+        add new training data into the model. 
+        Then train the model to update the hyper-parameter.
+        This function wraps the function: update_model_with_new_data(gpr_model, train_inputs, train_targets)
+        
+        This function will update the self.gpr_model
+
+        :param: new_train_x: [N, 3 * natom], input Cartesian coordinate data.  numpy array
+                new_train_V: [N], ab-initio potential data.   numpy array
+                new_train_grad: [N, 3 * natom], ab-initio force data.  numpy array.
+        
+        :return: None.
+        '''
+        assert np.shape(new_train_x)[1] == 3 * self.natom, "dim of coordinates for input data is not 3 * natom"
+        assert np.shape(new_train_grad)[1] == 3 * self.natom, "dim of gradients for input data is not 3 * natom"
+
+        # input data for machine learning model
+        # internal coordinate
+        new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(new_train_x)
+        new_train_inputs_tensor = torch.from_numpy(new_train_inputs)
+
+        # gradient of potential in internal coordinate
+        new_train_grad_q = self.coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(new_train_x, new_train_grad, hessian_bool = False)
+        assert np.shape(new_train_grad_q)[1] == 3 * self.natom - 6, "train_grad_q for internal coordiante has wrong dimension"
+
+        new_train_targets = np.concatenate([ new_train_V[:,np.newaxis], new_train_grad_q ], axis = 1)
+        new_train_targets_tensor = torch.from_numpy(new_train_targets)
+
+        update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, new_train_targets_tensor)
+
+    
 
 

@@ -268,6 +268,9 @@ class non_redundant_coordinate_transformer():
         :param: g_x: gradient in Cartesian coordinate. shape:[nbatch, 3 * natom]
         :param: H_x: hessian in Cartesian coordinate.  shape:[nbatch, 3 * natom, 3 * natom]
         :param: hessian_bool: if true, transform H_x to H_q. otherwise, only transform gradient g_x -> g_q. default: False.
+
+        :return g_q: gradient in internal coordinate. shape:[nbatch, 3 * natom - 6]
+        :return: H_q: (only if hessian_bool = True). hessian in internal coordinate. shape:[nbatch, 3 * natom - 6, 3 * natom - 6]
         '''
         nbatch = np.shape(x)[0]
         B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2 , 3n]
