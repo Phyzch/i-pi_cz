@@ -51,8 +51,9 @@ class non_redundant_coordinate_transformer():
         :return: matrix B: redundant gradient matrix. size: [nbatch, natom^2, 3 * natom]
         '''
         x_shape = np.shape(x)
-        cartesian_x = np.reshape(x, (x_shape[0], self.natom, 3))
-        B = np.zeros([x_shape[0], np.power(self.natom, 2) , 3 * self.natom])
+        nbatch = x_shape[0]
+        cartesian_x = np.reshape(x, (nbatch, self.natom, 3))
+        B = np.zeros([nbatch, np.power(self.natom, 2) , 3 * self.natom])
         
         for i in range(self.natom):
             for j in range(i):
@@ -81,7 +82,7 @@ class non_redundant_coordinate_transformer():
         '''
         U, S, Vh = np.linalg.svd(B)
 
-        assert np.size(S) >= 3 * self.natom - 6, "number of nonzero singular value of B is smaller than 3n-6."
+        assert np.size(S) >= 3 * self.natom - 6, "number of nonzero singular value of B is smaller than 3n-6. Wrong"
 
         # sort singular value according to their absolute values. descending order
         s_index = np.argsort(- np.abs(S)) 
@@ -93,9 +94,9 @@ class non_redundant_coordinate_transformer():
         zero_s = S[zero_s_index]
         if np.size(zero_s) != 0:
             zero_s_max = np.max(np.abs(zero_s))
-            if zero_s_max > np.power(1.0, -2) * np.min(nonzero_s):
+            if zero_s_max > np.power(1.0, -2) * np.min(np.abs(nonzero_s)):
                 # nonzero value is too large
-                raise("zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(zero_s_max, np.min(nonzero_s)))
+                raise("zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(zero_s_max, np.min(np.abs(nonzero_s))))
 
         U = U[:, nonzero_s_index]
         Vh = Vh[nonzero_s_index, :]
@@ -164,9 +165,10 @@ class non_redundant_coordinate_transformer():
         '''
         compute hessian for redundant coordinate d. 
         Result will be a rank-4 tensor of shape: [nbatch, natom^2, 3 * natom, 3 * natom]
-        \partial^2 Dij / \partial r_{k alpha} \partial r_{l beta} = (-1)^m *  1/|r_i - r_j|^3 * ( 3 (r_{i alpha} - r_{j alpha} * (r_{i beta} - r_{j beta}) / |r_i - r_j|^2 - delta_{alpha, beta})  ) 
+        \partial^2 Dij / \partial r_{k alpha} \partial r_{l beta} = (-1)^m *  1/|r_i - r_j|^3 * ( 3 (r_{i alpha} - r_{j alpha}) * (r_{i beta} - r_{j beta}) / |r_i - r_j|^2 - delta_{alpha, beta})  ) 
         m = 0 if k = l. m = 1 if k != l.
-        
+        here the hessian is only nonzero when k=i or j, l = i or j.
+
         :param: x: [nbatch, 3 * natom]
         :return: hessian_d: [nbatch, natom^2, 3 * natom, 3 * natom]
         '''
@@ -180,7 +182,7 @@ class non_redundant_coordinate_transformer():
         for i in range(natom):
             for j in range(i):
                 tensor_index1 = i * natom + j 
-                rij = npnorm(cartesian_x[:,i,:] - cartesian_x[:,j,:], axis = 1)  # shape: [nbatch]
+                rij = npnorm(cartesian_x[:,i,:] - cartesian_x[:,j,:], axis = 1)  # shape: [nbatch]. |r_i - r_j|
                 rij_matrix = rij[:, np.newaxis, np.newaxis] # shape:[nbatch , 1, 1]
                 for case_k in range(2):
                     # atom index for first derivative r_{k alpha}.
@@ -201,7 +203,7 @@ class non_redundant_coordinate_transformer():
                         else:
                             m = 1 
                         
-                        xij_vector = cartesian_x[:,i] - cartesian_x[:,j]
+                        xij_vector = cartesian_x[:,i,:] - cartesian_x[:,j,:]
                         xij_outer_product = xij_vector[:,:, np.newaxis] * xij_vector[:, np.newaxis, :]  # shape: [nbatch, 3, 3]
                         identity_matrix = np.tile(np.expand_dims(np.identity(3), axis = 0), (nbatch, 1, 1))  # shape: [nbatch, 3, 3]
                         hessian_submatrix = np.power(-1, m) * 1 / np.power(rij_matrix,3) * ( 3 * xij_outer_product / np.power(rij_matrix, 2) - identity_matrix)
@@ -215,7 +217,7 @@ class non_redundant_coordinate_transformer():
     # for prediction: g_q - > g_x, h_q -> h_x
     def transform_internal_g_h_to_cartesian_g_h(self, x, g_q , hessian_bool = False, H_q = None):
         '''
-        transform from internal gradient g & hessian H to external gradient g & hessian H.
+        transform from internal coordinate's gradient g & hessian H to cartesian coordinate gradient g & hessian H.
         x: Cartesian coordinate. size: [nbatch, 3 * natom]
         g_q: gradient in nonredundant internal coordinate. shape: [nbatch, 3 * natom - 6]
         H_q: Hessian in nonredundant internal coordinate.  shape: [nbatch, 3 * natom - 6, 3 * natom - 6]
@@ -231,6 +233,7 @@ class non_redundant_coordinate_transformer():
 
         Bq_T = np.transpose(Bq, axes = (0, 2, 1))  # transpose of Bq. shape: [nbatch, 3n, 3n-6]
 
+        # g_x = Bq_T * g_q
         g_x = np.squeeze(np.matmul(Bq_T, np.expand_dims(g_q, axis = 2)), axis = 2)  # gradient in Cartesian coordinate. [nbatch, 3n ]
 
         if hessian_bool == False:
@@ -239,6 +242,11 @@ class non_redundant_coordinate_transformer():
             # need to compute Hessian H_x:
             if H_q == None:
                 raise("To also transform internal Hessian, please provide its value. It can not be None")
+            
+            # check the shape of H_q
+            H_q_shape = np.shape(H_q)
+            assert ( (H_q_shape[1] == 3 * self.natom - 6) and (H_q_shape[2] == 3 * self.natom -6) ), "shape of Hessian matrix in internal coordinate H_q is wrong."
+
             # shape: [nbatch, 3*natom, 3*natom]
             H_x_part1 = np.matmul(np.matmul(Bq_T, H_q),Bq)
 
@@ -277,9 +285,10 @@ class non_redundant_coordinate_transformer():
         
         Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n] 
 
-        Bq_T = np.transpose(Bq, axes = (0,2,1))  # transpose of Bq. shape:[nbatch, 3n -6, 3n]
+        Bq_T = np.transpose(Bq, axes = (0,2,1))  # transpose of Bq. shape:[nbatch, 3n, 3n - 6]
 
-        # TODO: check value of recond. We can check SVD matrix of B to get an idea of value of zero-eigenvalue in B. shape:[nbatch, 3n -6, 3n]
+        # TODO: check value of recond. We can check SVD matrix of B to get an idea of value of zero-eigenvalue in B. shape:[nbatch, 3n - 6 , 3n]
+        # inverse of Bq_T matrix.
         inverse_Bq_T = np.array([np.linalg.pinv(Bq_T_element, rcond = np.power(10.0 -8) ) for Bq_T_element in Bq_T])
         
         # shape: [nbatch, 3n-6]
@@ -291,6 +300,9 @@ class non_redundant_coordinate_transformer():
             if H_x == None:
                 raise("To also transform Cartesian hessian, please provide its value. It can not be None")
             
+            H_x_shape = np.shape(H_x)
+            assert ( (H_x_shape[1] == 3 * self.natom) and (H_x_shape[2] == 3 * self.natom)) , "shape of Hessian matrix in cartesian coordinate H_x is wrong."
+
             inverse_Bq = np.transpose(inverse_Bq_T, axes= (0,2,1))
 
             # Below we reverse the computation in transform_internal_g_h_to_cartesian_g_h

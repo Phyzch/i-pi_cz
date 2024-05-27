@@ -49,6 +49,18 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
+    def output_kernel_lengthscale(self):
+        '''
+        output length scale of the base kernel
+        :return: length scale. shape: [ard_num_dims]. numpy array.
+        '''
+        # we assume only have one batch.
+        lengthscale = np.copy(self.base_kernel.lengthscale[0].detach().numpy())
+
+        return lengthscale 
+
+
+
 def train_gpr(model:gpytorch.models.ExactGP , training_error_cutoff = 0.001):
     '''
     the function that trains the model.
@@ -199,6 +211,7 @@ class GPModelWithDerivativesWrapper():
 
         self.coordinate_transformer = coordinate_transformer
 
+        train_cartesian_targets = np.concatenate([train_V[:, np.newaxis], train_grad ], axis = 1)
         # transform cartesian coordinate x to internal coordinate q
         train_inputs = coordinate_transformer.get_internal_coordinate_q(train_x)
 
@@ -214,8 +227,15 @@ class GPModelWithDerivativesWrapper():
         # initialize the gaussian process regression model with inpt training data.
         self.gpr_model = GPModelWithDerivatives(train_inputs_tensor, train_targets_tensor, input_dim, output_dim)
 
-        self.train_inputs = train_inputs
-        self.train_targets = train_targets
+        # train self.gpr_model() to get optimized hyperparameter
+        train_gpr(self.gpr_model)
+
+        self.train_inputs = train_inputs  # training inputs in internal coordinate space q.
+        self.train_targets = train_targets  # training outputs in internal coordinates q. (V, dV/dq)
+
+        self.train_cartesian_inputs = train_x  # training inputs in cartesian coordinate x
+        self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
+
         self.input_dim = input_dim
         self.output_dim = output_dim 
         self.natom = natom
@@ -252,9 +272,9 @@ class GPModelWithDerivativesWrapper():
         grad_x = self.coordinate_transformer.transform_internal_g_h_to_cartesian_g_h(test_x, grad_q, hessian_bool = False)
 
         var_V = test_var[:, 0]
-        var_grad = test_var[:, 1:]
+        var_grad_q = test_var[:, 1:]
 
-        return V, grad_x, var_V, var_grad
+        return V, grad_x, var_V, var_grad_q
     
 
 
@@ -289,6 +309,36 @@ class GPModelWithDerivativesWrapper():
 
         update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, new_train_targets_tensor)
 
+        # update the training data and targets in internal coordinate q.
+        self.train_inputs = np.concatenate([self.train_inputs, new_train_inputs ], axis = 0)
+        self.train_targets = np.concatenate([self.train_targets, new_train_targets], axis = 0)
+
+        # update the training data and targets in cartesian coordinate x.
+        new_train_cartesian_targets = np.concatenate([new_train_V[:,np.newaxis], new_train_grad] , axis = 1)
+        self.train_cartesian_inputs = np.concatenate([self.train_cartesian_inputs, new_train_x], axis = 0)
+        self.train_cartesian_targets = np.concatenate([self.train_cartesian_targets, new_train_cartesian_targets], axis = 0)
+
+    def output_kernel_lengthscale(self):
+        '''
+        return the length scale of kernel for gpr model
+        :return: lengthscale (numpy array)
+        '''
+        lengthscale = self.gpr_model.output_kernel_lengthscale()
+
+        return lengthscale 
+
+    def output_training_cartesian_inputs(self):
+        '''
+        output the training data set X (in cartesian coordinate) used to train the GPR model.
+        '''
+        train_cartesian_X = np.copy(self.train_cartesian_inputs)
+
+        return train_cartesian_X
     
-
-
+    def output_training_internal_inputs(self):
+        '''
+        output the training data set Q (in non-redundant internal coordinate) used to train the GPR model
+        '''
+        train_internal_q = np.copy(self.train_inputs)
+        
+        return train_internal_q

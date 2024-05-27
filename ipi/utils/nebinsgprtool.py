@@ -1,0 +1,55 @@
+'''
+utility module for neb_instanton_gpr.py module
+'''
+import numpy as np 
+from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+from ipi.utils.gprtools import GPModelWithDerivativesWrapper
+from ipi.engine.beads import Beads
+from ipi.utils.depend import dstrip
+
+def check_neb_early_stop(beads_x, gpr_model: GPModelWithDerivativesWrapper):
+    '''
+    check early stoage criterion for neb algorithm with machine learning.
+    If the bead move out of trusted region, then we stop the current move.
+    This means if the distance between beads and nearest gpr point in internal coordinate "q" exceeds 2 * sigma, 
+    (where sigma is the length scale of gpr kernel), then the bead is out of trusted region.
+
+    :param: beads_x: cartesian coordinate X of neb beads 
+    :param: gpr_model: model to perform the Gaussian Process Regression.
+
+    :return: early_stop_bool: bool variable to indicate whether there is bead out of trust region.
+             out_range_bead_index: the bead index that move out of the trusted region.
+    '''
+    early_stop_bool = False 
+    out_range_bead_index = -1
+    
+    coordinate_transformer = gpr_model.coordinate_transformer
+
+    # the location of current beads in internal coordinate
+    beads_internal_coordinate = coordinate_transformer.get_internal_coordinate_q(np.copy(beads_x))
+
+    # the location of training data in internal coordinate.
+    gpr_training_internal_coordinate = gpr_model.output_training_internal_inputs()
+    
+    # length scale of the kernel in the internal coordinate
+    gpr_kernel_lengthscale = gpr_model.output_kernel_lengthscale()
+
+    # compute the distance and find beads that move out of the trusted region.
+    nbeads = np.shape(beads_x)[0]
+    for bead_index in range(nbeads):
+        bead_internal_q = beads_internal_coordinate[bead_index]
+
+        # scaled distance between gpr training data and beads.
+        scaled_r = np.sqrt(np.sum(np.power((bead_internal_q - gpr_training_internal_coordinate) / gpr_kernel_lengthscale , 2) , axis = 1))
+        
+        nearest_gpr_data_index = np.argmin(scaled_r)
+
+        # scaled distance r between beads and the closest gpr training data
+        scaled_r_closest = np.abs(bead_internal_q - gpr_training_internal_coordinate[nearest_gpr_data_index]) / gpr_kernel_lengthscale
+        
+        if np.max(scaled_r_closest) > 2:
+            early_stop_bool = True 
+            out_range_bead_index = bead_index 
+            break
+    
+    return early_stop_bool, out_range_bead_index

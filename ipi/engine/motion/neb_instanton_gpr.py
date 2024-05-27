@@ -26,7 +26,9 @@ from ipi.utils.messages import verbosity, info
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
 from ipi.utils.nebinstool import RK4, dydt_inverted_pot
-
+from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+import ipi.utils.gprtools
+import ipi.utils.nebinsgprtool
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
@@ -126,6 +128,16 @@ class MAPNEBGPRMover(Motion):
         self.f_mscaled = None 
         self.nearest_gpr_bead_distance = np.zeros([self.beads.nbeads])  # distance to the nearest computed gpr beads.
 
+        # initialize Gaussian Process Regression(GPR) model and coordiante transformer
+        self.initialialize_GPR_model()
+
+        # create bead object that is used to add training data to GPR model.
+        self.gpr_beads = Beads(self.beads.natoms, 1)
+        self.gpr_forces = self.forces.copy(self.gpr_beads, self.cell)
+        
+        # index list indicating the ab-initio forces is close to gpr predicted forces.
+        self.ab_initio_index_list = []
+
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBGPRMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
         if len(self.fixatoms) == len(self.beads[0]):
@@ -150,7 +162,30 @@ class MAPNEBGPRMover(Motion):
 
         self.nebgm.bind(self)
         
-            
+    def initialialize_GPR_model(self):
+        '''
+        initialize the gaussian process regression model.
+        1. Initialize coordinate transformer to transform between internal coordinate and cartesian coordinate.
+        2. initialize GPR_Wrapper, which combines coordinate transformer and GPR model.
+        '''
+        # Initialize non redundant coordinate transformer.
+        # choose the middle point of the initial instanton path as reference point.
+        nbeads = self.beads.nbeads
+        ref_x = self.beads.q[int(nbeads/2)]
+
+        self.coordinate_transformer = non_redundant_coordinate_transformer(self.beads.natoms, ref_x)
+
+        # initialize Gaussian Process Regression model
+        # choose all NEB beads as initial training data.
+        # We will train the GPR model to optimize hyperparameter when we initialize it.
+        train_x = np.copy(self.beads.q)
+        train_V = np.copy(self.forces.pots)
+        train_grad = - np.copy(dstrip(self.forces.f))
+
+        self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(train_x, train_V, train_grad,
+                                                                     self.beads.natoms, self.coordinate_transformer)
+
+
 
     def step(self, step=None):
         """Does one simulation time step.
@@ -196,21 +231,114 @@ class MAPNEBGPRMover(Motion):
         if self.options["stage"] == "neb":
             # use nudged elastic band method to find minmum action path.
             # then we will switch to the stage "instanton"
-            self.neb_loop(step)
+            early_stop_bool, outrange_bead_index = self.neb_loop(step)
 
-            # Evaluate the potential and force of one bead depending on the stoppage criterion.
-            self.update_GPR_model()
-        
-    def update_GPR_model(self):
+            # update Gaussian Process Regression model with new training data
+            self.update_GPR_model(early_stop_bool, outrange_bead_index)
+
+    def update_GPR_model(self, early_stop_bool, outrange_bead_index):
         '''
+        update GPR model with new training data. Which new training data to be added will depend on stop criterion.
         evaluate potential and force of one bead. 
         Then update the Gassian Process Regression model.
         '''
-        raise NotImplementedError
+        attempt_exit_bool = False 
+
+        if early_stop_bool:
+            # in this case, one bead move out of trust region.
+            training_x = self.beads.q[outrange_bead_index]
+            training_x = np.array([training_x])
+        else:
+            # in this case, NEB calculation converges on GPR fitted PES.
+            # find the bead with the largest energy uncertainty.
+            beads_V, beads_grad_x, beads_var_V, beads_var_grad_q = self.gpr_model.predict_latent_function(self.beads.q)
+            beads_forces = - beads_grad_x 
+            bead_index_for_update = np.argmax(beads_var_V)
+
+            training_x = self.beads.q[bead_index_for_update]
+            training_x = np.array([training_x])
+
+        # consistency check : the gpr_beads we claims to do the simulation should have same bead number of training data.
+        assert self.gpr_beads.nbeads == len(training_x)
+        self.gpr_beads.q[:] = training_x 
+
+        # get energy and forces (in Cartesian coordinate) from force engine.
+        ab_initio_beads_energy = dstrip(self.gpr_forces.pots).copy() 
+        ab_initio_beads_forces = dstrip(self.gpr_forces.f).copy() 
+        ab_initio_beads_grad = - ab_initio_beads_forces
+
+        if not early_stop_bool:
+            training_bead_forces = beads_forces[bead_index_for_update]
+
+            force_diff = training_bead_forces - ab_initio_beads_forces[0]
+            force_diff_ratio = np.linalg.norm(force_diff) / np.linalg.norm(ab_initio_beads_forces[0])
+            if force_diff_ratio < 0.01:
+                # the ab-initio force is close to the force predicted by GPR. we check forces on other beads and try to exit.
+                self.ab_initio_bead_index = [bead_index_for_update]
+                attempt_exit_bool = True
+
+        # update GPR model with coordinate (training_x), potential (beads_energy) and forces in cartesian coordiante (beads_forces)
+        self.gpr_model.update_model_with_new_data(training_x, ab_initio_beads_energy, ab_initio_beads_grad)
+        self.nebgm.gpr_model = self.gpr_model
+
+        if attempt_exit_bool:
+            self.neb_stage_exit_step()
+
+    def neb_stage_exit_step(self):
+        '''
+        check the ab-initio forces and compare it with forces predicted by GPR.
+        We do not move NEB path during this process.
+        If all beads pass the test: their ab-initio forces are close to GPR predicted forces,
+        then we exit the NEB loop.
+        '''
+        while(len(self.ab_initio_bead_index) < self.beads.nbeads):
+            # gpr bead index is the index list that we still need to verify the ab-initio forces.
+            gpr_bead_index_list = np.array(range(self.beads.nbeads))
+            gpr_bead_index_list = np.delete(gpr_bead_index_list, self.ab_initio_bead_index)
+
+            beads_V, beads_grad_x, beads_var_V, beads_var_grad_q = self.gpr_model.predict_latent_function(self.beads.q)
+            beads_forces = -beads_grad_x
+
+            # find the bead that has the largest energy variance and we haven't evaluated its ab-initio potential.
+            index_in_gpr_bead_index_list = np.argmax(beads_var_V[gpr_bead_index_list])
+            bead_index_for_update = gpr_bead_index_list[index_in_gpr_bead_index_list]
+
+            # compute the ab-initio force and potential for the given bead.
+            training_x = self.beads.q[bead_index_for_update]
+            self.gpr_beads.q[:] = training_x
+
+            # get energy and forces (in Cartesian coordinate) from force engine.
+            ab_initio_beads_energy = dstrip(self.gpr_forces.pots).copy() 
+            ab_initio_beads_forces = dstrip(self.gpr_forces.f).copy() 
+            ab_initio_beads_grad = - ab_initio_beads_forces
+
+            # update the model with ab-initio data.
+            self.gpr_model.update_model_with_new_data(training_x, ab_initio_beads_energy, ab_initio_beads_grad)
+
+            # check whether the ab-inito force is close to the gpr predicted force
+            force_diff = beads_forces[bead_index_for_update] - ab_initio_beads_forces[0]
+            force_diff_ratio = np.linalg.norm(force_diff) / np.linalg.norm(ab_initio_beads_forces[0])
+
+            if force_diff_ratio < 0.01:
+                self.ab_initio_bead_index.append(bead_index_for_update)
+            else:
+                # the current bead configuration has not converged yet. Need to do Nudged Elastic band on updated surface.
+                self.ab_initio_bead_index = []
+                break 
+        
+        # all beads pass the test. The simulation has converged
+        if len(self.ab_initio_bead_index) == self.beads.nbeads:
+            self.options["stage"] = "converged"
+        
+
+
+
+
+        #TODO: if fail to exit, set self.ab_initio_bead_index = []. if succeed, set the self.stage == ["converged"]
 
     def neb_loop(self, outer_loop_step):
         '''
-        Finish inner loop of neb 
+        Finish the inner loop of neb 
         '''
         grad_max = 1000
         tolerances = self.options["tolerances"]
@@ -218,13 +346,24 @@ class MAPNEBGPRMover(Motion):
         # inner loop doing neb
         neb_step = 0  # count the step number of neb move. (inner loop)
         
+        early_stop_bool = False
+        outrange_bead_index = -1 # index for beads that move out of trusted region that causes early stop.
+
         self.neb_initialize(outer_loop_step) # we have to re-initialize Nudged Elastic Band variable 
         
-        # TODO: add additional criterion for trusted region radius check. If the bead move out of trusted region, then we also stop the calculation.
         while grad_max > tolerances["gradient"]:
-            grad_max = self.step_neb(outer_loop_step, neb_step)
+            grad_max, early_stop_bool, outrange_bead_index = self.step_neb(outer_loop_step, neb_step)
             neb_step = neb_step + 1
-    
+
+            # beads move out of trust region.
+            if early_stop_bool:
+                break 
+        
+        return early_stop_bool, outrange_bead_index
+
+        
+
+
     def neb_initialize(self, step):
         '''
         initialize action, force, velocity for nudged elastic band calculation. (inner loop calculation.)
@@ -254,6 +393,16 @@ class MAPNEBGPRMover(Motion):
         # check if spring_k and kappa value is appropriate.
         self.check_spring_k_kappa()
 
+        grad_max = 0
+        # check early stop condition if there are beads out of trust region
+        early_stop_bool, outrange_bead_index = ipi.utils.nebinsgprtool.check_neb_early_stop(self.beads.q,
+                                                                                            self.gpr_model)
+        
+        # stop the step early if there are beads out of trust region.
+        if early_stop_bool:
+            return grad_max, early_stop_bool, outrange_bead_index
+
+        # neb move using gradient of LINEBGradient
         if self.options["mode"] == "verlet":
             # Only initialize velocity for fresh start, not for RESTART
             dx_mscaled = dt * self.velocity_mscaled + 0.5 * self.f_mscaled * np.power(dt, 2)
@@ -289,13 +438,10 @@ class MAPNEBGPRMover(Motion):
 
         grad_max = np.amax(npnorm(self.nebgm.neb_optimization_force, axis = 1))
 
-        # TODO: compute the distance between the neb beads and the nearest bead we have observed (in GPR model) for early stoppage
-        # self.nearest_gpr_bead_distance
-
         # output info about neb calculation.
         self.neb_instanton_step_info(outer_loop_step, neb_step, grad_max)
         
-        return grad_max   
+        return grad_max, early_stop_bool, outrange_bead_index   
 
     def neb_instanton_step_info(self, outer_loop_step, neb_step, grad_max):
         '''
@@ -369,6 +515,7 @@ class MAPNEBGPRMover(Motion):
         self.nebgm.kappa["right"] = self.nebgm.kappa["right"] * left_kappa_scale
 
 
+
           
 class LINEBGradientMapper(object):
     """Creation of the multi-dimensional function that will be minimized.
@@ -396,7 +543,7 @@ class LINEBGradientMapper(object):
         self.instanton_path_energy = None # energy E of instanton path in JWKB approximation. See: Section II. A in J. Chem. Phys. 148, 102334 (2018)
 
 
-    def bind(self, ens):
+    def bind(self, ens : MAPNEBGPRMover):
         '''
         :param: ens: A NEBMover instance.
         Copy beads, cell, forces of NEB mover to itself.
@@ -428,6 +575,9 @@ class LINEBGradientMapper(object):
 
         self.energy_shift = ens.optarrays["energy_shift"]
 
+        # bind the gpr model
+        self.gpr_model = ens.gpr_model
+        self.coordinate_transformer = ens.coordinate_transformer
 
     def compute_tangent_vector(self, nimage, natom, mscaled_q):
         '''
@@ -614,26 +764,24 @@ class LINEBGradientMapper(object):
         return neb_optimization_force 
     
 
-    def get_bead_potential(self):
+    def get_bead_potential_and_forces(self):
         '''
-        Get potential for all rbeads.
-        
+        Get potential and forces for all rbeads.
+        Using Gaussian Process Regression model.
         return: potential for all beads.
         '''
-        raise NotImplementedError 
-    
-    def get_bead_forces(self):
-        '''
-        Get force for all beads. shape: [nbeads, 3 * natoms]
-        return: force for all beads.
-        '''
-        raise NotImplementedError
+        test_x = np.copy(self.rbeads.q)
+        beads_potential, beads_potential_grad_x, var_V, var_grad_q = self.gpr_model.predict_latent_function(test_x)
+
+        beads_forces = - beads_potential_grad_x
+
+        return beads_potential, beads_forces 
         
 
     def __call__(self, x):
         """Returns the potential for all beads and the gradient.
         update reduced bead coordinates (&dbeads coordinate) (sticly speaking the free-moving atom parts) with x.
-        x = q[:, self.fixatoms_mask] : new coordinates for updated freely moving particles.
+        :param: x = q[:, self.fixatoms_mask] : new coordinates for updated freely moving particles.
 
         rbf: physical forces for reduced beads
         rbq: position for reduced beads
@@ -650,11 +798,14 @@ class LINEBGradientMapper(object):
         mscaled_q = rbq * np.sqrt( self.dbeads.m3[:, self.fixatoms_mask] )  # mass scaled coordinates.
         self.mscaled_q = mscaled_q
 
+        # use Gaussian Process Regression to get the potential and forces for beads.
+        beads_potential, beads_forces = self.get_bead_potential_and_forces()
         # energy for reudced beads. All potential energy of beads are needed.
-        self.beads_energy= self.get_bead_potential().copy()  # beads energy.  
+        self.beads_energy = np.copy(beads_potential) # beads energy.  
 
         # Forces for reduced beads
-        self.rbf = self.get_bead_forces().copy()[:, self.fixatoms_mask]
+        self.rbf = beads_forces.copy()[:, self.fixatoms_mask]
+
         # mass weighted force
         mscaled_f = self.rbf / np.sqrt( self.dbeads.m3[: , self.fixatoms_mask] )  # 1/sqrt(m) * f: mass scaled force.
         self.mscaled_f = mscaled_f
