@@ -61,10 +61,10 @@ class non_redundant_coordinate_transformer():
                 row_index = i * self.natom + j 
 
                 column_index_1 = i * 3   # k == i
-                B[:, row_index, column_index_1 : column_index_1 + 3] = - (cartesian_x[:,i,:] - cartesian_x[:,j, :]) / np.power(npnorm(cartesian_x[:,i,:] - cartesian_x[:,j,:], axis = 1), 3)
+                B[:, row_index, column_index_1 : column_index_1 + 3] = - (cartesian_x[:,i,:] - cartesian_x[:,j, :]) / np.expand_dims(np.power(npnorm(cartesian_x[:,i,:] - cartesian_x[:,j,:], axis = 1), 3), axis = 1)
 
                 column_index_2 = j * 3 # k == j
-                B[:, row_index, column_index_2, column_index_2 + 3] = - (cartesian_x[:,j,:] - cartesian_x[:,i,:]) / np.power(npnorm(cartesian_x[:,i,:] - cartesian_x[:,j,:], axis = 1), 3)
+                B[:, row_index, column_index_2 : column_index_2 + 3] = - (cartesian_x[:,j,:] - cartesian_x[:,i,:]) / np.expand_dims(np.power(npnorm(cartesian_x[:,i,:] - cartesian_x[:,j,:], axis = 1), 3), axis = 1)
 
         return B 
 
@@ -101,8 +101,6 @@ class non_redundant_coordinate_transformer():
         U = U[:, nonzero_s_index]
         Vh = Vh[nonzero_s_index, :]
         
-        pass 
-
         return U
 
     
@@ -287,9 +285,8 @@ class non_redundant_coordinate_transformer():
 
         Bq_T = np.transpose(Bq, axes = (0,2,1))  # transpose of Bq. shape:[nbatch, 3n, 3n - 6]
 
-        # TODO: check value of recond. We can check SVD matrix of B to get an idea of value of zero-eigenvalue in B. shape:[nbatch, 3n - 6 , 3n]
         # inverse of Bq_T matrix.
-        inverse_Bq_T = np.array([np.linalg.pinv(Bq_T_element, rcond = np.power(10.0 -8) ) for Bq_T_element in Bq_T])
+        inverse_Bq_T = np.array([np.linalg.pinv(Bq_T_element, rcond = np.power(10.0, -8) ) for Bq_T_element in Bq_T])
         
         # shape: [nbatch, 3n-6]
         g_q = np.squeeze(np.matmul(inverse_Bq_T, g_x[:,:,np.newaxis]), axis = 2)

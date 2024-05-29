@@ -259,7 +259,6 @@ class InputNebInst(InputDictionary):
         self.instanton_hessian.store(optarrays["instanton_hessian"])
 
 
-    
     def fetch(self):
         rv = super(InputNebInst, self).fetch()
         rv["mode"] = self.mode.fetch()

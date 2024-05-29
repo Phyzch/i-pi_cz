@@ -22,8 +22,10 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
         We can access train_x, train_y, likelihood later as : self.train_inputs, self.train_targets, self.likelihood.
         '''
+        # set the noise constraint for the likelihood. The default noise variance = 10^{-4} is too large.
+        noise_constraint = gpytorch.constraints.Interval(1 * np.power(10.0, -5), 2.0 * np.power(10.0 ,-4))
         # likelihood: gpytorch.likelihood object. likelihood of observable given prediction f(X):  P(y|f(X)). See:  https://docs.gpytorch.ai/en/stable/likelihoods.html
-        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims)
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, noise_constraint = noise_constraint)
 
         super(GPModelWithDerivatives, self).__init__(train_inputs, train_targets, likelihood)
 
@@ -33,12 +35,27 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         # mean function for prior distribution of Gaussian Processes
         self.mean_module = gpytorch.means.ConstantMeanGrad()  # mean function for Gaussian Processes using gradient information
         
-        # kernel function. base kernel before adding outputscaling 
-        self.base_kernel = gpytorch.kernels.RBFKernelGrad(ard_num_dims = ard_num_dims)
+        # set initial value of mean constant
+        mean_constant_estimate = np.mean(train_targets[:,0].detach().numpy())
+        self.mean_module.constant = torch.nn.Parameter(torch.ones(1) * mean_constant_estimate)
 
+        # set prior for the kernel     
+        gamma_alpha = 3.0
+        prior_lengthscale = 5 * np.power(10.0, -3)
+        output_scale =  np.power(10.0, -3)
+
+        lengthscale_prior = gpytorch.priors.GammaPrior(gamma_alpha, gamma_alpha / prior_lengthscale)
+        outputscale_prior = gpytorch.priors.GammaPrior(gamma_alpha, gamma_alpha / output_scale)
+        # kernel function. base kernel before adding outputscaling 
+        self.base_kernel = gpytorch.kernels.RBFKernelGrad(ard_num_dims = ard_num_dims, lengthscale_prior = lengthscale_prior)
+        
         # kernel function. adding outputscale parameter to base_kernel
-        self.covar_module = gpytorch.kernels.ScaleKernel(self.base_kernel) 
-    
+        self.covar_module = gpytorch.kernels.ScaleKernel(self.base_kernel, outputscale_prior = outputscale_prior) 
+
+        # Initialize lengthscale and output scale to the mean of priors
+        self.covar_module.base_kernel.lengthscale = lengthscale_prior.mean 
+        self.covar_module.outputscale = outputscale_prior.mean 
+
     def forward(self, x):
         '''
         forward function is used to define the model.  See https://docs.gpytorch.ai/en/stable/examples/00_Basic_Usage/Implementing_a_custom_Kernel.html
@@ -61,7 +78,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
 
 
-def train_gpr(model:gpytorch.models.ExactGP , training_error_cutoff = 0.001):
+def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.00001):
     '''
     the function that trains the model.
     model: GPytorch model 
@@ -81,12 +98,19 @@ def train_gpr(model:gpytorch.models.ExactGP , training_error_cutoff = 0.001):
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
     
-    train_inputs = model.train_inputs
+    train_inputs = model.train_inputs[0]  # model.train_inputs is the tuple containing our training data.
     train_targets = model.train_targets
 
     # initialize loss_func_change and old_loss to enable while loop
     loss_func_change = 1000
     old_loss_value = 1000
+
+    train_counts = 0 
+
+    # for debug
+    print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
+    print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+    print("\n")
 
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor 
@@ -105,7 +129,23 @@ def train_gpr(model:gpytorch.models.ExactGP , training_error_cutoff = 0.001):
         loss.backward()
         # optimizer optimize the parameter using the gradient info.
         optimizer.step()
-    
+
+        train_counts = train_counts + 1
+
+        if train_counts % 10 == 0:
+            print("Iter %d - Loss %.3f" %(train_counts, loss_value))
+            print("mean_module constant: " + str(model.mean_module.constant))
+            print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
+            print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+            print("\n")
+
+
+    # for debug:
+    print("Iter %d - Loss %.3f" %(train_counts, loss_value))
+    print("mean_module constant: " + str(model.mean_module.constant))
+    print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
+    print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+    print("\n")
 
     pass 
 

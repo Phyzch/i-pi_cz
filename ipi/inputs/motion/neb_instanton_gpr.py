@@ -256,9 +256,7 @@ class InputNebInstGPR(InputDictionary):
         self.instanton_bead_q.store(optarrays["instanton_bead_q"]) 
         self.instanton_bead_pot.store(optarrays["instanton_bead_pot"])
         self.instanton_hessian.store(optarrays["instanton_hessian"])
-
-
-    
+   
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()
         rv["mode"] = self.mode.fetch()
