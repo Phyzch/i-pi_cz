@@ -29,7 +29,8 @@ def check_neb_early_stop(beads_x, gpr_model: GPModelWithDerivativesWrapper):
     beads_internal_coordinate = coordinate_transformer.get_internal_coordinate_q(np.copy(beads_x))
     neb_path_internal_coordinate_length = np.sum(np.linalg.norm(beads_internal_coordinate[1:] - beads_internal_coordinate[:-1], axis = 1))
 
-    distance_cutoff = neb_path_internal_coordinate_length * 0.1
+    # distance cutoff for trust region.
+    distance_cutoff = neb_path_internal_coordinate_length * 0.05
     # the location of training data in internal coordinate.
     gpr_training_internal_coordinate = gpr_model.output_training_internal_inputs()
     
@@ -61,3 +62,13 @@ def check_neb_early_stop(beads_x, gpr_model: GPModelWithDerivativesWrapper):
     print("\n")
 
     return early_stop_bool, out_range_bead_index
+
+
+def print_ab_initio_calculation_number(ab_initio_calculation_number, output_maker):
+    '''
+    print number of ab initio calculation during GPR optimization. Used to see how much computational effort GPR saves
+    '''
+    outfile = output_maker.get_output(" ab_initio_force_number.txt", "w")
+    print("ab initio calculation number" + str(ab_initio_calculation_number), file = outfile)
+    outfile.close_stream()
+    

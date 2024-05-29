@@ -28,7 +28,8 @@ import ipi.utils.nebinstool
 from ipi.utils.nebinstool import RK4, dydt_inverted_pot
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 import ipi.utils.gprtools
-import ipi.utils.nebinsgprtool
+import ipi.utils.nebinstgprtool
+from timeit import default_timer as timer
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
@@ -130,10 +131,15 @@ class MAPNEBGPRMover(Motion):
         # index list indicating that the ab-initio forces is close to gpr predicted forces.
         # we use this list when we try to converge the calculation.
         self.ab_initio_index_list = []
+        self.force_diff_ratio_list = []
 
         self.coordinate_transformer = None 
         self.gpr_model = None 
         self.gpr_force_diff_ratio_criterion = 0.02 # criterion to stop the full calculation.
+
+        self.ab_initio_force_calculation_number = 0
+
+        self.start_time = timer()
 
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBGPRMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
@@ -186,6 +192,9 @@ class MAPNEBGPRMover(Motion):
         # potential energy has to shift relative to the energy_shift for training.
         train_V = np.copy(self.forces.pots)[selected_bead_index]  - self.optarrays["energy_shift"]
         train_grad = - np.copy(dstrip(self.forces.f))[selected_bead_index]
+
+        # count the # of ab-initio calculation we have done.
+        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
 
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(train_x, train_V, train_grad,
                                                                      self.beads.natoms, self.coordinate_transformer)
@@ -279,11 +288,15 @@ class MAPNEBGPRMover(Motion):
         ab_initio_beads_forces = dstrip(self.gpr_forces.f).copy() 
         ab_initio_beads_grad = - ab_initio_beads_forces
 
+        # count the # of ab-initio calculation we have done.
+        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + 1
+
         if not early_stop_bool:
             training_bead_forces = beads_forces[bead_index_for_update]
 
             force_diff = training_bead_forces - ab_initio_beads_forces[0]
             force_diff_ratio = np.linalg.norm(force_diff) / np.linalg.norm(ab_initio_beads_forces[0])
+            self.force_diff_ratio_list.append(force_diff_ratio)
             if force_diff_ratio < self.gpr_force_diff_ratio_criterion:
                 # the ab-initio force is close to the force predicted by GPR. we check forces on other beads and try to exit.
                 self.ab_initio_bead_index = [bead_index_for_update]
@@ -297,6 +310,10 @@ class MAPNEBGPRMover(Motion):
         if attempt_exit_bool:
             self.neb_stage_exit_step(step)
 
+        # output info about force diff ratio |f_GPR -f|/|f|
+        print("@Outerloop Exit info: |f_GPR -f|/|f|:" + str(self.force_diff_ratio_list))        
+        self.force_diff_ratio_list = []
+
     def neb_stage_exit_step(self, step):
         '''
         check the ab-initio forces and compare it with forces predicted by GPR.
@@ -304,7 +321,6 @@ class MAPNEBGPRMover(Motion):
         If all beads pass the test: their ab-initio forces are close to GPR predicted forces,
         then we exit the NEB loop.
         '''
-        
         while(len(self.ab_initio_bead_index) < self.beads.nbeads):
             # gpr bead index is the index list that we still need to verify the ab-initio forces.
             gpr_bead_index_list = np.array(range(self.beads.nbeads))
@@ -328,23 +344,29 @@ class MAPNEBGPRMover(Motion):
             ab_initio_beads_forces = dstrip(self.gpr_forces.f).copy() 
             ab_initio_beads_grad = - ab_initio_beads_forces
 
+            # count the # of ab-initio calculation we have done.
+            self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + 1
+
             # update the model with ab-initio data.
             self.gpr_model.update_model_with_new_data(training_x, ab_initio_beads_energy_shift, ab_initio_beads_grad)
 
             # check whether the ab-inito force is close to the gpr predicted force
             force_diff = beads_forces[bead_index_for_update] - ab_initio_beads_forces[0]
             force_diff_ratio = np.linalg.norm(force_diff) / np.linalg.norm(ab_initio_beads_forces[0])
+            
+            self.force_diff_ratio_list.append(force_diff_ratio)
 
             if force_diff_ratio < self.gpr_force_diff_ratio_criterion:
                 self.ab_initio_bead_index.append(bead_index_for_update)
             else:
                 # the current bead configuration has not converged yet. Need to do Nudged Elastic band on updated surface.
                 self.ab_initio_bead_index = []
+
                 break 
         
         beads_pots_shift, beads_forces, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
         beads_pots = beads_pots_shift + self.optarrays["energy_shift"]
-        
+
         # all beads pass the test. The simulation has converged
         if len(self.ab_initio_bead_index) == self.beads.nbeads:
             info( "@Exit step: NEB_instanton: path optimization converged. Step %i \n" % step, verbosity.low)
@@ -362,6 +384,16 @@ class MAPNEBGPRMover(Motion):
                 self.optarrays["energy_shift"],
                 self.output_maker
             )
+
+            # output number of ab-initio calculation.
+            ipi.utils.nebinstgprtool.print_ab_initio_calculation_number(self.ab_initio_force_calculation_number, self.output_maker)
+            print("ab initio calculation number : " + str(self.ab_initio_force_calculation_number))
+
+            # output the time for execuation 
+            self.end_time = timer()
+            time_elapsed = (self.end_time - self.start_time) / 60  # time elapsed in minutes 
+            print("the running time for the program: " + str(time_elapsed) + " min.")
+
             self.options["stage"] = "converged"
         
 
@@ -404,7 +436,7 @@ class MAPNEBGPRMover(Motion):
 
         grad_max = 0
         # check early stop condition if there are beads out of trust region
-        early_stop_bool, outrange_bead_index = ipi.utils.nebinsgprtool.check_neb_early_stop(self.beads.q,
+        early_stop_bool, outrange_bead_index = ipi.utils.nebinstgprtool.check_neb_early_stop(self.beads.q,
                                                                                             self.gpr_model)
         
         # stop the step early if there are beads out of trust region.

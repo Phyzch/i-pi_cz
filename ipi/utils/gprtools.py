@@ -117,9 +117,9 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.0001):
     train_counts = 0 
 
     # for debug
-    print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
-    print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
-    print("\n")
+    # print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
+    # print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+    # print("\n")
 
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor 
@@ -151,11 +151,11 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.0001):
 
 
     # for debug:
-    print("Iter %d - Loss %.3f" %(train_counts, loss_value))
-    print("mean_module constant: " + str(model.mean_module.constant))
-    print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
-    print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
-    print("\n")
+    # print("Iter %d - Loss %.3f" %(train_counts, loss_value))
+    # print("mean_module constant: " + str(model.mean_module.constant))
+    # print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
+    # print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+    # print("\n")
 
     pass 
 
