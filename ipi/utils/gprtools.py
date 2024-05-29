@@ -22,8 +22,17 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
         We can access train_x, train_y, likelihood later as : self.train_inputs, self.train_targets, self.likelihood.
         '''
+        train_target_func = train_targets[:,0].detach().numpy()  # function f in training data (other data are gradient df/dx)
+        train_target_variance = np.max(train_target_func) - np.min(train_target_func)
+        noise_lower_bound = np.power(train_target_variance / 20, 2)
+        noise_upper_bound = np.power(train_target_variance, 2)
+
+        train_inputs_numpy = train_inputs.detach().numpy()
+        train_inputs_length = np.max(train_inputs_numpy, axis = 0) - np.min(train_inputs_numpy, axis = 0)  # variation of the training input across data point along diff dimension
+        train_inputs_lengthscale = np.mean(train_inputs_length)
+
         # set the noise constraint for the likelihood. The default noise variance = 10^{-4} is too large.
-        noise_constraint = gpytorch.constraints.Interval(1 * np.power(10.0, -5), 2.0 * np.power(10.0 ,-4))
+        noise_constraint = gpytorch.constraints.Interval(noise_lower_bound, noise_upper_bound)
         # likelihood: gpytorch.likelihood object. likelihood of observable given prediction f(X):  P(y|f(X)). See:  https://docs.gpytorch.ai/en/stable/likelihoods.html
         likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, noise_constraint = noise_constraint)
 
@@ -36,13 +45,13 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         self.mean_module = gpytorch.means.ConstantMeanGrad()  # mean function for Gaussian Processes using gradient information
         
         # set initial value of mean constant
-        mean_constant_estimate = np.mean(train_targets[:,0].detach().numpy())
+        mean_constant_estimate = np.mean(train_target_func)
         self.mean_module.constant = torch.nn.Parameter(torch.ones(1) * mean_constant_estimate)
 
         # set prior for the kernel     
         gamma_alpha = 3.0
-        prior_lengthscale = 5 * np.power(10.0, -3)
-        output_scale =  np.power(10.0, -3)
+        prior_lengthscale = train_inputs_lengthscale
+        output_scale = np.power(train_target_variance, 2)  # the output scale of the kernel is initialized as square of func difference of training data.
 
         lengthscale_prior = gpytorch.priors.GammaPrior(gamma_alpha, gamma_alpha / prior_lengthscale)
         outputscale_prior = gpytorch.priors.GammaPrior(gamma_alpha, gamma_alpha / output_scale)
@@ -78,7 +87,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
 
 
-def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.00001):
+def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.0001):
     '''
     the function that trains the model.
     model: GPytorch model 
@@ -132,12 +141,13 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.00001):
 
         train_counts = train_counts + 1
 
-        if train_counts % 10 == 0:
-            print("Iter %d - Loss %.3f" %(train_counts, loss_value))
-            print("mean_module constant: " + str(model.mean_module.constant))
-            print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
-            print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
-            print("\n")
+        # for debug.
+        # if train_counts % 10 == 0:
+        #     print("Iter %d - Loss %.3f" %(train_counts, loss_value))
+        #     print("mean_module constant: " + str(model.mean_module.constant))
+        #     print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
+        #     print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+        #     print("\n")
 
 
     # for debug:
@@ -155,7 +165,7 @@ def predict_latent_function_gp_with_derivative(model:GPModelWithDerivatives, tes
     
     :param: model: instance of GPModelWithDerivatives. Gaussian process regression model using derivative information.
     :param: test_inputs:  test data to compute posterior distribution. dtype: torch.tensor
-    :param: covar_bool: bool variable to wether output covariance matrix.
+    :param: covar_bool: bool variable, decide whether output covariance matrix or variance (diagonal of covariance matrix)
     
     suppose output_dim = m.
     return: mean: mean value of prediction for test_inputs. shape: [N, m]
@@ -177,17 +187,58 @@ def predict_latent_function_gp_with_derivative(model:GPModelWithDerivatives, tes
         test_mean = latent_func.mean 
         test_covariance = latent_func.covariance_matrix
         
-        # diagonal component of variance information.
-        # variance of function and gradient
+        # diagonal component of covariance matrix is the variance of function and gradient
         test_var =  torch.diag(test_covariance)
 
         test_var = test_var.reshape([model.output_dim, data_num])  # first row is variance for f,  second row is variance for df/dx1, third row: df/dx2, .. 
-        test_var = torch.transpose(test_var, -2, -1)  # now each row is one data piont.
+        test_var = torch.transpose(test_var, 0, 1)  # now each row is one data piont.
 
     if covar_bool:
         return test_mean, test_covariance 
     else:
         return test_mean, test_var 
+
+
+def predict_observable_gp_with_derivative(model: GPModelWithDerivatives, test_inputs, covar_bool = False):
+        '''
+        the function t hat predict the posterior distribution observable y = f(X) + epsilon of the test inputs.
+
+        :param: model: instance of GPModelWithDerivative. Gaussian process regression model using derivative information.
+        :param: test_inputs: test data to compute posterior distribution. dtype: torch.tensor
+        :param: covar_bool: bool variable, decide whether output covariance matrix or variance.
+
+        suppose output_dim = m
+        return: mean: mean value of the prediction for test inputs. shape: [N, m]
+
+                if covar_bool == True: return: test_covariance: [N * m , N * m]
+                if covar_bool == False: return: test_var: [N, m]: each row is the variance of one data point.
+        '''
+        test_input_dim = test_inputs.shape[-1]
+        assert test_input_dim == model.input_dim, "dimension of input test_inputs data is incompatible with model"
+
+        model.eval()
+        likelihood = model.likelihood
+        likelihood.eval() 
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            observable = likelihood(model(test_inputs))
+
+            data_num = test_inputs.shape[0]
+
+            test_mean = observable.mean 
+            test_covariance = observable.covariance_matrix
+
+            # diagonal component of covariance matrix is the variance of function and gradient
+            test_var = torch.diag(test_covariance)
+
+            test_var = test_var.reshape([model.output_dim, data_num])
+            test_var = torch.transpose(test_var, 0, 1)
+        
+        if covar_bool:
+            return test_mean, test_covariance
+        else:
+            return test_mean, test_var 
+
 
 
 def update_model_with_new_data(model : GPModelWithDerivatives, new_train_inputs, new_train_targets):
@@ -199,7 +250,7 @@ def update_model_with_new_data(model : GPModelWithDerivatives, new_train_inputs,
     :param: new_train_inputs: new training input data. datatype: torch.tensor() or numpy array. Size [N, d]. here d is input_dim
     :param: new_train_targets: new training target data. datatype: torch.tensor() or numpy array. Size [N, m], here m is output dim (m = d + 1)
     '''
-    train_inputs = model.train_inputs
+    train_inputs = model.train_inputs[0]
     train_targets = model.train_targets
 
     # check the data type of input training data. If it's not torch.Tensor, convert it to torch.Tensor.
@@ -316,7 +367,38 @@ class GPModelWithDerivativesWrapper():
 
         return V, grad_x, var_V, var_grad_q
     
+    def predict_observable(self, test_x):
+        '''
+        similar to predict_latent_function. But instead of output f(X) = (V, dV/dx) in predict_latent_function, we compute the observable y = f(X) + epsilon. (with noise)
+        
+        :param: test_x: input Cartesian coordinate data [N, 3 * natom]. 
+        
+        :return: V: predicted potential energy.
+                grad_x: dV/dx, predicted gradient of potential energy. In Cartesian coordinate.
+                var_V: uncertainty (variance) of potential energy.
+                var_grad: variance of gradients along different internal coordinate. We can postprocess to get uncertainty about force prediction.
+        '''
+        assert np.shape(test_x)[1] == 3 * self.natom 
 
+        # transform to internal coordinate q.
+        test_q = self.coordinate_transformer.get_internal_coordinate_q(test_x)
+        test_q_tensor = torch.from_numpy(test_q)
+
+        # use Gaussian process regression to make prediction 
+        test_observable_mean_tensor, test_observable_var_tensor = predict_observable_gp_with_derivative(self.gpr_model, test_inputs = test_q_tensor, covar_bool = False)
+        test_observable_mean = test_observable_mean_tensor.detach().cpu().numpy()
+        test_observable_var = test_observable_var_tensor.detach().cpu().numpy() 
+
+        V = test_observable_mean[:, 0]
+        grad_q = test_observable_mean[:, 1:]
+
+        # transform the gradient from internal coordinate q back to cartesian coordinate
+        grad_x = self.coordinate_transformer.transform_internal_g_h_to_cartesian_g_h(test_x, grad_q, hessian_bool = False)
+
+        var_V = test_observable_var[:, 0]
+        var_grad_q = test_observable_var[:, 1:]
+
+        return V, grad_x, var_V, var_grad_q
 
     def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad):
         '''
@@ -350,7 +432,7 @@ class GPModelWithDerivativesWrapper():
         update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, new_train_targets_tensor)
 
         # update the training data and targets in internal coordinate q.
-        self.train_inputs = np.concatenate([self.train_inputs, new_train_inputs ], axis = 0)
+        self.train_inputs = np.concatenate([self.train_inputs, new_train_inputs], axis = 0)
         self.train_targets = np.concatenate([self.train_targets, new_train_targets], axis = 0)
 
         # update the training data and targets in cartesian coordinate x.
