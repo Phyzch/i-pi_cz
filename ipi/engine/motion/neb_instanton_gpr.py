@@ -315,6 +315,10 @@ class MAPNEBGPRMover(Motion):
 
         # output info about force diff ratio |f_GPR -f|/|f|
         print("@Outerloop Exit info: |f_GPR -f|/|f|:" + str(self.force_diff_ratio_list))        
+        print("Finish Outerloop: " + str(step))
+        print("\n")
+        print("\n")
+
         self.force_diff_ratio_list = []
 
     def neb_stage_exit_step(self, step):
@@ -512,7 +516,8 @@ class MAPNEBGPRMover(Motion):
         '''
         tolerances = self.options["tolerances"]
 
-        info("@Exit step : Outer loop # {} , inner loop # {},  max force gradient {:4.2e} , (condition {:4.2e})".format(
+        print("\n")
+        info("@Inner step summary: Outer loop # {} , inner loop # {},  max force gradient {:4.2e} , (condition {:4.2e})".format(
                 outer_loop_step, neb_step,
                 grad_max, tolerances["gradient"]
             ),
@@ -520,17 +525,15 @@ class MAPNEBGPRMover(Motion):
             )
 
         print("old action: " + str(self.old_action) + "  new action: " + str(self.action))
-        print("\n")
         # check the optimization gradient for LI-NEB
         print("beads optimization gradient: " + str(npnorm(self.nebgm.neb_optimization_force, axis = 1)))
-        print("\n")
         # check potential of beads.
         print("beads potential relative to instanton path energy (eV): " + str( (self.nebgm.beads_energy - self.optarrays["instanton_path_energy"]) * units.unit_to_user("energy", "electronvolt", 1)  ))
-        print("\n")
         # check distance between beads (effect of spring_k)
         print("distance between beads in mass scaled coordinate: " + str( self.nebgm.beads_mscaled_distance))
         print("\n")
-        print("For outer loop step {}, finish inner loop neb step {}".format(outer_loop_step, neb_step))
+        print("@Inner loop Finish: outer loop step {}, finish inner loop neb step {}".format(outer_loop_step, neb_step))
+        print("\n")
         print("\n")
 
 
@@ -568,9 +571,9 @@ class MAPNEBGPRMover(Motion):
         print("\n")
 
         # scale spring_k, left_kappa and right_kappa
-        spring_k_scale = 0.25 / val1
-        left_kappa_scale = 0.5 / val2
-        right_kappa_scale = 0.5 / val3
+        spring_k_scale = 0.1 / val1
+        left_kappa_scale = 0.2 / val2
+        right_kappa_scale = 0.2 / val3
 
         self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
         self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale

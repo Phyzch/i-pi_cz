@@ -54,7 +54,6 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
         if internal_coordinate_r_closest > distance_cutoff:
             early_stop_bool = True 
             out_range_bead_index = bead_index 
-            print("@Early Stop for Inner Loop")
             break
     
     # for debug
@@ -62,6 +61,9 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
     print("internal coordinate distance cutoff: " + str(distance_cutoff))
     print("distance for beads to nearest GPR point: " + str(internal_coordinate_r_closest_list))
     print("\n")
+
+    if early_stop_bool:
+        print("@Early Stop for Inner Loop")
 
     return early_stop_bool, out_range_bead_index
 
