@@ -75,6 +75,8 @@ class MAPNEBGPRMover(Motion):
         kappa = { "left" : 50, "right": 50 },
         final_hessian_bool = False,
         alt_out = 5,
+        gpr_force_criterion = 0.02,
+        gpr_trust_region_ratio = 0.05
     ):
         """Initialises NEBMover.
 
@@ -135,7 +137,8 @@ class MAPNEBGPRMover(Motion):
 
         self.coordinate_transformer = None 
         self.gpr_model = None 
-        self.gpr_force_diff_ratio_criterion = 0.02 # criterion to stop the full calculation.
+        self.optarrays["gpr_force_criterion"] = gpr_force_criterion # criterion to stop the full calculation.
+        self.optarrays["gpr_trust_region_ratio"] = gpr_trust_region_ratio
 
         self.ab_initio_force_calculation_number = 0
 
@@ -297,7 +300,7 @@ class MAPNEBGPRMover(Motion):
             force_diff = training_bead_forces - ab_initio_beads_forces[0]
             force_diff_ratio = np.linalg.norm(force_diff) / np.linalg.norm(ab_initio_beads_forces[0])
             self.force_diff_ratio_list.append(force_diff_ratio)
-            if force_diff_ratio < self.gpr_force_diff_ratio_criterion:
+            if force_diff_ratio < self.optarrays["gpr_force_criterion"]:
                 # the ab-initio force is close to the force predicted by GPR. we check forces on other beads and try to exit.
                 self.ab_initio_bead_index = [bead_index_for_update]
                 attempt_exit_bool = True
@@ -356,7 +359,7 @@ class MAPNEBGPRMover(Motion):
             
             self.force_diff_ratio_list.append(force_diff_ratio)
 
-            if force_diff_ratio < self.gpr_force_diff_ratio_criterion:
+            if force_diff_ratio < self.optarrays["gpr_force_criterion"]:
                 self.ab_initio_bead_index.append(bead_index_for_update)
             else:
                 # the current bead configuration has not converged yet. Need to do Nudged Elastic band on updated surface.
@@ -437,6 +440,7 @@ class MAPNEBGPRMover(Motion):
         grad_max = 0
         # check early stop condition if there are beads out of trust region
         early_stop_bool, outrange_bead_index = ipi.utils.nebinstgprtool.check_neb_early_stop(self.beads.q,
+                                                                                            self.optarrays["gpr_trust_region_ratio"],
                                                                                             self.gpr_model)
         
         # stop the step early if there are beads out of trust region.

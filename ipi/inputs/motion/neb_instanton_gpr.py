@@ -213,6 +213,25 @@ class InputNebInstGPR(InputDictionary):
                 "default": "neb_instanton",
                 "help": "prefix of output file"
             }
+        ),
+        
+        "gpr_force_criterion":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.02,
+                "help": "convergence criterion for gpr outer loop. |f^GPR - f|/|f| < gpr_force_criterion means GPR prediction is reliable for force is reliable. Stop the outer loop."
+            }
+
+        ),
+
+        "gpr_trust_region_ratio":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.05,
+                "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region_ratio * NEB_path_length. If the distance between NEB beads and nearest GPR point exceed r_max, we stop the NEB inner loop and evaluate ab-initio force on that point."
+            }
         )
 
     }
@@ -250,13 +269,15 @@ class InputNebInstGPR(InputDictionary):
         self.instanton_path_energy.store(optarrays["instanton_path_energy"])
         self.instanton_bead_number.store(optarrays["instanton_bead_number"])
         self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
+        self.gpr_force_criterion.store(optarrays["gpr_force_criterion"])
+        self.gpr_trust_region_ratio.store(optarrays["gpr_trust_region_ratio"])
 
         # store result of instanton calculation
         self.instanton_temperature.store(optarrays["instanton_temperature"])
         self.instanton_bead_q.store(optarrays["instanton_bead_q"]) 
         self.instanton_bead_pot.store(optarrays["instanton_bead_pot"])
         self.instanton_hessian.store(optarrays["instanton_hessian"])
-   
+
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()
         rv["mode"] = self.mode.fetch()

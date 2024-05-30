@@ -7,7 +7,7 @@ from ipi.utils.gprtools import GPModelWithDerivativesWrapper
 from ipi.engine.beads import Beads
 from ipi.utils.depend import dstrip
 
-def check_neb_early_stop(beads_x, gpr_model: GPModelWithDerivativesWrapper):
+def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDerivativesWrapper):
     '''
     check early stoage criterion for neb algorithm with machine learning.
     If the bead move out of trusted region, then we stop the current move.
@@ -15,6 +15,7 @@ def check_neb_early_stop(beads_x, gpr_model: GPModelWithDerivativesWrapper):
     (where sigma is the length scale of gpr kernel), then the bead is out of trusted region.
 
     :param: beads_x: cartesian coordinate X of neb beads 
+    :param: trust_region_ratio: cutoff for rmax / neb_path_length. If beads move out of trust region, we stop the inner neb loop. 
     :param: gpr_model: model to perform the Gaussian Process Regression.
 
     :return: early_stop_bool: bool variable to indicate whether there is bead out of trust region.
@@ -30,7 +31,7 @@ def check_neb_early_stop(beads_x, gpr_model: GPModelWithDerivativesWrapper):
     neb_path_internal_coordinate_length = np.sum(np.linalg.norm(beads_internal_coordinate[1:] - beads_internal_coordinate[:-1], axis = 1))
 
     # distance cutoff for trust region.
-    distance_cutoff = neb_path_internal_coordinate_length * 0.05
+    distance_cutoff = neb_path_internal_coordinate_length * trust_region_ratio
     # the location of training data in internal coordinate.
     gpr_training_internal_coordinate = gpr_model.output_training_internal_inputs()
     
@@ -53,6 +54,7 @@ def check_neb_early_stop(beads_x, gpr_model: GPModelWithDerivativesWrapper):
         if internal_coordinate_r_closest > distance_cutoff:
             early_stop_bool = True 
             out_range_bead_index = bead_index 
+            print("@Early Stop for Inner Loop")
             break
     
     # for debug
