@@ -12,7 +12,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
     '''
     Gaussian Process model with multiple output (f(x), df/dx1, .. , df/dxn)
     '''
-    def __init__(self, train_inputs, train_targets, ard_num_dims, output_dims):
+    def __init__(self, train_inputs, train_targets, ard_num_dims, output_dims,
+                 kernel_initial_outputscale, kernel_initial_lengthscale,
+                 noise_variance_lower_bound, noise_variance_upper_bound):
         '''
         :param: train_inputs: training data.  torch.Tensor object. shape: [N, d]. N: number of data points. d: input data dimensions.
         :param: train_targets: training data.  torch.Tensor object. shape: [N, m]. N: number of data points. m: output data dimensions. (multiple output)
@@ -22,17 +24,17 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
         We can access train_x, train_y, likelihood later as : self.train_inputs, self.train_targets, self.likelihood.
         '''
-        train_target_func = train_targets[:,0].detach().numpy()  # function f in training data (other data are gradient df/dx)
-        train_target_variance = np.max(train_target_func) - np.min(train_target_func)
-        noise_lower_bound = np.power(train_target_variance / 20, 2)
-        noise_upper_bound = np.power(train_target_variance, 2)
-
-        train_inputs_numpy = train_inputs.detach().numpy()
-        train_inputs_length = np.max(train_inputs_numpy, axis = 0) - np.min(train_inputs_numpy, axis = 0)  # variation of the training input across data point along diff dimension
-        train_inputs_lengthscale = np.mean(train_inputs_length)
+        noise_variance_lower_bound = noise_variance_lower_bound
+        noise_variance_upper_bound = noise_variance_upper_bound
 
         # set the noise constraint for the likelihood. The default noise variance = 10^{-4} is too large.
-        noise_constraint = gpytorch.constraints.Interval(noise_lower_bound, noise_upper_bound)
+        noise_constraint = gpytorch.constraints.Interval(noise_variance_lower_bound, noise_variance_upper_bound)
+
+        # train_inputs_numpy = train_inputs.detach().numpy()
+        # train_inputs_length = np.max(train_inputs_numpy, axis = 0) - np.min(train_inputs_numpy, axis = 0)  # variation of the training input across data point along diff dimension
+        # train_inputs_length_tensor = torch.from_numpy(train_inputs_length) 
+
+
         # likelihood: gpytorch.likelihood object. likelihood of observable given prediction f(X):  P(y|f(X)). See:  https://docs.gpytorch.ai/en/stable/likelihoods.html
         likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, noise_constraint = noise_constraint)
 
@@ -45,16 +47,22 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         self.mean_module = gpytorch.means.ConstantMeanGrad()  # mean function for Gaussian Processes using gradient information
         
         # set initial value of mean constant
+        train_target_func = train_targets[:,0].detach().numpy()  # function f in training data (other data are gradient df/dx)
         mean_constant_estimate = np.mean(train_target_func)
         self.mean_module.constant = torch.nn.Parameter(torch.ones(1) * mean_constant_estimate)
 
         # set prior for the kernel     
-        gamma_alpha = 3.0
-        prior_lengthscale = train_inputs_lengthscale
-        output_scale = np.power(train_target_variance, 2)  # the output scale of the kernel is initialized as square of func difference of training data.
+        length_gamma_alpha = 3.0
+        # prior_lengthscale = train_inputs_length_tensor / 2   # the prior distribution of length scale should be smaller than the region but larger than distance between points.
+        prior_lengthscale = kernel_initial_lengthscale
 
-        lengthscale_prior = gpytorch.priors.GammaPrior(gamma_alpha, gamma_alpha / prior_lengthscale)
-        outputscale_prior = gpytorch.priors.GammaPrior(gamma_alpha, gamma_alpha / output_scale)
+        output_gamma_alpha = 3.0
+        output_scale = kernel_initial_outputscale  # the output scale of the kernel is initialized as square of 1/10 of target data variance.
+
+        lengthscale_prior = gpytorch.priors.GammaPrior(length_gamma_alpha, length_gamma_alpha / prior_lengthscale)  # the mean value for gamma prior will be prior_lengthscale. the std_x / x will be 1/sqrt(alpha)
+        
+        outputscale_prior = gpytorch.priors.GammaPrior(output_gamma_alpha, output_gamma_alpha / output_scale)
+        
         # kernel function. base kernel before adding outputscaling 
         self.base_kernel = gpytorch.kernels.RBFKernelGrad(ard_num_dims = ard_num_dims, lengthscale_prior = lengthscale_prior)
         
@@ -87,7 +95,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
 
 
-def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.0001):
+def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10.0, -6)):
     '''
     the function that trains the model.
     model: GPytorch model 
@@ -116,9 +124,15 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.0001):
 
     train_counts = 0 
 
+    likelihood_constraint = likelihood.raw_task_noises_constraint
+    likelihood_raw_noise = likelihood.raw_task_noises
+
     # for debug
+    # print("Iter %d" %(train_counts))
+    # print("mean_module constant: " + str(model.mean_module.constant))    
     # print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
     # print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+    # print("noise:" + str(likelihood_constraint.transform(likelihood_raw_noise)))
     # print("\n")
 
     while loss_func_change > training_error_cutoff:
@@ -155,6 +169,8 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = 0.0001):
     # print("mean_module constant: " + str(model.mean_module.constant))
     # print("input lengthscale: " + str(model.base_kernel.lengthscale.squeeze().detach().numpy()) )
     # print("outputscale: " + str(model.covar_module.outputscale.squeeze().detach().numpy()) )
+    # likelihood_raw_noise = likelihood.raw_task_noises
+    # print("noise:" + str(likelihood_constraint.transform(likelihood_raw_noise)))
     # print("\n")
 
     pass 
@@ -284,7 +300,10 @@ class GPModelWithDerivativesWrapper():
     wrapper class for GPModelWithDerivatives. 
     handles the transformation between internal coordinate and cartesian coordinate + GPR training.
     '''
-    def __init__(self, train_x, train_V, train_grad, natom, coordinate_transformer : non_redundant_coordinate_transformer):
+    def __init__(self, train_x, train_V, train_grad, 
+                 natom, coordinate_transformer : non_redundant_coordinate_transformer,
+                 kernel_initial_outputscale, kernel_initial_lengthscale,
+                 likelihood_noise_variance_lower_bound, likelihood_noise_variance_upper_bound):
         '''
         initialize the model.
         :param: train_x: [N, 3 * natom]. initial N training points x. (Cartesian coordinate)  numpy array.
@@ -316,7 +335,10 @@ class GPModelWithDerivativesWrapper():
         train_targets_tensor = torch.from_numpy(train_targets)
 
         # initialize the gaussian process regression model with inpt training data.
-        self.gpr_model = GPModelWithDerivatives(train_inputs_tensor, train_targets_tensor, input_dim, output_dim)
+        self.gpr_model = GPModelWithDerivatives(train_inputs_tensor, train_targets_tensor, input_dim, output_dim,
+                                                kernel_initial_outputscale, kernel_initial_lengthscale, 
+                                                likelihood_noise_variance_lower_bound,
+                                                likelihood_noise_variance_upper_bound)
 
         # train self.gpr_model() to get optimized hyperparameter
         train_gpr(self.gpr_model)

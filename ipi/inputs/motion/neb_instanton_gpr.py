@@ -219,7 +219,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.02,
+                "default": 0.05,
                 "help": "convergence criterion for gpr outer loop. |f^GPR - f|/|f| < gpr_force_criterion means GPR prediction is reliable for force is reliable. Stop the outer loop."
             }
 
@@ -229,10 +229,38 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.05,
+                "default": 0.03,
                 "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region_ratio * NEB_path_length. If the distance between NEB beads and nearest GPR point exceed r_max, we stop the NEB inner loop and evaluate ab-initio force on that point."
             }
-        )
+        ),
+
+        "gpr_kernel_initial_outputscale":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": np.power(10.0, -6), 
+                "help": "Gaussian Process Regression hyperparameter. Output scale of Gaussian process regression kernel. Typically it is the scale of variance of potential energy",
+            }
+        ),
+
+        "gpr_kernel_initial_lengthscale":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 5 * np.power(10.0, -3),
+                "help": "Gaussian Process Regression hyperparameter. Lengthscale of Gaussian Process regression model in non-redundant internal coordinate. Typically this should be in the same order of the range of input data."
+            }
+        ),
+
+        "gpr_likelihood_noise_variance_constraint":(
+            InputDictionary,
+            {
+                "dtype": float,
+                "options": ["upper_bound", "lower_bound"],
+                 "default": [1e-6, 1e-8],
+                 "help": "constraint for the variance of noise in the Gaussian Process Regression",
+            },
+        ),
 
     }
 
@@ -269,14 +297,20 @@ class InputNebInstGPR(InputDictionary):
         self.instanton_path_energy.store(optarrays["instanton_path_energy"])
         self.instanton_bead_number.store(optarrays["instanton_bead_number"])
         self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
+
+        # store parameters about gaussian process regression
         self.gpr_force_criterion.store(optarrays["gpr_force_criterion"])
         self.gpr_trust_region_ratio.store(optarrays["gpr_trust_region_ratio"])
-
+        self.gpr_kernel_initial_outputscale.store(optarrays["gpr_kernel_initial_outputscale"])
+        self.gpr_kernel_initial_lengthscale.store(optarrays["gpr_kernel_initial_lengthscale"])
+        self.gpr_likelihood_noise_variance_constraint.store(optarrays["gpr_likelihood_noise_variance_constraint"])
         # store result of instanton calculation
         self.instanton_temperature.store(optarrays["instanton_temperature"])
         self.instanton_bead_q.store(optarrays["instanton_bead_q"]) 
         self.instanton_bead_pot.store(optarrays["instanton_bead_pot"])
         self.instanton_hessian.store(optarrays["instanton_hessian"])
+
+        
 
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()
