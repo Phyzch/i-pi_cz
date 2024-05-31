@@ -79,7 +79,8 @@ class MAPNEBGPRMover(Motion):
         gpr_trust_region_ratio = 0.05,
         gpr_kernel_initial_outputscale = np.power(10.0, -6),
         gpr_kernel_initial_lengthscale = 5 * np.power(10.0, -3),
-        gpr_likelihood_noise_variance_constraint = {"upper_bound" : 1e-6, "lower_bound": 1e-8}
+        gpr_likelihood_noise_variance_constraint = {"upper_bound" : 1e-6, "lower_bound": 1e-8},
+        gpr_kernel_outputscale_constraint = {"upper_bound" : 1e-6, "lower_bound": 1e-8}
     ):
         """Initialises NEBMover.
 
@@ -141,6 +142,7 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["gpr_kernel_initial_outputscale"] = gpr_kernel_initial_outputscale
         self.optarrays["gpr_kernel_initial_lengthscale"] = gpr_kernel_initial_lengthscale
         self.optarrays["gpr_likelihood_noise_variance_constraint"] = gpr_likelihood_noise_variance_constraint
+        self.optarrays["gpr_kernel_outputscale_constraint"] = gpr_kernel_outputscale_constraint
 
         self.ab_initio_index_list = []
         self.force_diff_ratio_list = []
@@ -210,12 +212,18 @@ class MAPNEBGPRMover(Motion):
 
         noise_variance_lower_bound = self.optarrays["gpr_likelihood_noise_variance_constraint"]["lower_bound"]
         noise_variance_upper_bound = self.optarrays["gpr_likelihood_noise_variance_constraint"]["upper_bound"]
+
+        outputscale_lower_bound = self.optarrays["gpr_kernel_outputscale_constraint"]["lower_bound"]
+        outputscale_upper_bound = self.optarrays["gpr_kernel_outputscale_constraint"]["upper_bound"]
+
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(train_x, train_V, train_grad,
                                                                      self.beads.natoms, self.coordinate_transformer,
                                                                     kernel_initial_outputscale = self.optarrays["gpr_kernel_initial_outputscale"],
                                                                     kernel_initial_lengthscale = self.optarrays["gpr_kernel_initial_lengthscale"],
                                                                     likelihood_noise_variance_lower_bound = noise_variance_lower_bound,
-                                                                    likelihood_noise_variance_upper_bound = noise_variance_upper_bound)
+                                                                    likelihood_noise_variance_upper_bound = noise_variance_upper_bound,
+                                                                    outputscale_constraint_lower_bound = outputscale_lower_bound,
+                                                                     outputscale_constraint_upper_bound = outputscale_upper_bound )
 
 
 

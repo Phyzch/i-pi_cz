@@ -243,6 +243,16 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
+        "gpr_kernel_outputscale_constraint":(
+            InputDictionary,
+            {
+                "dtype": float,
+                "options":["upper_bound", "lower_bound"],
+                "default" : [1e-6, 1e-8],
+                "help": "constraint for the  output scale of the kernel"
+            }
+        ),
+
         "gpr_kernel_initial_lengthscale":(
             InputValue,
             {
@@ -304,6 +314,8 @@ class InputNebInstGPR(InputDictionary):
         self.gpr_kernel_initial_outputscale.store(optarrays["gpr_kernel_initial_outputscale"])
         self.gpr_kernel_initial_lengthscale.store(optarrays["gpr_kernel_initial_lengthscale"])
         self.gpr_likelihood_noise_variance_constraint.store(optarrays["gpr_likelihood_noise_variance_constraint"])
+        self.gpr_kernel_outputscale_constraint.store(optarrays["gpr_kernel_outputscale_constraint"])
+
         # store result of instanton calculation
         self.instanton_temperature.store(optarrays["instanton_temperature"])
         self.instanton_bead_q.store(optarrays["instanton_bead_q"]) 

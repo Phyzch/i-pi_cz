@@ -41,6 +41,24 @@ class non_redundant_coordinate_transformer():
         self.ref_U = ref_U 
         self.ref_UT = np.transpose(self.ref_U)
     
+    def _compute_transformation_matrix_U(self, x):
+        '''
+        compute transformation matrix U for each point individually.
+        matrix U will help the transformation between nonredundant coordinate q and redundant coordinate d.
+
+        :param: x: [nbatch, 3 * n]
+        '''
+        x1 = np.copy(x)
+        B = self._compute_redundant_gradient_matrix_B(x1)
+        nbatch = np.shape(x)[0]
+        
+        U = np.array([self._SVD_matrix_B(B[i]) for i in range(nbatch)])
+
+        UT = np.transpose(U, axes = (0,2,1))
+
+        return U, UT
+
+
     # x - > B
     def _compute_redundant_gradient_matrix_B(self, x):
         '''
@@ -127,7 +145,7 @@ class non_redundant_coordinate_transformer():
         return d 
     
     # d -> q 
-    def _transform_redundant_d_to_nonredundant_q(self, d):
+    def _transform_redundant_d_to_nonredundant_q(self, d, x):
         '''
         transformation from redundant coordinate d to non-redundant coordinate q using matrix U.
         q = U^T * d
@@ -137,7 +155,12 @@ class non_redundant_coordinate_transformer():
         return q: non-redundant coordinate. shape:[nbatch, 3 * natom - 6]
         '''
         d_stack = np.expand_dims(d, axis = 2)
-        q = np.matmul(self.ref_UT ,d_stack)
+
+        # use the transformation matrix U for each point.
+        U, UT = self._compute_transformation_matrix_U(x)
+
+        q = np.matmul(UT, d_stack)
+        # q = np.matmul(self.ref_UT ,d_stack)
 
         q = np.squeeze(q, axis = 2)
 
@@ -155,7 +178,7 @@ class non_redundant_coordinate_transformer():
         d = self._compute_redundant_coordinate_d(x)
 
         # non-redundant internal coordinate
-        q = self._transform_redundant_d_to_nonredundant_q(d)
+        q = self._transform_redundant_d_to_nonredundant_q(d, x)
         
         return q 
     
@@ -227,7 +250,11 @@ class non_redundant_coordinate_transformer():
         nbatch = np.shape(x)[0]
         B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2, 3n]
         
-        Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+        # compute transformation matrix U for each point
+        U, UT = self._compute_transformation_matrix_U(x)
+
+        # Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+        Bq = np.matmul(UT, B)  # /partial q / \partial x. shape: [nbatch, 3n-6, 3n]
 
         Bq_T = np.transpose(Bq, axes = (0, 2, 1))  # transpose of Bq. shape: [nbatch, 3n, 3n-6]
 
@@ -251,7 +278,8 @@ class non_redundant_coordinate_transformer():
             # H_x_part2 = g_q^T * U^T * (partial^2 d / partial x partial x'). here (partial^2 d / partial x partial x') is a tensor.
             g_q_T = np.expand_dims(g_q, axis = 1)  # shape : [nbatch, 1, 3n -6]
             # g_q^T * U^T.  shape: [nbatch, natom^2]
-            prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
+            #prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
+            prefactor = np.squeeze(np.matmul(g_q_T, UT), axis = 1)
 
             # compute hessian_d: rank-3 tensor. size [nbatch, natom^2, 3 * natom, 3 * natom] 
             hessian_d = self._compute_hessian_d(x)
@@ -281,7 +309,11 @@ class non_redundant_coordinate_transformer():
         nbatch = np.shape(x)[0]
         B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2 , 3n]
         
-        Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n] 
+        # compute transformation matrix U for each point
+        U, UT = self._compute_transformation_matrix_U(x)
+
+        # Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n] 
+        Bq = np.matmul(UT, B) 
 
         Bq_T = np.transpose(Bq, axes = (0,2,1))  # transpose of Bq. shape:[nbatch, 3n, 3n - 6]
 
@@ -306,7 +338,8 @@ class non_redundant_coordinate_transformer():
             # compute g_q^{T} \partial B_q / \partial x.  shape [nbatch, 1, 3n-6]
             g_q_T = np.expand_dims(g_q, axis = 1)
             # g_q^T * U^T.  shape: [nbatch, natom^2]
-            prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
+            # prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
+            prefactor = np.squeeze(np.matmul(g_q_T, UT), axis = 1)
 
             # compute hessian_d: rank-3 tensor. size [nbatch, natom^2, 3 * natom, 3 * natom] 
             hessian_d = self._compute_hessian_d(x)
