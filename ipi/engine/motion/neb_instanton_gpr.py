@@ -29,6 +29,7 @@ from ipi.utils.nebinstool import RK4, dydt_inverted_pot
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
+import ipi.utils.nebinstool
 from timeit import default_timer as timer
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
@@ -77,10 +78,9 @@ class MAPNEBGPRMover(Motion):
         alt_out = 5,
         gpr_force_criterion = 0.02,
         gpr_trust_region_ratio = 0.05,
-        gpr_kernel_initial_outputscale = np.power(10.0, -6),
-        gpr_kernel_initial_lengthscale = 5 * np.power(10.0, -3),
-        gpr_likelihood_noise_variance_constraint = {"upper_bound" : 1e-6, "lower_bound": 1e-8},
-        gpr_kernel_outputscale_constraint = {"upper_bound" : 1e-6, "lower_bound": 1e-8}
+        gpr_kernel_outputscale_prior_mean = np.power(10.0, -6),
+        gpr_kernel_lengthscale_prior_mean = 5 * np.power(10.0, -3),
+        gpr_likelihood_noise_variance_constraint = {"pot_upper_bound" : 1e-6, "pot_lower_bound": 1e-8}
     ):
         """Initialises NEBMover.
 
@@ -139,10 +139,9 @@ class MAPNEBGPRMover(Motion):
         # we use this list when we try to converge the calculation.
         self.optarrays["gpr_force_criterion"] = gpr_force_criterion # criterion to stop the full calculation.
         self.optarrays["gpr_trust_region_ratio"] = gpr_trust_region_ratio
-        self.optarrays["gpr_kernel_initial_outputscale"] = gpr_kernel_initial_outputscale
-        self.optarrays["gpr_kernel_initial_lengthscale"] = gpr_kernel_initial_lengthscale
+        self.optarrays["gpr_kernel_outputscale_prior_mean"] = gpr_kernel_outputscale_prior_mean
+        self.optarrays["gpr_kernel_lengthscale_prior_mean"] = gpr_kernel_lengthscale_prior_mean
         self.optarrays["gpr_likelihood_noise_variance_constraint"] = gpr_likelihood_noise_variance_constraint
-        self.optarrays["gpr_kernel_outputscale_constraint"] = gpr_kernel_outputscale_constraint
 
         self.ab_initio_index_list = []
         self.force_diff_ratio_list = []
@@ -181,6 +180,10 @@ class MAPNEBGPRMover(Motion):
         self.gpr_beads = Beads(self.beads.natoms, 1)
         self.gpr_forces = self.forces.copy(self.gpr_beads, self.cell)
 
+        # create bead object that is used to add more training data to GPR model during initial training.
+        self.new_gpr_beads = Beads(self.beads.natoms, self.beads.nbeads)
+        self.new_gpr_forces = self.forces.copy(self.new_gpr_beads, self.cell)
+
         self.nebgm.bind(self)
         
     def initialialize_GPR_model(self):
@@ -207,84 +210,78 @@ class MAPNEBGPRMover(Motion):
         train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
         train_grad = - np.copy(dstrip(self.forces.f))
 
+        # generate second set of training data to help training
+        start_index = 1
+        end_index = 3
+        interpolation_bead_path = self.beads.q[start_index : end_index + 1]
+        interpolation_number = 12
+        cubic_interpolation_x , cubic_interpolation_r = ipi.utils.nebinstool.path_cubic_interpolation(interpolation_bead_path, interpolation_number)
+
+        self.new_gpr_beads.q[:] = cubic_interpolation_x[1:-1]
+
+        new_train_x = np.copy(self.new_gpr_beads.q)
+        new_train_V = np.copy(self.new_gpr_forces.pots)- self.optarrays["energy_shift"]
+        new_train_grad = - np.copy(dstrip(self.new_gpr_forces.f))
+
+        train_x = np.concatenate([train_x, new_train_x], axis = 0)
+        train_V = np.concatenate([train_V, new_train_V], axis = 0)
+        train_grad = np.concatenate([train_grad, new_train_grad], axis = 0)
+
         # count the # of ab-initio calculation we have done.
         self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
 
-        noise_variance_lower_bound = self.optarrays["gpr_likelihood_noise_variance_constraint"]["lower_bound"]
-        noise_variance_upper_bound = self.optarrays["gpr_likelihood_noise_variance_constraint"]["upper_bound"]
-
-        outputscale_lower_bound = self.optarrays["gpr_kernel_outputscale_constraint"]["lower_bound"]
-        outputscale_upper_bound = self.optarrays["gpr_kernel_outputscale_constraint"]["upper_bound"]
-
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(train_x, train_V, train_grad,
                                                                      self.beads.natoms, self.coordinate_transformer,
-                                                                    kernel_initial_outputscale = self.optarrays["gpr_kernel_initial_outputscale"],
-                                                                    kernel_initial_lengthscale = self.optarrays["gpr_kernel_initial_lengthscale"],
-                                                                    likelihood_noise_variance_lower_bound = noise_variance_lower_bound,
-                                                                    likelihood_noise_variance_upper_bound = noise_variance_upper_bound,
-                                                                    outputscale_constraint_lower_bound = outputscale_lower_bound,
-                                                                     outputscale_constraint_upper_bound = outputscale_upper_bound )
+                                                                    kernel_initial_outputscale = self.optarrays["gpr_kernel_outputscale_prior_mean"],
+                                                                    kernel_initial_lengthscale = self.optarrays["gpr_kernel_lengthscale_prior_mean"],
+                                                                    likelihood_noise_variance_constraint= self.optarrays["gpr_likelihood_noise_variance_constraint"])
 
+    def check_initial_training_result(self):
+        '''
+        check whether the training of GPR model is successful. If not, stop the simulation and report error
+        '''
+        predicted_V_shift, predicted_grad, _, _ = self.gpr_model.predict_latent_function(self.beads.q) 
 
+        predicted_forces = - predicted_grad 
 
-    def step(self, step=None):
-        """Does one simulation time step.
-        """
+        ab_initio_V_shift = self.forces.pots - self.optarrays["energy_shift"]
+        ab_initio_forces = self.forces.f 
 
-        info(" @NEB STEP %d, stage: %s" % (step, self.options["stage"]), verbosity.debug)
+        # for debug
+        learned_length_scale = self.gpr_model.gpr_model.base_kernel.lengthscale.detach().numpy()
+        internal_input_range = np.max(self.gpr_model.train_inputs, axis=0) - np.min(self.gpr_model.train_inputs, axis = 0)
 
-        # print initial geometry and energy of neb path.
-        if step == 0:
-            ipi.utils.nebinstool.print_neb_instanton_geo(
-                self.options["prefix"] + "_initial_",
-                step,
-                self.beads.nbeads,
-                self.beads.natoms,
-                self.beads.names,
-                self.beads.q,
-                self.forces.pots,
-                self.cell,
-                self.optarrays["energy_shift"],
-                self.output_maker
-            )
+        # check energy:
+        V_error = np.abs(ab_initio_V_shift - predicted_V_shift) / np.abs(ab_initio_V_shift)
 
-            # convert unit for spring_k , kappa. only do it for STEP = 0, not for RESTART simulation. 
-            self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
-            self.optarrays["kappa"]["left"] = self.optarrays["kappa"]["left"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
-            self.optarrays["kappa"]["right"] = self.optarrays["kappa"]["right"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
-            self.nebgm.spring_k = (self.optarrays["spring_k"]).copy()
-            self.nebgm.kappa = dict(self.optarrays["kappa"])
-
-            # Only do it for initial calculation. Not for restart.
-            self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
-            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
-            # TODO: assign instanton path energy also for RP_MAP object.
+        # check force:
+        df = np.linalg.norm( ab_initio_forces - predicted_forces , axis = 1)
+        ab_initio_force_amplitude = np.linalg.norm(ab_initio_forces, axis = 1)
+        df_error = df / ab_initio_force_amplitude
         
-        if self.coordinate_transformer == None:
-            # initialize Gaussian Process Regression(GPR) model and coordiante transformer
-            self.initialialize_GPR_model()
+        print("\n")
+        print("error of potential prediction: " + str(V_error))
+        print("error of force prediction: " + str(df_error))
+        print("\n")
 
-            self.check_initial_training_result()
+        # check overfitting.
+        self.gpr_beads.q[0] = (self.beads.q[0] + self.beads.q[1]) / 2
+        ab_initio_gpr_bead_force = self.gpr_forces.f[0]
+        ab_initio_gpr_bead_pot = self.gpr_forces.pots[0] - self.optarrays["energy_shift"] 
 
-            # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
-            self.nebgm.gpr_model = self.gpr_model 
-            self.nebgm.coordinate_transformer = self.coordinate_transformer
+        predicted_V_shift, predicted_gpr_bead_grad, _, _ = self.gpr_model.predict_observable(self.gpr_beads.q)
+        predicted_gpr_bead_force = - predicted_gpr_bead_grad[0]
+        predicted_V_shift = predicted_V_shift[0]
 
+        test_V_error = np.abs((predicted_V_shift - ab_initio_gpr_bead_pot) / ab_initio_gpr_bead_pot)
+        test_df = ab_initio_gpr_bead_force - predicted_gpr_bead_force
+        test_df_ratio = np.linalg.norm(test_df) / np.linalg.norm(ab_initio_gpr_bead_force)
 
-        # Check if we restarted a converged calculation (by mistake)
-        if self.options["stage"] == "converged":
-            softexit.trigger(
-                status="success",
-                message="neb calculation converged. Instanton geometry calculation finishes. Exiting simulation",
-            )
+        print("V error for test data " + str(test_V_error))
+        print("f error for test data " + str(test_df_ratio))
+        pass 
 
-        if self.options["stage"] == "neb":
-            # use nudged elastic band method to find minmum action path.
-            # then we will switch to the stage "instanton"
-            early_stop_bool, outrange_bead_index = self.neb_loop(step)
-
-            # update Gaussian Process Regression model with new training data
-            self.update_GPR_model(early_stop_bool, outrange_bead_index, step)
+        # add more ab-initio data to improve the GPR training. In case of underfitting.
 
     def update_GPR_model(self, early_stop_bool, outrange_bead_index, step):
         '''
@@ -347,6 +344,67 @@ class MAPNEBGPRMover(Motion):
         print("\n")
 
         self.force_diff_ratio_list = []
+
+
+    def step(self, step=None):
+        """Does one simulation time step.
+        """
+
+        info(" @NEB STEP %d, stage: %s" % (step, self.options["stage"]), verbosity.debug)
+
+        # print initial geometry and energy of neb path.
+        if step == 0:
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"] + "_initial_",
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
+
+            # convert unit for spring_k , kappa. only do it for STEP = 0, not for RESTART simulation. 
+            self.optarrays["spring_k"] = self.optarrays["spring_k"] / np.power( units.unit_to_internal("length", "angstrom", 1) , 2)  # input unit: angstrom^{-2}
+            self.optarrays["kappa"]["left"] = self.optarrays["kappa"]["left"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
+            self.optarrays["kappa"]["right"] = self.optarrays["kappa"]["right"] / ( units.unit_to_internal("length" , "angstrom", 1) * units.unit_to_internal("energy", "electronvolt", 1) )
+            self.nebgm.spring_k = (self.optarrays["spring_k"]).copy()
+            self.nebgm.kappa = dict(self.optarrays["kappa"])
+
+            # Only do it for initial calculation. Not for restart.
+            self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
+            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
+            # TODO: assign instanton path energy also for RP_MAP object.
+        
+        if self.coordinate_transformer == None:
+            # initialize Gaussian Process Regression(GPR) model and coordiante transformer
+            self.initialialize_GPR_model()
+
+            self.check_initial_training_result()
+
+            # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
+            self.nebgm.gpr_model = self.gpr_model 
+            self.nebgm.coordinate_transformer = self.coordinate_transformer
+
+
+        # Check if we restarted a converged calculation (by mistake)
+        if self.options["stage"] == "converged":
+            softexit.trigger(
+                status="success",
+                message="neb calculation converged. Instanton geometry calculation finishes. Exiting simulation",
+            )
+
+        if self.options["stage"] == "neb":
+            # use nudged elastic band method to find minmum action path.
+            # then we will switch to the stage "instanton"
+            early_stop_bool, outrange_bead_index = self.neb_loop(step)
+
+            # update Gaussian Process Regression model with new training data
+            self.update_GPR_model(early_stop_bool, outrange_bead_index, step)
+
 
     def neb_stage_exit_step(self, step):
         '''
@@ -447,7 +505,7 @@ class MAPNEBGPRMover(Motion):
         self.neb_initialize(outer_loop_step) # we have to re-initialize Nudged Elastic Band variable 
         
         while grad_max > tolerances["gradient"]:
-            grad_max, early_stop_bool, outrange_bead_index = self.step_neb(outer_loop_step, neb_step)
+            grad_max, early_stop_bool, outrange_bead_index = self.neb_step(outer_loop_step, neb_step)
             neb_step = neb_step + 1
 
             # beads move out of trust region.
@@ -457,7 +515,7 @@ class MAPNEBGPRMover(Motion):
         return early_stop_bool, outrange_bead_index
 
         
-    def step_neb(self, outer_loop_step, neb_step):
+    def neb_step(self, outer_loop_step, neb_step):
         '''
         doing neb move for one step.
         '''
@@ -563,44 +621,6 @@ class MAPNEBGPRMover(Motion):
         print("\n")
         print("\n")
 
-    def check_initial_training_result(self):
-        '''
-        check whether the training of GPR model is successful. If not, stop the simulation and report error
-        '''
-        predicted_V_shift, predicted_grad, _, _ = self.gpr_model.predict_latent_function(self.beads.q) 
-
-        predicted_forces = - predicted_grad 
-
-        ab_initio_V_shift = self.forces.pots - self.optarrays["energy_shift"]
-        ab_initio_forces = self.forces.f 
-
-        # for debug
-        learned_length_scale = self.gpr_model.gpr_model.base_kernel.lengthscale.detach().numpy()
-        internal_input_range = np.max(self.gpr_model.train_inputs, axis=0) - np.min(self.gpr_model.train_inputs, axis = 0)
-
-        # check energy:
-        V_error = np.abs(ab_initio_V_shift - predicted_V_shift) / np.abs(ab_initio_V_shift)
-
-        # check force:
-        df = np.linalg.norm( ab_initio_forces - predicted_forces , axis = 1)
-        ab_initio_force_amplitude = np.linalg.norm(ab_initio_forces, axis = 1)
-        df_ratio = df / ab_initio_force_amplitude
-        
-        print("\n")
-        print("error of potential prediction: " + str(V_error))
-        print("error of force prediction: " + str(df_ratio))
-        print("\n")
-
-        # if np.max(V_error) > 0.05:
-        #     print("V_shift (ab_initio): " + str(ab_initio_V_shift))
-        #     print("V shift GPR: " + str(predicted_V_shift))
-        #     raise("Initial Gaussian Process Regression training for potential fails")
-
-        # if np.max(df_ratio) > 0.05:
-        #     print("predicted force for bead 0: " + str(predicted_forces[0]))
-        #     print("ab initio force for bead 0: " + str(ab_initio_forces[0]))
-
-        #     raise("Initial Gaussian Process Regression training for force fails.")
 
     def check_spring_k_kappa(self):
         '''
