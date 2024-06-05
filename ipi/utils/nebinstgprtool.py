@@ -77,4 +77,33 @@ def print_ab_initio_calculation_number(ab_initio_calculation_number, output_make
     outfile = output_maker.get_output(" ab_initio_force_number.txt", "w")
     print("ab initio calculation number:  " + str(ab_initio_calculation_number), file = outfile)
     outfile.close_stream()
+
+def check_gpr_fitting_error(gpr_beads, gpr_forces, gpr_model : GPModelWithDerivativesWrapper, energy_shift, q):
+    '''
+    use gpr_beads and gpr_forces as force engine to compute ab-initio force and potential.
+    use gpr model to predict the potential and force. 
+    compare the difference between gpr prediction and ab-initio result.
+    
+    :param: gpr_beads: beads to store location of q.
+    :param: gpr_forces: force engine to output ab-initio potential V and forces f.
+    :param: gpr_model: Gaussian Process Regression Model.
+    :param: energy shift: energy shift of ab-initio potential.
+    :param: q: coordinate q to evaluate the Gaussian Process Regression error.
+    '''
+    gpr_beads.q[0] = q
+    ab_initio_force = gpr_forces.f[0]
+    ab_initio_pot = gpr_forces.pots[0] - energy_shift
+
+    predicted_V_shift, predicted_V_grad, _, _ = gpr_model.predict_observable(gpr_beads.q)
+    predicted_gpr_bead_force = - predicted_V_grad[0]
+    predicted_V_shift = predicted_V_shift[0]
+
+    test_V_error = np.abs((predicted_V_shift - ab_initio_pot) / ab_initio_pot)
+    test_df = ab_initio_force - predicted_gpr_bead_force
+    test_df_error = np.linalg.norm(test_df) / np.linalg.norm(ab_initio_force)   
+
+    print("V error for test data " + str(test_V_error))
+    print("f error for test data " + str(test_df_error))
+
+    return predicted_V_shift, predicted_gpr_bead_force, ab_initio_pot, ab_initio_force
     

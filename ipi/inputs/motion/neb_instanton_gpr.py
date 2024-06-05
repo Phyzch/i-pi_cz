@@ -235,20 +235,21 @@ class InputNebInstGPR(InputDictionary):
         ),
 
         "gpr_kernel_outputscale_prior_mean":(
-            InputValue,
+            InputArray,
             {
                 "dtype": float,
-                "default": np.power(10.0, -6), 
-                "help": "Gaussian Process Regression hyperparameter. Mean value for output scale prior of Gaussian process regression kernel. Typically it is the scale of variance of potential energy",
+                "default": input_default(factory=np.zeros, args=(0,)),
+                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Mean value for output scale prior of Gaussian process regression kernel. Typically it is the  variance of potential energy"
             }
         ),
 
         "gpr_kernel_lengthscale_prior_mean":(
-            InputValue,
+            InputArray,
             {
                 "dtype": float,
-                "default": 5 * np.power(10.0, -3),
-                "help": "Gaussian Process Regression hyperparameter. Mean value for the prior of the lengthscale of Gaussian Process regression model in non-redundant internal coordinate. Typically this should be in the same order of the range of input data."
+                "default": input_default(factory=np.zeros, args=(0,)),
+                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Mean value for the prior of the lengthscale of Gaussian Process regression model in non-redundant internal coordinate. Typically this should be in the same order of the range of input data.",
+                "dimension": "length"
             }
         ),
 
@@ -256,8 +257,8 @@ class InputNebInstGPR(InputDictionary):
             InputDictionary,
             {
                 "dtype": float,
-                "options": ["pot_upper_bound", "pot_lower_bound"],
-                 "default": [1e-6, 1e-8],
+                "options": ["pot_upper_bound", "pot_lower_bound", "force_upper_bound", "force_lower_bound"],
+                 "default": [1e-6, 1e-8, 1e-4, 1e-8],
                  "help": "constraint for the variance of noise in the Gaussian Process Regression",
             },
         ),
@@ -269,7 +270,7 @@ class InputNebInstGPR(InputDictionary):
                 "default": 1,
                 "help" : "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. For symmetric potential system, 1 Squared Exponential kernel will fit the potential well. However, for asymmetric system, 2 Squared Exponential kernel is recommended."
             }
-        )
+        ),
 
     }
 
@@ -296,6 +297,9 @@ class InputNebInstGPR(InputDictionary):
         self.prefix.store(options["prefix"])
         self.final_hessian_bool.store(options["final_hessian_bool"])
 
+        # options for GPR kernel
+        self.gpr_SE_kernel_number.store(options["gpr_SE_kernel_number"])
+
         # optarrays
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
@@ -313,6 +317,7 @@ class InputNebInstGPR(InputDictionary):
         self.gpr_kernel_outputscale_prior_mean.store(optarrays["gpr_kernel_outputscale_prior_mean"])
         self.gpr_kernel_lengthscale_prior_mean.store(optarrays["gpr_kernel_lengthscale_prior_mean"])
         self.gpr_likelihood_noise_variance_constraint.store(optarrays["gpr_likelihood_noise_variance_constraint"])
+
 
         # store result of instanton calculation
         self.instanton_temperature.store(optarrays["instanton_temperature"])
