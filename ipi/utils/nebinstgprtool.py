@@ -42,12 +42,12 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
     for bead_index in range(nbeads):
         bead_internal_q = beads_internal_coordinate[bead_index]
 
-        # scaled distance between gpr training data and beads.
+        # distance between gpr training data and beads.
         internal_coordinate_r = np.sqrt(np.sum(np.power(bead_internal_q - gpr_training_internal_coordinate , 2) , axis = 1))
         
         nearest_gpr_data_index = np.argmin(internal_coordinate_r)
 
-        # scaled distance r between beads and the closest gpr training data
+        # distance r between beads and the closest gpr training data
         internal_coordinate_r_closest = np.linalg.norm(bead_internal_q - gpr_training_internal_coordinate[nearest_gpr_data_index])
         
         internal_coordinate_r_closest_list.append(internal_coordinate_r_closest)
@@ -57,10 +57,10 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
             break
     
     # for debug
-    # print("\n")
-    # print("internal coordinate distance cutoff: " + str(distance_cutoff))
-    # print("distance for beads to nearest GPR point: " + str(internal_coordinate_r_closest_list))
-    # print("\n")
+    print("\n")
+    print("internal coordinate distance cutoff: " + str(distance_cutoff))
+    print("distance for beads to nearest GPR point: " + str(internal_coordinate_r_closest_list))
+    print("\n")
 
     if early_stop_bool:
         print("\n")

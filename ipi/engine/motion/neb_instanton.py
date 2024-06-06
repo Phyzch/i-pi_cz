@@ -295,35 +295,32 @@ class MAPNEBMover(Motion):
         # check spring_k * (dt)^2. It should be smaller than 0.4 and larger than 0.1 (too small spring_k will make bead hard to reach equal distance)
         # ideal value is 0.25
         val1 = spring_k * np.power(dt, 2)
-        
-        # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2, it should be smaller than 1 and larger than 0.1 
+        # scale spring_k, left_kappa and right_kappa
+        spring_k_scale = 0.1 / val1
+
+        # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2, it should be smaller than 1 and larger than 0.1
         # ideal value is 0.5
         # check the left end bead.
-        max_force2 = np.max(np.abs(self.nebgm.rforces.f[0]))  # maximum gradient of left end bead.
-        m_H = 1837 # mass of hydrogen in atomic unit. 
+        m_H = 1837 # mass of hydrogen in atomic unit.
+        
+        max_force2 = np.max(np.abs(self.nebgm.rbf[0]))  # maximum gradient of left end bead.
         val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
+        left_kappa_scale = 0.2 / val2
 
         # check the right end bead.
-        max_force3 = np.max(np.abs(self.nebgm.rforces.f[-1]))  # maximum gradient of right end bead
+        max_force3 = np.max(np.abs(self.nebgm.rbf[-1]))  # maximum gradient of right end bead
         val3 = max_force3 * np.power(dt,2) * right_kappa / np.sqrt(m_H)
+        right_kappa_scale = 0.2 / val3
 
-        print("srping_k criterion value: " + str(val1))
-        print("energy constraint criterion value(left): " + str(val2))
-        print("energy constraint criterion value(right): " + str(val3))
-        print("left bead potential gradient: " + str(max_force2) + "   right bead potential gradient: " + str(max_force3))
+        self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
+        self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
 
-        # scale spring_k, left_kappa and right_kappa
-        spring_k_scale = 0.25 / val1 
-        left_kappa_scale = 0.5 / val2 
-        right_kappa_scale = 0.5 / val3 
-
-        self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale 
-        self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale 
-
-        self.optarrays["kappa"]["left"] = self.optarrays["kappa"]["left"] * left_kappa_scale 
+        self.optarrays["kappa"]["left"] = self.optarrays["kappa"]["left"] * left_kappa_scale
         self.nebgm.kappa["left"] = self.nebgm.kappa["left"] * left_kappa_scale
+
         self.optarrays["kappa"]["right"] = self.optarrays["kappa"]["right"] * right_kappa_scale
-        self.nebgm.kappa["right"] = self.nebgm.kappa["right"] * left_kappa_scale
+        self.nebgm.kappa["right"] = self.nebgm.kappa["right"] * right_kappa_scale
+
 
 
     def neb_initialize(self):

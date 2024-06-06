@@ -81,7 +81,8 @@ class MAPNEBGPRMover(Motion):
         gpr_kernel_outputscale_prior_mean = np.zeros(0, float),
         gpr_kernel_lengthscale_prior_mean = np.zeros(0, float),
         gpr_likelihood_noise_variance_constraint = {"pot_upper_bound" : 1e-6, "pot_lower_bound": 1e-8},
-        gpr_SE_kernel_number = 1
+        gpr_SE_kernel_number = 1,
+        end_bead_max_step_size = 1 * np.power(10.0, -3)
     ):
         """Initialises NEBMover.
 
@@ -110,6 +111,7 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
 
+        self.optarrays["end_bead_max_step_size"] = end_bead_max_step_size
 
         self.optarrays["time_step"] = time_step
         self.optarrays["instanton_time_step"] = instanton_time_step
@@ -220,14 +222,10 @@ class MAPNEBGPRMover(Motion):
         train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
         train_grad = - np.copy(dstrip(self.forces.f))
 
-        # generate second set of training data to help training
-        # start_index = 1
-        # end_index = 3
-        # interpolation_bead_path = self.beads.q[start_index : end_index + 1]
-        # interpolation_number = 12
-        # cubic_interpolation_x , cubic_interpolation_r = ipi.utils.nebinstool.path_cubic_interpolation(interpolation_bead_path, 
-        #                                                                                               interpolation_number)
-
+        # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force
+        self.nebgm.ab_initio_pot = np.copy(self.forces.pots)
+        self.nebgm.ab_initio_force = np.copy(dstrip(self.forces.f))
+  
         self.new_gpr_beads.q[:-1] = (self.beads.q[:-1] + self.beads.q[1:])/2
         self.new_gpr_beads.q[-1] = self.beads.q[-1] + (self.beads.q[-1] - self.beads.q[-2]) / 2
 
@@ -254,6 +252,8 @@ class MAPNEBGPRMover(Motion):
         '''
         check whether the training of GPR model is successful. If not, stop the simulation and report error
         '''
+        self.output_recommended_hyper_parameter()
+
         predicted_V_shift, predicted_grad, _, _ = self.gpr_model.predict_latent_function(self.beads.q) 
 
         predicted_forces = - predicted_grad 
@@ -274,24 +274,67 @@ class MAPNEBGPRMover(Motion):
         df_error = df / ab_initio_force_amplitude
         
         print("\n")
+        print("@initial Gaussian Process Regression fitting:")
         print("error of potential prediction: " + str(V_error))
         print("error of force prediction: " + str(df_error))
         print("\n")
 
         # check overfitting.
-        test_q = (self.beads.q[0] + self.beads.q[1]) / 2
+        print("@Test Overfitting of GPR model.")
+        test_q = self.beads.q[0] * 1/4 + self.beads.q[1] * 3/ 4
         predicted_test_V_shift, predicted_test_force, ab_initio_test_pot, ab_initio_test_force = ipi.utils.nebinstgprtool.check_gpr_fitting_error(self.gpr_beads, self.gpr_forces, self.gpr_model, self.optarrays["energy_shift"], test_q)
-
-        proceed_bool = input("Does GPR looks okay? If so, we can continue. (yes/no)")
-        if proceed_bool == "yes" or proceed_bool == "y":
-            pass
-        else:
-            print("Gaussian Process Regressioin fails. Change fitting param.")
-            softexit.trigger(
-                status="Exit",
-                message="Gaussian Process Regressioin fails. Change fitting param.",
-            )
+        test_q = self.beads.q[4] * 1/4 + self.beads.q[5] * 3/ 4
+        predicted_test_V_shift, predicted_test_force, ab_initio_test_pot, ab_initio_test_force = ipi.utils.nebinstgprtool.check_gpr_fitting_error(self.gpr_beads, self.gpr_forces, self.gpr_model, self.optarrays["energy_shift"], test_q)
         
+        pass 
+
+    def output_recommended_hyper_parameter(self):
+        '''
+        from training result 
+        '''
+        print("\n")
+        print("@recommended training hyperparameter: ")
+        
+        # compute recommended length scale. This will be 1/5 of the largest distance of the internal coordinate 
+        train_inputs = self.gpr_model.train_inputs 
+        largest_internal_coordinate_range = np.max( np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0) )
+        recommended_length_scale = largest_internal_coordinate_range / 5 
+        print("recommended length scale: {}".format(recommended_length_scale))
+
+        # compute recommended output scale. This is square of 1/2 |V_max - V_min|.
+        # we assume for the neb path, the path go from reactant to the product. 
+        pots = self.forces.pots 
+        barrier_top_index = np.argmax(pots)
+        # for left side of barrier.
+        pot_range1 = np.max(pots) - np.min(pots[:barrier_top_index])
+        recommended_output_scale_prior_mean1 = np.power(pot_range1 / 2, 2)
+        # for right side of barrier
+        pot_range2 = np.max(pots) - np.min(pots[barrier_top_index:])
+        recommended_output_scale_prior_mean2 = np.power(pot_range2 / 2, 2)
+        print("recommended output scale prior mean for asymmetric barrier: {} , {}".format(recommended_output_scale_prior_mean1, recommended_output_scale_prior_mean2))
+
+        # compute recommended noise term
+        pot_range = np.max(pots) - np.min(pots)
+        pot_noise_std_upper_bound = pot_range / 10 
+        pot_noise_std_lower_bound = pot_range / 100 
+
+        pot_noise_var_upper_bound = np.power(pot_noise_std_upper_bound, 2)
+        pot_noise_var_lower_bound = np.power(pot_noise_std_lower_bound, 2)
+        print("recommended noise constraint for potential :  upper bound: {} , lower bound: {}".format(pot_noise_var_upper_bound, pot_noise_var_lower_bound))
+
+        # internal coordinate force range. Estimation of force error is tricky. I assume it's 1/100 ~ 1/1000 of force range.
+        internal_force = self.gpr_model.train_targets[:,1:]
+        force_range_diff_dim = np.max(internal_force, axis = 0) - np.min(internal_force, axis = 0)
+        force_range = np.max(force_range_diff_dim)
+        force_noise_std_upper_bound = force_range / 100
+        force_noise_std_lower_bound = force_range / 1000 
+        force_noise_var_upper_bound = np.power(force_noise_std_upper_bound, 2)
+        force_noise_var_lower_bound = np.power(force_noise_std_lower_bound, 2)
+        print("recommended noise constraint for force:  upper bound {}, lower bound {}".format(force_noise_var_upper_bound, force_noise_var_lower_bound))
+
+        print("\n")
+
+
     def update_GPR_model(self, early_stop_bool, outrange_bead_index, step):
         '''
         update GPR model with new training data. Which new training data to be added will depend on stop criterion.
@@ -300,9 +343,11 @@ class MAPNEBGPRMover(Motion):
         '''
         attempt_exit_bool = False 
 
+        bead_index_for_update = -1
         if early_stop_bool:
             # in this case, one bead move out of trust region.
-            training_x = dstrip(self.beads.q[outrange_bead_index]).copy()
+            bead_index_for_update = outrange_bead_index
+            training_x = dstrip(self.beads.q[bead_index_for_update]).copy()
             training_x = np.array([training_x])
             training_V_shift, training_grad_x, _, _ = self.gpr_model.predict_observable(training_x)
             training_bead_forces = - training_grad_x[0]
@@ -324,6 +369,10 @@ class MAPNEBGPRMover(Motion):
         ab_initio_beads_energy = dstrip(self.gpr_forces.pots).copy() 
         ab_initio_beads_forces = dstrip(self.gpr_forces.f).copy() 
         ab_initio_beads_grad = - ab_initio_beads_forces
+
+        # set ab_initio pot and force in nebgm.
+        self.nebgm.ab_initio_pot[bead_index_for_update] = ab_initio_beads_energy 
+        self.nebgm.ab_initio_force[bead_index_for_update] = ab_initio_beads_forces
 
         # count the # of ab-initio calculation we have done.
         self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + 1
@@ -445,6 +494,10 @@ class MAPNEBGPRMover(Motion):
             ab_initio_beads_forces = dstrip(self.gpr_forces.f).copy() 
             ab_initio_beads_grad = - ab_initio_beads_forces
 
+            # update it in nebgm.ab_initio_pot and nebgm.ab_initio_force
+            self.nebgm.ab_initio_pot[bead_index_for_update] = ab_initio_beads_energy 
+            self.nebgm.ab_initio_force[bead_index_for_update] = ab_initio_beads_forces
+
             # count the # of ab-initio calculation we have done.
             self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + 1
 
@@ -511,8 +564,12 @@ class MAPNEBGPRMover(Motion):
         early_stop_bool = False
         outrange_bead_index = -1 # index for beads that move out of trusted region that causes early stop.
 
+        self.print_geometry()
+
         self.neb_initialize(outer_loop_step) # we have to re-initialize Nudged Elastic Band variable 
         
+        print("\n")
+        print("@Start outer loop: " + str(outer_loop_step) + "\n")
         while grad_max > tolerances["gradient"]:
             grad_max, early_stop_bool, outrange_bead_index = self.neb_step(outer_loop_step, neb_step)
             neb_step = neb_step + 1
@@ -643,29 +700,21 @@ class MAPNEBGPRMover(Motion):
         # check spring_k * (dt)^2. It should be smaller than 0.4 and larger than 0.1 (too small spring_k will make bead hard to reach equal distance)
         # ideal value is 0.25
         val1 = spring_k * np.power(dt, 2)
+        # scale spring_k, left_kappa and right_kappa
+        spring_k_scale = 0.1 / val1
 
         # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2, it should be smaller than 1 and larger than 0.1
         # ideal value is 0.5
         # check the left end bead.
-        max_force2 = np.max(np.abs(self.nebgm.rbf[0]))  # maximum gradient of left end bead.
         m_H = 1837 # mass of hydrogen in atomic unit.
+        
+        max_force2 = np.max(np.abs(self.nebgm.rbf[0]))  # maximum gradient of left end bead.
         val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
+        left_kappa_scale = 0.2 / val2
 
         # check the right end bead.
         max_force3 = np.max(np.abs(self.nebgm.rbf[-1]))  # maximum gradient of right end bead
         val3 = max_force3 * np.power(dt,2) * right_kappa / np.sqrt(m_H)
-
-        print("\n")
-        print("srping_k criterion value: " + str(val1))
-        print("max force (left): " + str(max_force2) + "   max force (right):" + str(max_force3))
-        print("energy constraint criterion value(left): " + str(val2))
-        print("energy constraint criterion value(right): " + str(val3))
-        print("left bead potential gradient: " + str(max_force2) + "   right bead potential gradient: " + str(max_force3))
-        print("\n")
-
-        # scale spring_k, left_kappa and right_kappa
-        spring_k_scale = 0.1 / val1
-        left_kappa_scale = 0.2 / val2
         right_kappa_scale = 0.2 / val3
 
         self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
@@ -673,11 +722,30 @@ class MAPNEBGPRMover(Motion):
 
         self.optarrays["kappa"]["left"] = self.optarrays["kappa"]["left"] * left_kappa_scale
         self.nebgm.kappa["left"] = self.nebgm.kappa["left"] * left_kappa_scale
+
         self.optarrays["kappa"]["right"] = self.optarrays["kappa"]["right"] * right_kappa_scale
-        self.nebgm.kappa["right"] = self.nebgm.kappa["right"] * left_kappa_scale
+        self.nebgm.kappa["right"] = self.nebgm.kappa["right"] * right_kappa_scale
 
-
-
+    def print_geometry(self, step):
+        '''
+        print beads geometry and beads energy.
+        '''
+        pots = self.nebgm.beads_energy
+        if (
+            self.options["alt_out_step"] > 0 and np.mod(step, self.options["alt_out_step"]) == 0
+        ):
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"],
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
           
 class LINEBGradientMapper(object):
     """Creation of the multi-dimensional function that will be minimized.
@@ -740,6 +808,8 @@ class LINEBGradientMapper(object):
         # bind the gpr model
         self.gpr_model = ens.gpr_model
         self.coordinate_transformer = ens.coordinate_transformer
+        self.ab_initio_pot = np.zeros([self.dbeads.nbeads])
+        self.ab_initio_force = np.zeros([self.dbeads.nbeads, 3 * self.dbeads.natoms])
 
     def compute_tangent_vector(self, nimage, natom, mscaled_q):
         '''
@@ -904,12 +974,14 @@ class LINEBGradientMapper(object):
             spring_force[ii] = (npnorm(mscaled_q[ii+1] - mscaled_q[ii]) - npnorm(mscaled_q[ii] - mscaled_q[ii-1])) * spring_k * btau[ii]
         
         # spring force for end bead 0
-        spring_force_bead0 = spring_k * (mscaled_q[1] - mscaled_q[0]) 
+        unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(mscaled_q[1] - mscaled_q[0])  # unit vector for q[1] - q[0]
+        spring_force_bead0 = spring_k * (npnorm(mscaled_q[1] - mscaled_q[0]) - npnorm(mscaled_q[2] - mscaled_q[1])) * unit_vec_1  
         f0 = mscaled_f[0] / npnorm(mscaled_f[0])   # unit vector along force at beads: 0
         spring_force[0] = spring_force_bead0 - np.dot(spring_force_bead0 , f0) * f0  # spring force transverse to gradient.
 
         # spring force for end bead nimag - 1
-        spring_force_bead1 = spring_k * (mscaled_q[nimage - 2] - mscaled_q[nimage - 1])
+        unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1])
+        spring_force_bead1 = spring_k * ( npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) - npnorm(mscaled_q[nimage - 3] - mscaled_q[nimage -2]) ) * unit_vec_2 
         f1 = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1])  # unit vector along force at beads: nimage - 1 
         spring_force[nimage - 1] = spring_force_bead1 - np.dot(spring_force_bead1 , f1) * f1  # spring force transverse to gradient.
 
@@ -947,6 +1019,15 @@ class LINEBGradientMapper(object):
         beads_forces = - beads_potential_grad_x
         # the predicted potential is the one relative to the energy shift.
         beads_potential = beads_potential_shift + self.energy_shift
+
+        # check if ab_initio potential and forces are available. If so, use it and then reset it to zero.
+        for i in range(self.dbeads.nbeads):
+            if self.ab_initio_pot[i] != 0:
+                beads_potential[i] = self.ab_initio_pot[i]
+                self.ab_initio_pot[i] = 0 
+            if np.linalg.norm(self.ab_initio_force[i]) != 0:
+                beads_forces[i] = self.ab_initio_force[i]
+                self.ab_initio_force[i] = np.zeros([3 * self.dbeads.natoms])
 
         return beads_potential, beads_forces 
         

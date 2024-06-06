@@ -37,13 +37,6 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         pot_noise_variance_lower_bound = likelihood_noise_variance_constraint["pot_lower_bound"]
         pot_noise_variance_upper_bound = likelihood_noise_variance_constraint["pot_upper_bound"]
 
-        # discard: 
-        # force_range = torch.sub(torch.max(train_targets[:, 1:], axis = 0).values , torch.min(train_targets[:, 1:], axis= 0).values)
-        # force_noise_lower_bound_array = torch.pow(force_range / 100, 2)
-        # force_noise_upper_bound_array = torch.pow(force_range / 10, 2)
-        # noise_lower_bound_tensor = torch.concatenate([ torch.from_numpy(np.array([pot_noise_variance_lower_bound])), force_noise_lower_bound_array ])
-        # noise_upper_bound_tensor = torch.concatenate([ torch.from_numpy(np.array([pot_noise_variance_upper_bound])), force_noise_upper_bound_array ])
-        
         force_noise_variance_lower_bound = likelihood_noise_variance_constraint["force_lower_bound"]
         force_noise_variance_upper_bound = likelihood_noise_variance_constraint["force_upper_bound"]
         force_noise_lower_bound_array = np.ones([self.input_dim]) * force_noise_variance_lower_bound
@@ -169,16 +162,14 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
     train_counts = 0 
 
     # for debug
-    print("Iter %d" %(train_counts))
-    print("mean_module constant: " + str(model.mean_module.constant))    
-
-    kernel_lengthscale = model.output_kernel_lengthscale()
-    print("kernel lengthscale: " + str(kernel_lengthscale) )
-    output_scale = model.output_kernel_outputscale()
-    print("outputscale: " + str(output_scale))
-    
-    print("noise:" + str(likelihood.task_noises))
-    print("\n")
+    # print("Iter %d" %(train_counts))
+    # print("mean_module constant: " + str(model.mean_module.constant))    
+    # kernel_lengthscale = model.output_kernel_lengthscale()
+    # print("kernel lengthscale: " + str(kernel_lengthscale) )
+    # output_scale = model.output_kernel_outputscale()
+    # print("outputscale: " + str(output_scale))
+    # print("noise:" + str(likelihood.task_noises))
+    # print("\n")
 
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor 
@@ -212,16 +203,14 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
 
 
     # for debug:
-    print("Iter %d - Loss %.3f" %(train_counts, loss_value))
-    print("mean_module constant: " + str(model.mean_module.constant))
-
-    kernel_lengthscale = model.output_kernel_lengthscale()
-    print("kernel lengthscale: " + str(kernel_lengthscale) )
-    output_scale = model.output_kernel_outputscale()
-    print("outputscale: " + str(output_scale))
-    
-    print("noise:" + str(likelihood.task_noises))
-    print("\n")
+    # print("Iter %d - Loss %.3f" %(train_counts, loss_value))
+    # print("mean_module constant: " + str(model.mean_module.constant))
+    # kernel_lengthscale = model.output_kernel_lengthscale()
+    # print("kernel lengthscale: " + str(kernel_lengthscale) )
+    # output_scale = model.output_kernel_outputscale()
+    # print("outputscale: " + str(output_scale))
+    # print("noise:" + str(likelihood.task_noises))
+    # print("\n")
 
     pass 
 
@@ -410,14 +399,14 @@ class GPModelWithDerivativesWrapper():
         self.natom = natom
 
 
-    def predict_latent_function(self, test_x):
+    def predict_latent_function(self, test_x, internal_coordinate_bool = False):
         '''
         compute the predicted potential V and gradient dV/dx (mean value of latent prediction distribution) in Cartesian coordinate.
         Also compute the variance of potential & gradients dV/dq. 
         This function wraps predict_latent_function_gp_with_derivative.
 
         :param: test_x: input Cartesian coordinate data [N, 3 * natom]. 
-        
+        :param: internal_coordinate_bool: if internal coordinate bool = True, then we output gradient of internal coordinate.
         :return: V: predicted potential energy.
                 grad_x: dV/dx, predicted gradient of potential energy. In Cartesian coordinate.
                 var_V: uncertainty (variance) of potential energy.
@@ -443,9 +432,14 @@ class GPModelWithDerivativesWrapper():
         var_V = test_var[:, 0]
         var_grad_q = test_var[:, 1:]
 
-        return V, grad_x, var_V, var_grad_q
+        if internal_coordinate_bool:
+            return V, grad_q, var_V, var_grad_q 
+        else:
+            return V, grad_x, var_V, var_grad_q
     
-    def predict_observable(self, test_x):
+
+
+    def predict_observable(self, test_x, internal_coordinate_bool = False):
         '''
         similar to predict_latent_function. But instead of output f(X) = (V, dV/dx) in predict_latent_function, we compute the observable y = f(X) + epsilon. (with noise)
         
@@ -476,7 +470,10 @@ class GPModelWithDerivativesWrapper():
         var_V = test_observable_var[:, 0]
         var_grad_q = test_observable_var[:, 1:]
 
-        return V, grad_x, var_V, var_grad_q
+        if internal_coordinate_bool:
+            return V, grad_q, var_V, var_grad_q 
+        else:
+            return V, grad_x, var_V, var_grad_q
 
     def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad):
         '''
