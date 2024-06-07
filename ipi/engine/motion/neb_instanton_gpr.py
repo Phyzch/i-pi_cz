@@ -564,7 +564,7 @@ class MAPNEBGPRMover(Motion):
         early_stop_bool = False
         outrange_bead_index = -1 # index for beads that move out of trusted region that causes early stop.
 
-        self.print_geometry()
+        self.print_geometry(outer_loop_step)
 
         self.neb_initialize(outer_loop_step) # we have to re-initialize Nudged Elastic Band variable 
         
