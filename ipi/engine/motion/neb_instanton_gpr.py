@@ -218,11 +218,16 @@ class MAPNEBGPRMover(Motion):
         # potential energy has to shift relative to the energy_shift for training.
         train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
         train_grad = - np.copy(dstrip(self.forces.f))
+        # count the # of ab-initio calculation we have done.
+        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
+
+        self.initial_force_amplitude = npnorm(dstrip(self.forces.f), axis = 1)
 
         # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force
         self.nebgm.ab_initio_pot = np.copy(self.forces.pots)
         self.nebgm.ab_initio_force = np.copy(dstrip(self.forces.f))
-  
+
+        # option to add more training data between data points.
         self.new_gpr_beads.q[:-1] = (self.beads.q[:-1] + self.beads.q[1:])/2
         self.new_gpr_beads.q[-1] = self.beads.q[-1] + (self.beads.q[-1] - self.beads.q[-2]) / 2
 
@@ -234,9 +239,9 @@ class MAPNEBGPRMover(Motion):
         train_x = np.concatenate([train_x, new_train_x], axis = 0)
         train_V = np.concatenate([train_V, new_train_V], axis = 0)
         train_grad = np.concatenate([train_grad, new_train_grad], axis = 0)
-
         # count the # of ab-initio calculation we have done.
         self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
+
 
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(train_x, train_V, train_grad,
                                                                      self.beads.natoms, self.coordinate_transformer,
@@ -285,51 +290,6 @@ class MAPNEBGPRMover(Motion):
         
         pass 
 
-    def output_recommended_hyper_parameter(self):
-        '''
-        from training result 
-        '''
-        print("\n")
-        print("@recommended training hyperparameter: ")
-        
-        # compute recommended length scale. This will be 1/5 of the largest distance of the internal coordinate 
-        train_inputs = self.gpr_model.train_inputs 
-        largest_internal_coordinate_range = np.max( np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0) )
-        recommended_length_scale = largest_internal_coordinate_range / 5 
-        print("recommended length scale: {}".format(recommended_length_scale))
-
-        # compute recommended output scale. This is square of 1/2 |V_max - V_min|.
-        # we assume for the neb path, the path go from reactant to the product. 
-        pots = self.forces.pots 
-        barrier_top_index = np.argmax(pots)
-        # for left side of barrier.
-        pot_range1 = np.max(pots) - np.min(pots[:barrier_top_index])
-        recommended_output_scale_prior_mean1 = np.power(pot_range1 / 2, 2)
-        # for right side of barrier
-        pot_range2 = np.max(pots) - np.min(pots[barrier_top_index:])
-        recommended_output_scale_prior_mean2 = np.power(pot_range2 / 2, 2)
-        print("recommended output scale prior mean for asymmetric barrier: {} , {}".format(recommended_output_scale_prior_mean1, recommended_output_scale_prior_mean2))
-
-        # compute recommended noise term
-        pot_range = np.max(pots) - np.min(pots)
-        pot_noise_std_upper_bound = pot_range / 10 
-        pot_noise_std_lower_bound = pot_range / 100 
-
-        pot_noise_var_upper_bound = np.power(pot_noise_std_upper_bound, 2)
-        pot_noise_var_lower_bound = np.power(pot_noise_std_lower_bound, 2)
-        print("recommended noise constraint for potential :  upper bound: {} , lower bound: {}".format(pot_noise_var_upper_bound, pot_noise_var_lower_bound))
-
-        # internal coordinate force range. Estimation of force error is tricky. I assume it's 1/100 ~ 1/1000 of force range.
-        internal_force = self.gpr_model.train_targets[:,1:]
-        force_range_diff_dim = np.max(internal_force, axis = 0) - np.min(internal_force, axis = 0)
-        force_range = np.max(force_range_diff_dim)
-        force_noise_std_upper_bound = force_range / 100
-        force_noise_std_lower_bound = force_range / 1000 
-        force_noise_var_upper_bound = np.power(force_noise_std_upper_bound, 2)
-        force_noise_var_lower_bound = np.power(force_noise_std_lower_bound, 2)
-        print("recommended noise constraint for force:  upper bound {}, lower bound {}".format(force_noise_var_upper_bound, force_noise_var_lower_bound))
-
-        print("\n")
 
 
     def update_GPR_model(self, early_stop_bool, outrange_bead_index, step):
@@ -374,10 +334,13 @@ class MAPNEBGPRMover(Motion):
         # count the # of ab-initio calculation we have done.
         self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + 1
 
+        ab_initio_force_amplitude = np.linalg.norm(ab_initio_beads_forces[0])
         force_diff = training_bead_forces - ab_initio_beads_forces[0]
-        force_diff_ratio = np.linalg.norm(force_diff) / np.linalg.norm(ab_initio_beads_forces[0])
+        force_diff_ratio = np.linalg.norm(force_diff) / ab_initio_force_amplitude
         self.force_diff_ratio_list.append(force_diff_ratio)
-        
+        self.ab_initio_force_amplitude_list = [ab_initio_force_amplitude]
+        self.gpr_force_prediction_amplitude_list = [np.linalg.norm(training_bead_forces)]
+
         if not early_stop_bool:
             if force_diff_ratio < self.optarrays["gpr_force_criterion"]:
                 # the ab-initio force is close to the force predicted by GPR. we check forces on other beads and try to exit.
@@ -393,12 +356,18 @@ class MAPNEBGPRMover(Motion):
             self.neb_stage_exit_step(step)
 
         # output info about force diff ratio |f_GPR -f|/|f|
+        print("@Outerloop Exit info: ab initio |f|: " + str(self.ab_initio_force_amplitude_list))
+        print("@Outloop Exit info: GPR predicted |f_GPR|: " + str(self.gpr_force_prediction_amplitude_list))
+        print("For reference: maximum |f| in initial training data: max: {:.4f},   min: {:.4f}".format(np.max(self.initial_force_amplitude), np.min(self.initial_force_amplitude))  )
         print("@Outerloop Exit info: |f_GPR -f|/|f|:" + str(self.force_diff_ratio_list))        
         print("Finish Outerloop: " + str(step))
         print("\n")
         print("\n")
 
         self.force_diff_ratio_list = []
+        self.ab_initio_force_amplitude_list = []
+        self.gpr_force_prediction_amplitude_list = []
+        
 
 
     def step(self, step=None):
@@ -505,6 +474,8 @@ class MAPNEBGPRMover(Motion):
             force_diff_ratio = np.linalg.norm(force_diff) / np.linalg.norm(ab_initio_beads_forces[0])
             
             self.force_diff_ratio_list.append(force_diff_ratio)
+            self.ab_initio_force_amplitude_list.append( np.linalg.norm(ab_initio_beads_forces[0]) )
+            self.gpr_force_prediction_amplitude_list.append( np.linalg.norm(beads_forces[bead_index_for_update]) )
 
             if force_diff_ratio < self.optarrays["gpr_force_criterion"]:
                 self.ab_initio_bead_index.append(bead_index_for_update)

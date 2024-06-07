@@ -404,6 +404,7 @@ class GPModelWithDerivativesWrapper():
         self.input_dim = input_dim
         self.output_dim = output_dim 
         self.natom = natom
+        self.gpr_SE_kernel_number = gpr_SE_kernel_number
 
     def compute_potential_normalization_parameter(self, training_targets):
         '''
@@ -584,11 +585,20 @@ class GPModelWithDerivativesWrapper():
     def output_kernel_lengthscale(self):
         '''
         return the length scale of kernel for gpr model
-        :return: lengthscale (numpy array)
+        :return: length scale (numpy array)
         '''
         lengthscale = self.gpr_model.output_kernel_lengthscale()
 
         return lengthscale 
+
+    def output_kernel_outputscale(self):
+        '''
+        return the output scale of the kernel for gpr model.
+        :return: output scale (numpy array)
+        '''
+        output_scale = self.gpr_model.output_kernel_outputscale()
+        
+        return output_scale 
 
     def output_training_cartesian_inputs(self):
         '''
