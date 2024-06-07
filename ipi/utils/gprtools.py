@@ -132,7 +132,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         return outputscale_list
 
 
-def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10.0, -4)):
+def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10.0, -3)):
     '''
     the function that trains the model.
     model: GPytorch model 
@@ -375,12 +375,19 @@ class GPModelWithDerivativesWrapper():
         # target data: [V, dV/dx1, ..., dV/dxn]
         train_targets = np.concatenate( [ train_V[:, np.newaxis] , train_grad_q ], axis = 1 )
 
+        # decide normalization parameter
+        self.compute_potential_normalization_parameter(train_targets)
+
+        # perform normalization on training targets.
+        # when making prediction, we need back transform of normalization.
+        normalized_train_targets = self.normalization_transform(train_targets)
+
         # transform input from numpy array to torch.tensor
         train_inputs_tensor = torch.from_numpy(train_inputs)
-        train_targets_tensor = torch.from_numpy(train_targets)
+        normalized_train_targets_tensor = torch.from_numpy(normalized_train_targets)
 
         # initialize the gaussian process regression model with inpt training data.
-        self.gpr_model = GPModelWithDerivatives(train_inputs_tensor, train_targets_tensor, input_dim, output_dim,
+        self.gpr_model = GPModelWithDerivatives(train_inputs_tensor, normalized_train_targets_tensor, input_dim, output_dim,
                                                 gpr_SE_kernel_number,
                                                 kernel_initial_outputscale, kernel_initial_lengthscale, 
                                                 likelihood_noise_variance_constraint)
@@ -397,6 +404,56 @@ class GPModelWithDerivativesWrapper():
         self.input_dim = input_dim
         self.output_dim = output_dim 
         self.natom = natom
+
+    def compute_potential_normalization_parameter(self, training_targets):
+        '''
+        normalize the potential V & force F.
+        V_normalized = (V - V_mean)/V_range.
+
+        This function decide normalize parameter from the initial training data. 
+
+        :param: training_targets : [V, dV/dx]. numpy array.
+        '''
+        V = training_targets[:, 0]
+        self.V_mean = np.mean(V)
+        self.V_range = np.max(V) - np.min(V)
+
+    def normalization_transform(self, training_targets):
+        '''
+        normalize the potential V & force F.
+        V_normalized = (V - V_mean) / V_range
+
+        This function perform the normalize procedure.  
+        :param: training_targets : [V, dV/dx]. numpy array.
+        '''    
+        V = training_targets[:,0]
+        V_normalized = (V - self.V_mean) / self.V_range 
+
+        F = training_targets[:,1:]
+        F_normalized = F / self.V_range 
+
+        normalized_training_targets = np.concatenate( [ V_normalized[:, np.newaxis], F_normalized ] , axis = 1 )
+
+        return normalized_training_targets
+
+    def inverse_normalization_transform(self, normalized_training_targets):
+        '''
+        inverse the normalization procedure of potential V & force F.
+        V = V_normalized * V_range + V_mean
+        F = F_normalized * V_range 
+
+        This function perform the inverse of normalization procedure.
+        :param: normalized_training_targets: [V_normalized, d V_normalized /dx]. numpy array.
+        '''
+        V_normalized = normalized_training_targets[:, 0]
+        F_normalized = normalized_training_targets[:, 1:]
+
+        V = V_normalized * self.V_range + self.V_mean 
+        F = F_normalized * self.V_range 
+
+        training_targets = np.concatenate([ V[:, np.newaxis], F ], axis = 1)
+
+        return training_targets 
 
 
     def predict_latent_function(self, test_x, internal_coordinate_bool = False):
@@ -419,9 +476,13 @@ class GPModelWithDerivativesWrapper():
         test_q_tensor = torch.from_numpy(test_q)
 
         # use Gaussian process regression to make prediction 
-        test_mean_tensor, test_var_tensor = predict_latent_function_gp_with_derivative(self.gpr_model, test_inputs = test_q_tensor, covar_bool = False)
-        test_mean = test_mean_tensor.detach().cpu().numpy()
-        test_var = test_var_tensor.detach().cpu().numpy()
+        normalized_test_mean_tensor, normalized_test_var_tensor = predict_latent_function_gp_with_derivative(self.gpr_model, test_inputs = test_q_tensor, covar_bool = False)
+        
+        normalized_test_mean = normalized_test_mean_tensor.detach().cpu().numpy()
+        normalized_test_var = normalized_test_var_tensor.detach().cpu().numpy()
+
+        test_var = normalized_test_var * np.power(self.V_range , 2) 
+        test_mean = self.inverse_normalization_transform(normalized_test_mean)
 
         V = test_mean[:, 0]
         grad_q = test_mean[:, 1:]  # gradient dV/dq.
@@ -457,9 +518,12 @@ class GPModelWithDerivativesWrapper():
         test_q_tensor = torch.from_numpy(test_q)
 
         # use Gaussian process regression to make prediction 
-        test_observable_mean_tensor, test_observable_var_tensor = predict_observable_gp_with_derivative(self.gpr_model, test_inputs = test_q_tensor, covar_bool = False)
-        test_observable_mean = test_observable_mean_tensor.detach().cpu().numpy()
-        test_observable_var = test_observable_var_tensor.detach().cpu().numpy() 
+        normalized_test_observable_mean_tensor, normalized_test_observable_var_tensor = predict_observable_gp_with_derivative(self.gpr_model, test_inputs = test_q_tensor, covar_bool = False)
+        normalized_test_observable_mean = normalized_test_observable_mean_tensor.detach().cpu().numpy()
+        normalized_test_observable_var = normalized_test_observable_var_tensor.detach().cpu().numpy() 
+
+        test_observable_mean = self.inverse_normalization_transform(normalized_test_observable_mean)
+        test_observable_var = normalized_test_observable_var * np.power(self.V_range, 2)
 
         V = test_observable_mean[:, 0]
         grad_q = test_observable_mean[:, 1:]
@@ -502,9 +566,11 @@ class GPModelWithDerivativesWrapper():
         assert np.shape(new_train_grad_q)[1] == 3 * self.natom - 6, "train_grad_q for internal coordiante has wrong dimension"
 
         new_train_targets = np.concatenate([ new_train_V[:,np.newaxis], new_train_grad_q ], axis = 1)
-        new_train_targets_tensor = torch.from_numpy(new_train_targets)
+        # normalize the new_train_targets
+        normalized_new_train_targets = self.normalization_transform(new_train_targets)
+        normalized_new_train_targets_tensor = torch.from_numpy(normalized_new_train_targets)
 
-        update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, new_train_targets_tensor)
+        update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, normalized_new_train_targets_tensor)
 
         # update the training data and targets in internal coordinate q.
         self.train_inputs = np.concatenate([self.train_inputs, new_train_inputs], axis = 0)

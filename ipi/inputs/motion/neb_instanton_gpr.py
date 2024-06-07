@@ -272,15 +272,6 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
-        "end_bead_max_step_size":(
-            InputValue,
-            {
-                "dtype": float,
-                "default": 1 * np.power(10.0, -3),
-                "help": "maximum step size of end beads to reach constant energy surface. For GPR, we have to make sure end beads initially don't move too far away."
-            }
-        )
-
     }
 
     dynamic = {}
@@ -313,7 +304,6 @@ class InputNebInstGPR(InputDictionary):
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
         self.kappa.store(optarrays["kappa"])
-        self.end_bead_max_step_size.store(optarrays["end_bead_max_step_size"])
         self.time_step.store(optarrays["time_step"])
         self.instanton_time_step.store(optarrays["instanton_time_step"])
 

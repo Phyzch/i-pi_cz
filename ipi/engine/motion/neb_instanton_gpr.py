@@ -82,7 +82,6 @@ class MAPNEBGPRMover(Motion):
         gpr_kernel_lengthscale_prior_mean = np.zeros(0, float),
         gpr_likelihood_noise_variance_constraint = {"pot_upper_bound" : 1e-6, "pot_lower_bound": 1e-8},
         gpr_SE_kernel_number = 1,
-        end_bead_max_step_size = 1 * np.power(10.0, -3)
     ):
         """Initialises NEBMover.
 
@@ -110,8 +109,6 @@ class MAPNEBGPRMover(Motion):
         
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
-
-        self.optarrays["end_bead_max_step_size"] = end_bead_max_step_size
 
         self.optarrays["time_step"] = time_step
         self.optarrays["instanton_time_step"] = instanton_time_step
@@ -252,7 +249,7 @@ class MAPNEBGPRMover(Motion):
         '''
         check whether the training of GPR model is successful. If not, stop the simulation and report error
         '''
-        self.output_recommended_hyper_parameter()
+        # self.output_recommended_hyper_parameter()
 
         predicted_V_shift, predicted_grad, _, _ = self.gpr_model.predict_latent_function(self.beads.q) 
 
@@ -407,9 +404,8 @@ class MAPNEBGPRMover(Motion):
     def step(self, step=None):
         """Does one simulation time step.
         """
-
-        info(" @NEB STEP %d, stage: %s" % (step, self.options["stage"]), verbosity.debug)
-
+        print(" @NEB Outerloop STEP %d, stage: %s" % (step, self.options["stage"]))
+        
         # print initial geometry and energy of neb path.
         if step == 0:
             ipi.utils.nebinstool.print_neb_instanton_geo(
@@ -564,10 +560,10 @@ class MAPNEBGPRMover(Motion):
         early_stop_bool = False
         outrange_bead_index = -1 # index for beads that move out of trusted region that causes early stop.
 
-        self.print_geometry(outer_loop_step)
-
         self.neb_initialize(outer_loop_step) # we have to re-initialize Nudged Elastic Band variable 
         
+        self.print_geometry(outer_loop_step)
+
         print("\n")
         print("@Start outer loop: " + str(outer_loop_step) + "\n")
         while grad_max > tolerances["gradient"]:
