@@ -263,10 +263,18 @@ class MAPNEBGPRMover(Motion):
         ab_initio_V_shift = self.forces.pots - self.optarrays["energy_shift"]
         ab_initio_forces = self.forces.f 
 
-        # for debug
+        # check length scale for possible over fitting
         learned_length_scale = self.gpr_model.output_kernel_lengthscale()
         internal_input_range = np.max(self.gpr_model.train_inputs, axis=0) - np.min(self.gpr_model.train_inputs, axis = 0)
 
+        scaled_internal_input_range = internal_input_range / learned_length_scale 
+        min_scaled_input_range = np.min(scaled_internal_input_range)
+        max_scaled_input_range=  np.max(scaled_internal_input_range)
+
+        print("\n")
+        print("@check the overfitting and underfitting of kernel length scale")
+        print("input_range / kernel_length_scale: max: {} , min: {}".format(max_scaled_input_range, min_scaled_input_range))
+        
         # check energy:
         V_error = np.abs(ab_initio_V_shift - predicted_V_shift) / np.abs(ab_initio_V_shift)
 
@@ -407,6 +415,8 @@ class MAPNEBGPRMover(Motion):
             self.initialialize_GPR_model()
 
             self.check_initial_training_result()
+
+            self.compute_initial_neb_path_length_in_scaled_internal_coordinate()
 
             # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
             self.nebgm.gpr_model = self.gpr_model 
@@ -563,7 +573,9 @@ class MAPNEBGPRMover(Motion):
         # check early stop condition if there are beads out of trust region
         early_stop_bool, outrange_bead_index = ipi.utils.nebinstgprtool.check_neb_early_stop(self.beads.q,
                                                                                             self.optarrays["gpr_trust_region_ratio"],
-                                                                                            self.gpr_model)
+                                                                                            self.gpr_model,
+                                                                                            self.scaled_internal_coordinate_neb_path_length,
+                                                                                            self.initial_effective_kernel_length_scale)
         
         # stop the step early if there are beads out of trust region.
         if early_stop_bool:
@@ -654,6 +666,31 @@ class MAPNEBGPRMover(Motion):
         print("\n")
         print("\n")
 
+    def compute_initial_neb_path_length_in_scaled_internal_coordinate(self):
+        '''
+        compute the initial neb path length in scaled internal coordinate and use it as criterion for early stop
+        '''
+        # kernel output scale and kernel length scale of kernels
+        kernel_output_scale = self.gpr_model.output_kernel_outputscale()
+        kernel_length_scale = self.gpr_model.output_kernel_lengthscale()
+        kernel_number = self.gpr_model.gpr_SE_kernel_number
+
+        # normalize the output scale:
+        output_scale_sum = np.sum(kernel_output_scale)
+        kernel_output_scale_normalized = kernel_output_scale / output_scale_sum
+        # effective kernel lengthscale for scaling internal coordinate. l_eff^{-2} = sum_{n} output_scale_n / (l_n)^2.   
+        effective_kernel_length_scale = np.power(np.sum(kernel_output_scale_normalized[:, np.newaxis] / np.power(kernel_length_scale, 2) , axis = 0), -0.5)
+
+        beads_internal_coordinate = self.coordinate_transformer.get_internal_coordinate_q(np.copy(self.beads.q))
+
+        distance_in_scaled_internal_coordinate = np.linalg.norm(  (beads_internal_coordinate[1:] - beads_internal_coordinate[:-1]) / effective_kernel_length_scale , axis = 1)
+
+        scaled_internal_coordinate_neb_path_length = np.sum(distance_in_scaled_internal_coordinate)
+
+        self.scaled_internal_coordinate_neb_path_length = scaled_internal_coordinate_neb_path_length
+        self.distance_in_scaled_internal_coordinate = distance_in_scaled_internal_coordinate
+
+        self.initial_effective_kernel_length_scale = effective_kernel_length_scale
 
     def check_spring_k_kappa(self):
         '''
