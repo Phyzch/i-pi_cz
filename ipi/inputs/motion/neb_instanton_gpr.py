@@ -243,22 +243,23 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
-        "gpr_kernel_lengthscale_prior_mean":(
+        "gpr_kernel_lengthscale_prior_mean_ratio":(
             InputArray,
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
-                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Mean value for the prior of the lengthscale of Gaussian Process regression model in non-redundant internal coordinate. Typically this should be in the same order of the range of input data.",
+                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Ratio of the mean value for the prior of the lengthscale of Gaussian Process regression model / length of bead in non-redundant internal coordinate. Typically this should be in the same order of the range of input data.",
                 "dimension": "length"
             }
         ),
 
-        "gpr_likelihood_noise_variance_constraint":(
+        "gpr_likelihood_noise_std_constraint":(
             InputDictionary,
             {
                 "dtype": float,
-                "options": ["pot_upper_bound", "pot_lower_bound", "force_upper_bound", "force_lower_bound"],
-                 "default": [1e-6, 1e-8, 1e-4, 1e-8],
+                "options": ["pot_upper_bound_ratio", "pot_lower_bound_ratio", "force_upper_bound_ratio", "force_lower_bound_ratio", 
+                            "task_noise_prior_std", "pot_noise_prior_std", "force_noise_prior_std", "noise_rank"],
+                 "default": [1e-1, 1e-2, 0.02, 0.005, 1e-4, 1e-4, 1e-4, 0.0],
                  "help": "constraint for the variance of noise in the Gaussian Process Regression",
             },
         ),
@@ -271,6 +272,15 @@ class InputNebInstGPR(InputDictionary):
                 "help" : "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. For symmetric potential system, 1 Squared Exponential kernel will fit the potential well. However, for asymmetric system, 2 Squared Exponential kernel is recommended."
             }
         ),
+
+        "read_initial_gpr_training_data":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help" : "Bool variable to decide whether to read the stored training data."
+            }
+        )
 
     }
 
@@ -299,6 +309,7 @@ class InputNebInstGPR(InputDictionary):
 
         # options for GPR kernel
         self.gpr_SE_kernel_number.store(options["gpr_SE_kernel_number"])
+        self.read_initial_gpr_training_data.store(options["read_initial_gpr_training_data"])
 
         # optarrays
         self.energy_shift.store(optarrays["energy_shift"])
@@ -315,8 +326,8 @@ class InputNebInstGPR(InputDictionary):
         self.gpr_force_criterion.store(optarrays["gpr_force_criterion"])
         self.gpr_trust_region_ratio.store(optarrays["gpr_trust_region_ratio"])
         self.gpr_kernel_outputscale_prior_mean.store(optarrays["gpr_kernel_outputscale_prior_mean"])
-        self.gpr_kernel_lengthscale_prior_mean.store(optarrays["gpr_kernel_lengthscale_prior_mean"])
-        self.gpr_likelihood_noise_variance_constraint.store(optarrays["gpr_likelihood_noise_variance_constraint"])
+        self.gpr_kernel_lengthscale_prior_mean_ratio.store(optarrays["gpr_kernel_lengthscale_prior_mean_ratio"])
+        self.gpr_likelihood_noise_std_constraint.store(optarrays["gpr_likelihood_noise_std_constraint"])
 
 
         # store result of instanton calculation

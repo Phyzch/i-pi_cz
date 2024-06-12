@@ -6,6 +6,8 @@ from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 from ipi.utils.gprtools import GPModelWithDerivativesWrapper
 from ipi.engine.beads import Beads
 from ipi.utils.depend import dstrip
+import re 
+import os 
 
 def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDerivativesWrapper, initial_scaled_internal_coordinate_neb_path_length, initial_effective_kernel_length_scale):
     '''
@@ -33,6 +35,13 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
     kernel_length_scale = gpr_model.output_kernel_lengthscale()
     kernel_number = gpr_model.gpr_SE_kernel_number
 
+    # deal with numerical noise where 1 kernel is very small & overfits the model
+    kernel_output_scale_max = np.max(kernel_output_scale)
+    for i in range(kernel_number):
+        # in case kernel output scale for 1 kernel is too small. Effective eliminate this kernel (this kernel probably overfits the noise.)
+        if kernel_output_scale[i] < 0.01 * kernel_output_scale_max:
+            kernel_output_scale[i] = 0
+
     # normalize the output scale:
     output_scale_sum = np.sum(kernel_output_scale)
     kernel_output_scale_normalized = kernel_output_scale / output_scale_sum
@@ -41,21 +50,22 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
 
     # the location of current beads in internal coordinate
     beads_internal_coordinate = coordinate_transformer.get_internal_coordinate_q(np.copy(beads_x))
+    normalized_internal_coordinate = gpr_model.normalization_transform_training_inputs(beads_internal_coordinate)
 
     # distance cutoff for trust region.
     distance_cutoff = initial_scaled_internal_coordinate_neb_path_length * trust_region_ratio
     # the location of training data in internal coordinate.
-    gpr_training_internal_coordinate = gpr_model.output_training_internal_inputs()
+    normalized_gpr_training_internal_coordinate = gpr_model.output_normalized_training_internal_inputs()
     
 
     # compute the distance and find beads that move out of the trusted region.
     nbeads = np.shape(beads_x)[0]
     internal_coordinate_r_closest_list = []
     for bead_index in range(nbeads):
-        bead_internal_q = beads_internal_coordinate[bead_index]
+        bead_internal_q = normalized_internal_coordinate[bead_index]
 
         # distance between gpr training data and beads.
-        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - gpr_training_internal_coordinate) / initial_effective_kernel_length_scale , axis = 1) 
+        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - normalized_gpr_training_internal_coordinate) / initial_effective_kernel_length_scale , axis = 1) 
         
         nearest_gpr_data_index = np.argmin(internal_coordinate_r)
 
@@ -118,8 +128,120 @@ def check_gpr_fitting_error(gpr_beads, gpr_forces, gpr_model : GPModelWithDeriva
     test_df = ab_initio_force - predicted_gpr_bead_force
     test_df_error = np.linalg.norm(test_df) / np.linalg.norm(ab_initio_force)   
 
-    print("V error for test data " + str(test_V_error))
-    print("f error for test data " + str(test_df_error))
-
+    print("V error for test data " + str(test_V_error) + "   V value: " + str(ab_initio_pot) + "  predicted V value: " + str(predicted_V_shift) )
+    print("f error for test data " + str(test_df_error)+ "   force amplitude: " + str(np.linalg.norm(ab_initio_force)) +  "  predicted force amplitude:  " + str(np.linalg.norm(predicted_gpr_bead_force)) )
+    print("\n")
     return predicted_V_shift, predicted_gpr_bead_force, ab_initio_pot, ab_initio_force
     
+
+def store_initial_training_data(cartesian_coordinate_x, V, forces):
+    '''
+    store the initial training data for training of GPR model.
+    In this way, when we do fine-tuning of hyper-parameter for GPR model, we do not to compute ab-initio potential and force again.
+
+    :param: cartesian_coordinate_x: cartesian coordinate of training data. in atomic unit
+    :param:  V: potential V (without shifted by energy shift). in Hatree unit
+    :param: forces: forces at data point. in Hatree / atomic unit.
+    :param: output_maker: output_maker provided by i-pi program. For output streaming.
+    '''
+    training_bead_number = np.shape(cartesian_coordinate_x)[0]
+    dofs = np.shape(cartesian_coordinate_x)[1]
+    # for cartesian coordinate_x
+    coordinate_file_name = "gpr_initial_training_coord.txt"
+    with open(coordinate_file_name, "w") as f:
+        f.write("Total Bead number: \n")
+        f.write(str(training_bead_number) + "\n")
+
+        f.write("#Bead     cartesian coordinate \n")
+        for i in range(training_bead_number):
+            f.write(str(i) + "    ")
+            for j in range(dofs):
+                f.write(str(cartesian_coordinate_x[i,j]) + " ")
+            f.write("\n")
+    
+    # for potential V.
+    V_file_name = "gpr_initial_training_pot.txt"
+    with open(V_file_name, "w") as f:
+        f.write("Total Bead number: \n")
+        f.write(str(training_bead_number) + "\n")
+
+        f.write("#Bead   Energy(Hatree) \n")
+        for i in range(training_bead_number):
+            f.write(str(i) + "    " + str(V[i]) + "\n")
+    
+    # for force f:
+    force_file_name = "gpr_initial_training_force.txt"
+    with open(force_file_name, "w") as f:
+        f.write("Total Bead number: \n")
+        f.write(str(training_bead_number) + "\n")
+
+        f.write("#Bead  Force (Hatree / a.u.) \n")
+        for i in range(training_bead_number):
+            f.write(str(i) + "    ")
+            for j in range(dofs):
+                f.write(str(forces[i,j]) + " ")
+            f.write("\n")
+    
+def extract_number_from_line(line):
+    line = re.split(' ', line.strip())
+    line = [ele for ele in line if ele != '']
+
+    return line 
+
+def read_initial_training_data():
+    '''
+    read coordinate, potential V and force f for training data.
+    '''
+    coordinate_file_name = "gpr_initial_training_coord.txt"
+    V_file_name = "gpr_initial_training_pot.txt"
+    force_file_name = "gpr_initial_training_force.txt"
+
+    assert os.path.exists(coordinate_file_name), "gpr training data: coordinate file: " + str(coordinate_file_name) + "  does not exist."
+    assert os.path.exists(V_file_name), "gpr training data: potential V file: " + str(V_file_name) + "  does not exist."
+    assert os.path.exists(force_file_name), "gpr training data: force f file: " + str(force_file_name) + "  does not exist"
+
+    # read coordinate.
+    cartesian_coordinate_x = []
+    with open(coordinate_file_name, "r") as f:
+        lines = f.readlines()
+        bead_number = int(extract_number_from_line(lines[1])[0])
+
+        start_line_index = 3
+        for bead_index in range(bead_number):
+            line_index = start_line_index + bead_index 
+            line = extract_number_from_line(lines[line_index])[1:]              # the first number is bead index.
+            bead_x = np.array(list(map(float, line)))
+            cartesian_coordinate_x.append(bead_x)
+        
+    cartesian_coordinate_x = np.array(cartesian_coordinate_x)
+
+    # read potential V
+    training_V = []
+    with open(V_file_name, "r") as f:
+        lines = f.readlines()
+        bead_number = int(extract_number_from_line(lines[1])[0])
+
+        start_line = 3
+        for bead_index in range(bead_number):
+            line_index = bead_index + start_line 
+            V = float(extract_number_from_line(lines[line_index])[1])
+            training_V.append(V)
+    
+    training_V = np.array(training_V)
+
+    # read force
+    training_forces = []
+    with open(force_file_name, "r") as f:
+        lines = f.readlines()
+        bead_number = int(extract_number_from_line(lines[1])[0])
+
+        start_line = 3
+        for bead_index in range(bead_number):
+            line_index = bead_index + start_line 
+            line = extract_number_from_line(lines[line_index])[1:]
+            force = np.array(list(map(float, line)))
+            training_forces.append(force)
+    
+    training_forces = np.array(training_forces)
+
+    return cartesian_coordinate_x, training_V, training_forces

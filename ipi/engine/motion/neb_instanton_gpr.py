@@ -79,9 +79,13 @@ class MAPNEBGPRMover(Motion):
         gpr_force_criterion = 0.02,
         gpr_trust_region_ratio = 0.05,
         gpr_kernel_outputscale_prior_mean = np.zeros(0, float),
-        gpr_kernel_lengthscale_prior_mean = np.zeros(0, float),
-        gpr_likelihood_noise_variance_constraint = {"pot_upper_bound" : 1e-6, "pot_lower_bound": 1e-8},
+        gpr_kernel_lengthscale_prior_mean_ratio = np.zeros(0, float),
+        gpr_likelihood_noise_std_constraint = {"pot_upper_bound_ratio" : 1e-1, "pot_lower_bound_ratio": 1e-2, 
+                                               "force_upper_bound_ratio": 0.02, "force_lower_bound_ratio": 0.005,
+                                               "task_noise_prior_std": 1e-4, "pot_noise_prior_std": 1e-4, "force_noise_prior_std": 1e-4,
+                                               "noise_rank" : 0.0},
         gpr_SE_kernel_number = 1,
+        read_initial_gpr_training_data = False
     ):
         """Initialises NEBMover.
 
@@ -102,7 +106,8 @@ class MAPNEBGPRMover(Motion):
         self.options["alt_out_step"] = alt_out   # step to output geometry.
         self.options["prefix"] = prefix 
         self.options["final_hessian_bool"] = final_hessian_bool
-        
+        self.options["read_initial_gpr_training_data"] = read_initial_gpr_training_data
+
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
         self.optarrays["energy_shift"] = energy_shift 
@@ -139,17 +144,17 @@ class MAPNEBGPRMover(Motion):
         # we use this list when we try to converge the calculation.
         if np.shape(gpr_kernel_outputscale_prior_mean) == (0,):
             raise("You must provide output scale for covariance function. This should be a numpy array, with size equal to number of Squared Exponential (SE) kernel you use.")
-        if np.shape(gpr_kernel_lengthscale_prior_mean) == (0,):
+        if np.shape(gpr_kernel_lengthscale_prior_mean_ratio) == (0,):
             raise("You must provide length scale for covariance function. This should be a numpy array, with size equal to number of Squared Exponential (SE) kernel you use.")
 
-        assert len(gpr_kernel_lengthscale_prior_mean) == gpr_SE_kernel_number, "The number of length scale of kernels should match the number of Squared Exponential kernel you use"
+        assert len(gpr_kernel_lengthscale_prior_mean_ratio) == gpr_SE_kernel_number, "The number of length scale of kernels should match the number of Squared Exponential kernel you use"
         assert len(gpr_kernel_outputscale_prior_mean) == gpr_SE_kernel_number, "The number of output scale of kernels should match the number of Squared Exponential kernel you use."
 
         self.optarrays["gpr_force_criterion"] = gpr_force_criterion # criterion to stop the full calculation.
         self.optarrays["gpr_trust_region_ratio"] = gpr_trust_region_ratio
         self.optarrays["gpr_kernel_outputscale_prior_mean"] = gpr_kernel_outputscale_prior_mean
-        self.optarrays["gpr_kernel_lengthscale_prior_mean"] = gpr_kernel_lengthscale_prior_mean
-        self.optarrays["gpr_likelihood_noise_variance_constraint"] = gpr_likelihood_noise_variance_constraint
+        self.optarrays["gpr_kernel_lengthscale_prior_mean_ratio"] = gpr_kernel_lengthscale_prior_mean_ratio
+        self.optarrays["gpr_likelihood_noise_std_constraint"] = gpr_likelihood_noise_std_constraint
         self.options["gpr_SE_kernel_number"]  = gpr_SE_kernel_number
 
         self.ab_initio_index_list = []
@@ -194,7 +199,75 @@ class MAPNEBGPRMover(Motion):
         self.new_gpr_forces = self.forces.copy(self.new_gpr_beads, self.cell)
 
         self.nebgm.bind(self)
-        
+    
+    def generate_initial_training_data(self):
+        '''
+        generate training data for Gaussian Process Regression model
+        '''
+        # choose all NEB beads as initial training data.
+        # We will train the GPR model to optimize hyperparameter when we initialize it.
+        train_x = np.copy(self.beads.q)
+        # potential energy has to shift relative to the energy_shift for training.
+        train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
+        train_grad = - np.copy(dstrip(self.forces.f))
+        # count the # of ab-initio calculation we have done.
+        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
+
+        # option to add more training data between data points.
+        self.new_gpr_beads.q[:-1] = (self.beads.q[:-1] + self.beads.q[1:])/2
+        self.new_gpr_beads.q[-1] = self.beads.q[-1] + (self.beads.q[-1] - self.beads.q[-2]) / 2
+
+        new_train_x = np.copy(self.new_gpr_beads.q)
+        new_train_V = np.copy(self.new_gpr_forces.pots)- self.optarrays["energy_shift"]
+        new_train_grad = - np.copy(dstrip(self.new_gpr_forces.f))
+
+        # concatenate training data.
+        train_x = np.concatenate([train_x, new_train_x], axis = 0)
+        train_V = np.concatenate([train_V, new_train_V], axis = 0)
+        train_grad = np.concatenate([train_grad, new_train_grad], axis = 0)
+        # count the # of ab-initio calculation we have done.
+        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.new_gpr_beads.nbeads
+
+        # add more training data between data points
+        end_bead_index1 = 2
+        end_bead_index2 = 5
+        bead_path_for_interpolation = self.beads.q[end_bead_index1 : end_bead_index2 + 1, :]
+        interpolation_bead_number = 12
+        spline_x, _ = ipi.utils.nebinstool.path_cubic_interpolation(bead_path_for_interpolation, interpolation_bead_number)
+        self.new_gpr_beads.q[:] = spline_x[1:-1]
+
+        new_train_x2 = np.copy(self.new_gpr_beads.q)
+        new_train_V2 = np.copy(self.new_gpr_forces.pots) - self.optarrays["energy_shift"]
+        new_train_grad2 = - np.copy(dstrip(self.new_gpr_forces.f))
+        # concatenate training data.
+        train_x = np.concatenate([train_x, new_train_x2], axis = 0)
+        train_V = np.concatenate([train_V, new_train_V2], axis = 0)
+        train_grad = np.concatenate([train_grad, new_train_grad2], axis = 0)
+        # count the # of ab-initio calculation we have done.
+        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.new_gpr_beads.nbeads
+
+
+        # store the initial training_data
+        train_V_to_store = train_V + self.optarrays["energy_shift"]
+        train_f_to_store = - train_grad 
+        ipi.utils.nebinstgprtool.store_initial_training_data(train_x, train_V_to_store, train_f_to_store)
+
+        return train_x, train_V, train_grad 
+    
+    def read_initial_training_data(self):
+        '''
+        read initial training data stored in files (previously computed)
+        '''
+        train_x, stored_train_V, stored_train_f = ipi.utils.nebinstgprtool.read_initial_training_data()
+        # count the # of ab-initio calculation we have done
+        ab_initio_calculation_number = np.shape(train_x)[0]
+        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + ab_initio_calculation_number 
+
+        train_V = stored_train_V - self.optarrays["energy_shift"]
+        train_grad = - stored_train_f 
+
+        return train_x, train_V, train_grad
+
     def initialialize_GPR_model(self):
         '''
         initialize the gaussian process regression model.
@@ -211,44 +284,23 @@ class MAPNEBGPRMover(Motion):
 
         self.coordinate_transformer = non_redundant_coordinate_transformer(self.beads.natoms, ref_x)
 
-        # initialize Gaussian Process Regression model
-        # choose all NEB beads as initial training data.
-        # We will train the GPR model to optimize hyperparameter when we initialize it.
-        train_x = np.copy(self.beads.q)
-        # potential energy has to shift relative to the energy_shift for training.
-        train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
-        train_grad = - np.copy(dstrip(self.forces.f))
-        # count the # of ab-initio calculation we have done.
-        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
-
-        self.initial_force_amplitude = npnorm(dstrip(self.forces.f), axis = 1)
-
         # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force
         self.nebgm.ab_initio_pot = np.copy(self.forces.pots)
         self.nebgm.ab_initio_force = np.copy(dstrip(self.forces.f))
+        self.initial_force_amplitude = npnorm(dstrip(self.forces.f), axis = 1)
 
-        # option to add more training data between data points.
-        self.new_gpr_beads.q[:-1] = (self.beads.q[:-1] + self.beads.q[1:])/2
-        self.new_gpr_beads.q[-1] = self.beads.q[-1] + (self.beads.q[-1] - self.beads.q[-2]) / 2
-
-        new_train_x = np.copy(self.new_gpr_beads.q)
-        new_train_V = np.copy(self.new_gpr_forces.pots)- self.optarrays["energy_shift"]
-        new_train_grad = - np.copy(dstrip(self.new_gpr_forces.f))
-
-        # concatenate training data.
-        train_x = np.concatenate([train_x, new_train_x], axis = 0)
-        train_V = np.concatenate([train_V, new_train_V], axis = 0)
-        train_grad = np.concatenate([train_grad, new_train_grad], axis = 0)
-        # count the # of ab-initio calculation we have done.
-        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
-
+        read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
+        if not read_gpr_training_data_bool:
+            train_x, train_V, train_grad = self.generate_initial_training_data()
+        else:
+            train_x, train_V, train_grad = self.read_initial_training_data()
 
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(train_x, train_V, train_grad,
                                                                      self.beads.natoms, self.coordinate_transformer,
                                                                      gpr_SE_kernel_number= self.options["gpr_SE_kernel_number"],
                                                                     kernel_initial_outputscale= self.optarrays["gpr_kernel_outputscale_prior_mean"],
-                                                                    kernel_initial_lengthscale= self.optarrays["gpr_kernel_lengthscale_prior_mean"],
-                                                                    likelihood_noise_variance_constraint= self.optarrays["gpr_likelihood_noise_variance_constraint"])
+                                                                    kernel_prior_lengthscale_ratio= self.optarrays["gpr_kernel_lengthscale_prior_mean_ratio"],
+                                                                    likelihood_noise_std_constraint= self.optarrays["gpr_likelihood_noise_std_constraint"])
 
     def check_initial_training_result(self):
         '''
@@ -264,17 +316,32 @@ class MAPNEBGPRMover(Motion):
         ab_initio_forces = self.forces.f 
 
         # check length scale for possible over fitting
-        learned_length_scale = self.gpr_model.output_kernel_lengthscale()
-        internal_input_range = np.max(self.gpr_model.train_inputs, axis=0) - np.min(self.gpr_model.train_inputs, axis = 0)
+        learned_kernel_length_scale = self.gpr_model.output_kernel_lengthscale()
+        internal_input_range = np.max(self.gpr_model.normalized_train_inputs, axis=0) - np.min(self.gpr_model.normalized_train_inputs, axis = 0)
 
-        scaled_internal_input_range = internal_input_range / learned_length_scale 
-        min_scaled_input_range = np.min(scaled_internal_input_range)
-        max_scaled_input_range=  np.max(scaled_internal_input_range)
+        scaled_kernel_lengthscale = learned_kernel_length_scale / internal_input_range 
+        kernel_output_scale_var = self.gpr_model.output_kernel_outputscale()
+        kernel_output_scale_std = np.sqrt(kernel_output_scale_var)
 
         print("\n")
         print("@check the overfitting and underfitting of kernel length scale")
-        print("input_range / kernel_length_scale: max: {} , min: {}".format(max_scaled_input_range, min_scaled_input_range))
-        
+        for i in range(self.gpr_model.gpr_SE_kernel_number):
+            print("kernel {}: ".format(i))
+            print("square root of kernel output scale (\u03C3): " + str(kernel_output_scale_std[i]))
+            print("kernel_length_scale / input scale:   " + str(scaled_kernel_lengthscale[i])  )
+        print("\n")
+
+        if self.optarrays["gpr_likelihood_noise_std_constraint"]["noise_rank"] == 0:
+            print("Diagonal noise term")
+        else:
+            print("N*N full dimensional noise term")
+
+        force_range = self.gpr_model.output_normalized_force_range()
+        V_noises, force_noises = self.gpr_model.output_fitted_gpr_model_noises()
+        force_noises_ratio = force_noises / force_range
+        print("force noise amplitude: " + str(force_noises_ratio))
+        print("potential noise amplitude: " + str(V_noises))
+
         # check energy:
         V_error = np.abs(ab_initio_V_shift - predicted_V_shift) / np.abs(ab_initio_V_shift)
 
@@ -291,11 +358,23 @@ class MAPNEBGPRMover(Motion):
 
         # check overfitting.
         print("@Test Overfitting of GPR model.")
+
         test_q = self.beads.q[0] * 1/4 + self.beads.q[1] * 3/ 4
+        print("q[0] * 1/4 + q[1] * 3/4")
         predicted_test_V_shift, predicted_test_force, ab_initio_test_pot, ab_initio_test_force = ipi.utils.nebinstgprtool.check_gpr_fitting_error(self.gpr_beads, self.gpr_forces, self.gpr_model, self.optarrays["energy_shift"], test_q)
-        test_q = self.beads.q[4] * 1/4 + self.beads.q[5] * 3/ 4
+
+        test_q = self.beads.q[3] * 1/4 + self.beads.q[2] * 3/4
+        print("q[3] * 1/4 + q[2] * 3/4")
         predicted_test_V_shift, predicted_test_force, ab_initio_test_pot, ab_initio_test_force = ipi.utils.nebinstgprtool.check_gpr_fitting_error(self.gpr_beads, self.gpr_forces, self.gpr_model, self.optarrays["energy_shift"], test_q)
         
+        test_q = self.beads.q[4] * 1/4 + self.beads.q[5] * 3/ 4
+        print("q[4] * 1/4 + q[5] * 3/4")
+        predicted_test_V_shift, predicted_test_force, ab_initio_test_pot, ab_initio_test_force = ipi.utils.nebinstgprtool.check_gpr_fitting_error(self.gpr_beads, self.gpr_forces, self.gpr_model, self.optarrays["energy_shift"], test_q)
+        
+        test_q = self.beads.q[7] * 1/4 + self.beads.q[8] * 3/4
+        print("q[7] * 1/4 + q[8] * 3/4")
+        predicted_test_V_shift, predicted_test_force, ab_initio_test_pot, ab_initio_test_force = ipi.utils.nebinstgprtool.check_gpr_fitting_error(self.gpr_beads, self.gpr_forces, self.gpr_model, self.optarrays["energy_shift"], test_q)
+
         pass 
 
 
@@ -675,9 +754,17 @@ class MAPNEBGPRMover(Motion):
         kernel_length_scale = self.gpr_model.output_kernel_lengthscale()
         kernel_number = self.gpr_model.gpr_SE_kernel_number
 
+        # deal with numerical noise where 1 kernel is very small & overfits the model
+        kernel_output_scale_max = np.max(kernel_output_scale)
+        for i in range(kernel_number):
+            # in case kernel output scale for 1 kernel is too small. Effective eliminate this kernel (this kernel probably overfits the noise.)
+            if kernel_output_scale[i] < np.power(10.0, -4) * kernel_output_scale_max:
+                kernel_output_scale[i] = 0
+
         # normalize the output scale:
         output_scale_sum = np.sum(kernel_output_scale)
         kernel_output_scale_normalized = kernel_output_scale / output_scale_sum
+
         # effective kernel lengthscale for scaling internal coordinate. l_eff^{-2} = sum_{n} output_scale_n / (l_n)^2.   
         effective_kernel_length_scale = np.power(np.sum(kernel_output_scale_normalized[:, np.newaxis] / np.power(kernel_length_scale, 2) , axis = 0), -0.5)
 
