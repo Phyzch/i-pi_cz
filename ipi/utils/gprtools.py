@@ -17,7 +17,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
     def __init__(self, train_inputs, train_targets, ard_num_dims, output_dims,
                  gpr_SE_kernel_number,
                  kernel_initial_outputscale, kernel_prior_lengthscale_ratio,
-                 likelihood_noise_prior_param):
+                 likelihood_noise_variance, likelihood_noise_std_constraint ):
         '''
         :param: train_inputs: training data.  torch.Tensor object. shape: [N, d]. N: number of data points. d: input data dimensions.
         :param: train_targets: training data.  torch.Tensor object. shape: [N, m]. N: number of data points. m: output data dimensions. (multiple output)
@@ -27,7 +27,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         :param: gpr_SE_kernel_number: number of squared exponential kernel use to construct the covariance function.
         :param: kernel_initial_outputscale: output scale of each squared exponential kernel used to construct covariance function. numpy array. 
         :param: kernel_initial_lengthscale: length scale of each squared exponential kernel used to construct covariance function. numpy array.
-        :param: likelihood_noise_prior_param:   mean and std to specify the prior of covariance factor for MultitaskGaussian distribution.
+        :param: noise_variance :   mean and std to specify the prior of covariance factor for MultitaskGaussian distribution.
                                                        y = f + epsilon, where the variance of epsilon noise term is defined by likelihood noise variance.
 
         We can access train_x, train_y, likelihood later as : self.train_inputs, self.train_targets, self.likelihood.
@@ -35,7 +35,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         self.input_dim = ard_num_dims
         self.output_dim = output_dims 
         
-        likelihood = self._set_likelihood_noise_prior(output_dims, likelihood_noise_prior_param)
+        likelihood = self._set_likelihood_noise_prior(output_dims, likelihood_noise_variance, likelihood_noise_std_constraint)
 
         super(GPModelWithDerivatives, self).__init__(train_inputs, train_targets, likelihood)
 
@@ -90,18 +90,31 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         for i in range(1, gpr_SE_kernel_number):
             self.covar_module = self.covar_module + self.covar_module_component_list[i]
 
-    def _set_likelihood_noise_prior(self, output_dims, likelihood_noise_prior_param):
+    def _set_likelihood_noise_prior(self, output_dims, likelihood_noise_variance, likelihood_noise_std_constraint):
         '''
         '''
-        noise_covar_factor_mean, noise_covar_factor_std, noise_rank = likelihood_noise_prior_param
-        noise_covar_factor_prior = gpytorch.priors.NormalPrior(noise_covar_factor_mean, noise_covar_factor_std)
+        self.noise_rank = 0
+        
+        likelihood_noise_variance_mean = likelihood_noise_variance
+        likelihood_noise_variance_std = likelihood_noise_variance / 10 
 
-        likelihood = MultitaskGaussianLikelihood_covar_factor_regularization(output_dims, rank= noise_rank, 
-                                                                             has_task_noise= True, has_global_noise= False, 
-                                                                             task_covar_factor_noise_prior= noise_covar_factor_prior)
+        noise_mean_tensor = torch.from_numpy(likelihood_noise_variance_mean)
+        noise_std_tensor = torch.from_numpy(likelihood_noise_variance_std)
 
-        # set initial value of task_covar_factor
-        likelihood.task_noise_covar_factor = torch.nn.Parameter(noise_covar_factor_mean)
+        # apply Normal distribution to noise.
+        task_noise_prior = gpytorch.priors.NormalPrior(noise_mean_tensor, noise_std_tensor)
+
+        # set the constraint to be 10 times larger or smaller than the prior mean value.
+        noise_lower_bound_tensor = noise_mean_tensor.div(100)
+        noise_upper_bound_tensor = noise_mean_tensor.mul(100)
+        noise_constraint = gpytorch.constraints.Interval(noise_lower_bound_tensor, noise_upper_bound_tensor)
+
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, rank= 0, 
+                                                                      noise_prior= task_noise_prior, noise_constraint= noise_constraint,
+                                                                      has_task_noise= True, has_global_noise= False)
+
+        # set initial value of task noises. 
+        likelihood.task_noises = noise_mean_tensor
 
         return likelihood 
 
@@ -210,20 +223,19 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
         output = model(train_inputs)
         # calculate the loss function. here the returned loss is a torch.tensor.
         loss = - mll(output, train_targets)
-
-        # compute loss from prior
-        loss_prior = torch.tensor(0.0)
-        loss_prior = - mll._add_other_terms(loss_prior, [])
-        loss_prior_list.append(loss_prior.item())
-        # calculate the change of loss function to decide whether we will stop the loop.
         loss_value = loss.item() 
         loss_value_list.append(loss_value)
 
         if loss_value > old_loss_value and abs((loss_value - old_loss_value) / old_loss_value) > 0.1:
             print("@WARNING: loss function increases:  {}   ->     {}".format(old_loss_value, loss_value))
-
+        # calculate the change of loss function to decide whether we will stop the loop.
         loss_func_change = np.abs(loss_value - old_loss_value)
         old_loss_value = loss_value 
+
+        # compute loss from prior
+        loss_prior = torch.tensor(0.0)
+        loss_prior = - mll._add_other_terms(loss_prior, [])
+        loss_prior_list.append(loss_prior.item())
 
         # backpropagation the loss function to compute the gradient of each parameter
         loss.backward()
@@ -402,19 +414,20 @@ class GPModelWithDerivativesWrapper():
         assert np.shape(train_grad)[1] == 3 * natom, "dim of gradients for input data is not 3 * natom, this is wrong. train_grad shape:{}, 3 * natom: {}".format(np.shape(train_grad)[1], 3 * natom)
         
         # input data for machine learning model
-        input_dim = 3 * natom - 6   # degree of freedom for molecule - 3 (translational dof) - 3(rotational dof)
-        output_dim = 3 * natom - 5 # input_dim + 1 (grad dV/dx + potential V)
-
-        self.input_dim = input_dim
-        self.output_dim = output_dim 
         self.natom = natom
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
 
         self.coordinate_transformer = coordinate_transformer
 
         train_cartesian_targets = np.concatenate([train_V[:, np.newaxis], train_grad ], axis = 1)
+
         # transform cartesian coordinate x to internal coordinate q
         train_inputs = coordinate_transformer.get_internal_coordinate_q(train_x)
+
+        input_dim = np.shape(train_inputs)[1]   # degree of freedom for molecule - 3 (translational dof) - 3(rotational dof)
+        output_dim = input_dim + 1 # input_dim + 1 (grad dV/dx + potential V)
+        self.input_dim = input_dim
+        self.output_dim = output_dim 
 
         # shape: [N, 3 * natom - 6]
         train_grad_q = coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(train_x, train_grad, hessian_bool = False)
@@ -439,13 +452,13 @@ class GPModelWithDerivativesWrapper():
         self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
 
         # compute the estimated noise covariance factor 
-        likelihood_noise_prior_param = self.transform_cartesian_noise_to_gpr_model_noise(likelihood_noise_std_constraint)
+        likelihood_noise_variance  = self.transform_cartesian_noise_to_gpr_model_noise(likelihood_noise_std_constraint, train_targets)
 
         # initialize the gaussian process regression model with inpt training data.
         self.gpr_model = GPModelWithDerivatives(normalized_train_inputs_tensor, normalized_train_targets_tensor, input_dim, output_dim,
                                                 gpr_SE_kernel_number,
                                                 kernel_initial_outputscale, kernel_prior_lengthscale_ratio, 
-                                                likelihood_noise_prior_param)
+                                                likelihood_noise_variance, likelihood_noise_std_constraint)
 
         # train self.gpr_model() to get optimized hyperparameter
         train_gpr(self.gpr_model)
@@ -510,7 +523,7 @@ class GPModelWithDerivativesWrapper():
 
         return normalized_training_inputs
 
-    def transform_cartesian_noise_to_gpr_model_noise(self, likelihood_noise_std_constraint):
+    def transform_cartesian_noise_to_gpr_model_noise(self, likelihood_noise_std_constraint, training_targets):
         '''
         transform the noise level in cartesian coordinate to noise in Gaussian Process Regressioin model.
         '''
@@ -518,47 +531,30 @@ class GPModelWithDerivativesWrapper():
         force_noise_cartesian = likelihood_noise_std_constraint["force_noise_prior"]
 
         # compute transformation matrix for force between internal coordinate q and cartesian coordinate x. 
-        train_V = self.train_cartesian_targets[:,0]
-        bead_index_at_transition_state = np.argmax(train_V)
-        ref_x = self.train_cartesian_inputs[bead_index_at_transition_state]
+        ref_x = self.coordinate_transformer.ref_x 
+        
+        B_ref_x = self.coordinate_transformer._compute_redundant_gradient_matrix_B(np.expand_dims(ref_x, 0))[0]  # \partial d / \partial x : here d is redundant internal coordinate.
 
-        B_ref_x = self.coordinate_transformer._compute_redundant_gradient_matrix_B(ref_x)  # \partial d / \partial x : here d is redundant internal coordinate.
         Bq_ref_x = np.matmul(self.coordinate_transformer.ref_UT, B_ref_x)   # \partial q/ \partial x: here q is nonredundant internal coordinate.
 
+        Bq_T_ref_x = np.transpose(Bq_ref_x, axes = (1,0))
+        inverse_BqT_ref_x = np.linalg.pinv(Bq_T_ref_x, rcond = np.power(10.0, -8))  # transformation between force in internal coordinate and force in cartesian coordinate.
+
         # because we also scale the force to construct gpr model training targets, we have to scale the noise as well
-        f = self.train_cartesian_targets[:,1:]
+        f = training_targets[:,1:]
         f_range = np.max(f, axis= 0) - np.min(f, axis= 0)
         f_scaling_matrix = np.diag(1 / f_range)  # 1/F diagonal matrix.
 
-        scaled_Bq = np.matmul(f_scaling_matrix, Bq_ref_x)  # matrix to scale for the force noise.
+        scaled_inverse_BqT = np.matmul(f_scaling_matrix, inverse_BqT_ref_x)  # matrix to scale for the force noise.
 
-        # SVD decomposition to find non-zero component.
-        U, S, Vh = np.linalg.svd(scaled_Bq)
-        largest_singular_value = S[0]
-        singular_value_cutoff = 0.01 * largest_singular_value
-        S_clip = np.clip(S, a_min = singular_value_cutoff, a_max = None)
-        f_noise_rank = len(S_clip)
-        U_clip = U[:, :f_noise_rank]
-        
-        f_noise_covar_factor = force_noise_cartesian * np.matmul(U_clip, S_clip)  # covariance factor for noise.       
-        pot_noise = pot_noise / self.V_range   # scale the potential noise since we scale the potential before we put it in GPR
+        force_noise_var_matrix = np.matmul(scaled_inverse_BqT, np.transpose(scaled_inverse_BqT)) * np.power(force_noise_cartesian, 2)
+        force_noise_var = np.diagonal(force_noise_var_matrix)
 
-        noise_rank = f_noise_rank + 1
-        noise_covar_factor_mean = np.zeros([self.output_dim, noise_rank])  # covariance factor for multi-task gaussian distribution of noise.
-        
-        # specify the noise for potential
-        # we model the prior of noise covar factor obey normal distribution. The std of normal dist. is chosen as 0.1 * mean value.
-        # for 0 element, we set the std of normal dist. to be the lower value cutoff
-        noise_covar_factor_mean[0,0] = pot_noise 
-        noise_covar_factor_mean[1:, 1:] = f_noise_covar_factor
+        pot_noise_std = pot_noise / self.V_range 
+        pot_noise_var = np.power(pot_noise_std,2)
 
-        noise_covar_factor_std_cutoff = np.power(10.0, -6)  # the smallest allowed std. for the zero element between force and potential
-        noise_covar_factor_std = noise_covar_factor_mean / 10 # set std of normal distribution as 0.1 of the mean value
-        noise_covar_factor_std = np.clip(noise_covar_factor_std, a_min= noise_covar_factor_std_cutoff, a_max= None)
-
-        likelihood_noise_prior_param = [noise_covar_factor_mean, noise_covar_factor_std, noise_rank]
-
-        return likelihood_noise_prior_param
+        noise_variance = np.concatenate([[pot_noise_var], force_noise_var])
+        return noise_variance 
 
     def inverse_normalization_transform(self, normalized_training_targets):
         '''
@@ -700,7 +696,7 @@ class GPModelWithDerivativesWrapper():
 
         # gradient of potential in internal coordinate
         new_train_grad_q = self.coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(new_train_x, new_train_grad, hessian_bool = False)
-        assert np.shape(new_train_grad_q)[1] == 3 * self.natom - 6, "train_grad_q for internal coordiante has wrong dimension"
+        assert np.shape(new_train_grad_q)[1] == self.input_dim, "train_grad_q for internal coordiante has wrong dimension"
         new_train_targets = np.concatenate([ new_train_V[:,np.newaxis], new_train_grad_q ], axis = 1)
 
         # normalize the new_train_targets

@@ -41,23 +41,6 @@ class non_redundant_coordinate_transformer():
         self.ref_U = ref_U 
         self.ref_UT = np.transpose(self.ref_U)
     
-    def _compute_transformation_matrix_U(self, x):
-        '''
-        compute transformation matrix U for each point individually.
-        matrix U will help the transformation between nonredundant coordinate q and redundant coordinate d.
-
-        :param: x: [nbatch, 3 * n]
-        '''
-        x1 = np.copy(x)
-        B = self._compute_redundant_gradient_matrix_B(x1)
-        nbatch = np.shape(x)[0]
-        
-        U = np.array([self._SVD_matrix_B(B[i]) for i in range(nbatch)])
-
-        UT = np.transpose(U, axes = (0,2,1))
-
-        return U, UT
-
 
     # x - > B
     def _compute_redundant_gradient_matrix_B(self, x):
@@ -104,20 +87,25 @@ class non_redundant_coordinate_transformer():
 
         # sort singular value according to their absolute values. descending order
         s_index = np.argsort(- np.abs(S)) 
-        nonzero_s_index = s_index[: 3 * self.natom - 6]
-        nonzero_s = S[nonzero_s_index]
+        nonzero_S_index = s_index[: 3 * self.natom - 6]
+        nonzero_S = S[nonzero_S_index]
 
         # sanity check 
-        zero_s_index = s_index[3 * self.natom - 6 :]
-        zero_s = S[zero_s_index]
-        if np.size(zero_s) != 0:
-            zero_s_max = np.max(np.abs(zero_s))
-            if zero_s_max > np.power(1.0, -2) * np.min(np.abs(nonzero_s)):
+        zero_S_index = s_index[3 * self.natom - 6 :]
+        zero_S = S[zero_S_index]
+        if np.size(zero_S) != 0:
+            zero_s_max = np.max(np.abs(zero_S))
+            if zero_s_max > np.power(1.0, -2) * np.min(np.abs(nonzero_S)):
                 # nonzero value is too large
-                raise("zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(zero_s_max, np.min(np.abs(nonzero_s))))
+                raise("zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(zero_s_max, np.min(np.abs(nonzero_S))))
 
-        U = U[:, nonzero_s_index]
-        Vh = Vh[nonzero_s_index, :]
+        # check singular value becomes 0 due to symmetry. In this case, we will have internal coordinate number < 3n - 6.
+        singular_value_cutoff = np.max(nonzero_S) * np.power(10.0, -3)
+        S_clip = np.array([s for s in S if s > singular_value_cutoff])
+        nonzero_S_index_len = len(S_clip)
+
+        U = U[:, :nonzero_S_index_len]
+        Vh = Vh[:nonzero_S_index_len, :]
         
         return U
 
@@ -152,13 +140,9 @@ class non_redundant_coordinate_transformer():
         
         :param: d. redundant coordinate. shape:[nbatch, natom^2]
         
-        return q: non-redundant coordinate. shape:[nbatch, 3 * natom - 6]
+        return q: non-redundant coordinate. shape:[nbatch, 3 * natom - 6] (if with symmetry, could be smaller than 3 * natom -6)
         '''
         d_stack = np.expand_dims(d, axis = 2)
-
-        # use the transformation matrix U for each point.
-        # U, UT = self._compute_transformation_matrix_U(x)
-        # q = np.matmul(UT, d_stack)
 
         q = np.matmul(self.ref_UT ,d_stack)
 
@@ -251,9 +235,6 @@ class non_redundant_coordinate_transformer():
         B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2, 3n]
         
         # compute transformation matrix U for each point
-        # U, UT = self._compute_transformation_matrix_U(x)
-        # Bq = np.matmul(UT, B)  # /partial q / \partial x. shape: [nbatch, 3n-6, 3n]
-
         Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
 
 
@@ -315,7 +296,6 @@ class non_redundant_coordinate_transformer():
         # Bq = np.matmul(UT, B) 
 
         Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n] 
-
 
         Bq_T = np.transpose(Bq, axes = (0,2,1))  # transpose of Bq. shape:[nbatch, 3n, 3n - 6]
 

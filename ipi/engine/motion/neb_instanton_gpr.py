@@ -328,11 +328,6 @@ class MAPNEBGPRMover(Motion):
             print("kernel_length_scale / input scale:   " + str(scaled_kernel_lengthscale[i])  )
         print("\n")
 
-        if self.optarrays["gpr_likelihood_noise_std_constraint"]["noise_rank"] == 0:
-            print("Diagonal noise term")
-        else:
-            print("N*N full dimensional noise term")
-
         force_range = self.gpr_model.output_normalized_force_range()
         V_noises, force_noises = self.gpr_model.output_fitted_gpr_model_noises()
         force_noises_ratio = force_noises / force_range

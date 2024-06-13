@@ -258,7 +258,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "options": [ "pot_noise_prior", "force_noise_prior"],
-                 "default": [  1e-4, 1e-4],
+                 "default": [1e-5, 1e-5],
                  "help": "constraint for the variance of noise in the Gaussian Process Regression",
             },
         ),

@@ -29,11 +29,7 @@ class MultitaskGaussianLikelihood_covar_factor_regularization(gpytorch.likelihoo
         
         if rank != 0:
             if task_covar_factor_noise_prior is not None:
-                self.register_prior("TaskCovarianceFactorPrior", task_covar_factor_noise_prior, lambda m: m.noise_covar_factor)
+                self.register_prior("TaskCovarianceFactorPrior", task_covar_factor_noise_prior, lambda m: m.task_noise_covar_factor)
             
 
     
-    @property
-    def noise_covar_factor(self):
-        covar_factor = self.task_noise_covar_factor.copy()
-        return covar_factor
