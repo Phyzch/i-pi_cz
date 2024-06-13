@@ -7,6 +7,8 @@ import gpytorch
 import math
 import numpy as np 
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+from ipi.utils.gprlikelihood import MultitaskGaussianLikelihood_with_pot_and_force_regulation
+
 
 class GPModelWithDerivatives(gpytorch.models.ExactGP):
     '''
@@ -72,6 +74,15 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         task_noise_prior_mean = 0
         task_noise_prior_std = likelihood_noise_std_constraint["task_noise_prior_std"]
         task_noise_prior = gpytorch.priors.NormalPrior(task_noise_prior_mean, task_noise_prior_std)
+
+        # different task noise prior for potential and force.
+        pot_task_noise_prior_mean = 0
+        pot_task_noise_prior_std = likelihood_noise_std_constraint["pot_noise_prior_std"]
+        force_task_noise_prior_mean = 0
+        force_task_noise_prior_std = likelihood_noise_std_constraint["force_noise_prior_std"]
+        task_pot_noise_prior = gpytorch.priors.NormalPrior(pot_task_noise_prior_mean, pot_task_noise_prior_std)
+        task_force_noise_prior = gpytorch.priors.NormalPrior(force_task_noise_prior_mean, force_task_noise_prior_std)
+
         global_noise_constraint = gpytorch.constraints.Interval(np.power(10.0, -6), np.power(10.0, -4))
 
         if noise_rank == 0:
@@ -79,11 +90,16 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, rank= 0,  noise_prior = noise_prior, noise_constraint = noise_constraint,
                                                                         has_task_noise= True, has_global_noise= False)
         else:           
-            likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, rank= noise_rank,  task_prior= task_noise_prior, noise_constraint= global_noise_constraint,
-                                                                       has_task_noise= True, has_global_noise= True)
+            # likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, rank= noise_rank,  task_prior= task_noise_prior, noise_constraint= global_noise_constraint,
+            #                                                            has_task_noise= True, has_global_noise= True)
+            likelihood = MultitaskGaussianLikelihood_with_pot_and_force_regulation(output_dims, rank= noise_rank,  task_pot_noise_prior= task_pot_noise_prior,
+                                                                          task_force_noise_prior= task_force_noise_prior,
+                                                                       has_task_noise= True, has_global_noise= False)
+            
         
         # TODO list: set initial value of task_covar_factor to agree with prior mean.
-        task_noise_covar_factor = torch.normal(torch.zeros(output_dims, output_dims), torch.ones(output_dims, output_dims) * task_noise_prior_std * np.sqrt(2 / output_dims))
+        task_noise_covar_factor = torch.normal(torch.zeros(output_dims, output_dims), torch.ones(output_dims, output_dims) * force_task_noise_prior_std * np.sqrt(2 / output_dims))
+        task_noise_covar_factor[0,:] = torch.normal(torch.zeros(1,output_dims), pot_task_noise_prior_std * np.sqrt(2/output_dims) * torch.ones(1, output_dims) )
         likelihood.task_noise_covar_factor = torch.nn.Parameter(task_noise_covar_factor)
 
         super(GPModelWithDerivatives, self).__init__(train_inputs, train_targets, likelihood)
@@ -196,7 +212,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         return V_noises, force_noises 
 
 
-def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10.0, -4)):
+def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10.0, -3)):
     '''
     the function that trains the model.
     model: GPytorch model 
@@ -234,7 +250,9 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
     # print("outputscale: " + str(output_scale))
     # print("noise:" + str(likelihood.task_noises))
     # print("\n")
-
+    loss_value_list = []
+    loss_prior_list = []
+    
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor 
         optimizer.zero_grad()   
@@ -243,8 +261,17 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
         # calculate the loss function. here the returned loss is a torch.tensor.
         loss = - mll(output, train_targets)
 
+        # compute loss from prior
+        loss_prior = torch.tensor(0.0)
+        loss_prior = - mll._add_other_terms(loss_prior, [])
+        loss_prior_list.append(loss_prior.item())
         # calculate the change of loss function to decide whether we will stop the loop.
         loss_value = loss.item() 
+        loss_value_list.append(loss_value)
+
+        if loss_value > old_loss_value and abs((loss_value - old_loss_value) / old_loss_value) > 0.1:
+            print("@WARNING: loss function increases:  {}   ->     {}".format(old_loss_value, loss_value))
+
         loss_func_change = np.abs(loss_value - old_loss_value)
         old_loss_value = loss_value 
 
@@ -256,14 +283,14 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
         train_counts = train_counts + 1
 
         # for debug.
-        # if train_counts % 10 == 0:
-        #     print("Iter %d - Loss %.3f" %(train_counts, loss_value))
-        #     print("mean_module constant: " + str(model.mean_module.constant))
-        #     kernel_lengthscale = model.output_kernel_lengthscale()
-        #     print("kernel lengthscale: " + str(kernel_lengthscale) )
-        #     output_scale = model.output_kernel_outputscale()
-        #     print("outputscale: " + str(output_scale))
-        #     print("\n")
+        if train_counts % 20 == 0:
+            print("Iter %d - Loss %.3f" %(train_counts, loss_value))
+            print("mean_module constant: " + str(model.mean_module.constant))
+            kernel_lengthscale = model.output_kernel_lengthscale()
+            print("kernel lengthscale: " + str(kernel_lengthscale) )
+            output_scale = model.output_kernel_outputscale()
+            print("outputscale: " + str(output_scale))
+            print("\n")
 
 
     # for debug:
