@@ -5,11 +5,10 @@ from gpytorch.priors import Prior
 from gpytorch.constraints import Interval 
 from torch import Tensor 
 
-class MultitaskGaussianLikelihood_with_pot_and_force_regulation(gpytorch.likelihoods.MultitaskGaussianLikelihood):
+class MultitaskGaussianLikelihood_covar_factor_regularization(gpytorch.likelihoods.MultitaskGaussianLikelihood):
     '''
     Define my own Multi-task Gaussian likelihood class so we can add required prior to potential and force parameters.
-    Add two new choices of prior: task_pot_noise_prior : add prior to the potential task noise.
-                                task_force_noise_prior: add prior to the force task noise. 
+    Add one option for prior: task_covar_factor_noise_prior:  prior for the covariance factor of MultitaskGaussian distribution
     '''
     def __init__(
         self,
@@ -21,34 +20,20 @@ class MultitaskGaussianLikelihood_with_pot_and_force_regulation(gpytorch.likelih
         noise_constraint: Optional[Interval] = None,
         has_global_noise: bool = True,
         has_task_noise: bool = True,
-        task_pot_noise_prior : Optional[Prior] = None,
-        task_force_noise_prior : Optional[Prior] = None  
+        task_covar_factor_noise_prior : Optional[Prior] = None,
     ) -> None:
         
-        super(MultitaskGaussianLikelihood_with_pot_and_force_regulation, self).__init__(num_tasks, rank, batch_shape,
+        super(MultitaskGaussianLikelihood_covar_factor_regularization, self).__init__(num_tasks, rank, batch_shape,
                                                                                      task_prior, noise_prior, noise_constraint, has_global_noise,
                                                                                      has_task_noise)
         
         if rank != 0:
-            if task_pot_noise_prior is not None:
-                self.register_prior("TaskPotCovariancePrior", task_pot_noise_prior, lambda m: m.task_pot_noise_covar)
+            if task_covar_factor_noise_prior is not None:
+                self.register_prior("TaskCovarianceFactorPrior", task_covar_factor_noise_prior, lambda m: m.noise_covar_factor)
             
-            if task_force_noise_prior is not None:
-                self.register_prior("TaskForceCovariancePrior", task_force_noise_prior, lambda m: m.task_force_noise_covar)
-        
-    @property
-    def task_pot_noise_covar(self) -> Tensor:
-        if self.rank > 0:
-            pot_noise_covar = self.task_noise_covar[0,0]
-            return pot_noise_covar 
-        else:
-            raise AttributeError("Can not retrieve potential task noise when covariance is diagonal.")
 
+    
     @property
-    def task_force_noise_covar(self) -> Tensor:
-        if self.rank > 0:
-            force_noise_covar = self.task_noise_covar[1:,1:]
-            return force_noise_covar 
-        
-        else:
-            raise AttributeError("Can not retrieve force task noise when covariance is diagonal.")
+    def noise_covar_factor(self):
+        covar_factor = self.task_noise_covar_factor.copy()
+        return covar_factor

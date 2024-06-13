@@ -80,10 +80,7 @@ class MAPNEBGPRMover(Motion):
         gpr_trust_region_ratio = 0.05,
         gpr_kernel_outputscale_prior_mean = np.zeros(0, float),
         gpr_kernel_lengthscale_prior_mean_ratio = np.zeros(0, float),
-        gpr_likelihood_noise_std_constraint = {"pot_upper_bound_ratio" : 1e-1, "pot_lower_bound_ratio": 1e-2, 
-                                               "force_upper_bound_ratio": 0.02, "force_lower_bound_ratio": 0.005,
-                                               "task_noise_prior_std": 1e-4, "pot_noise_prior_std": 1e-4, "force_noise_prior_std": 1e-4,
-                                               "noise_rank" : 0.0},
+        gpr_likelihood_noise_std_constraint = {"pot_noise_prior": 1e-5, "force_noise_prior": 1e-5},
         gpr_SE_kernel_number = 1,
         read_initial_gpr_training_data = False
     ):
