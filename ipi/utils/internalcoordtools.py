@@ -36,11 +36,11 @@ class non_redundant_coordinate_transformer():
         ref_x = np.expand_dims(self.ref_x, 0)  # batch size 1.  size: [1, 3 * natom]
         ref_B = self._compute_redundant_gradient_matrix_B(ref_x)
         ref_B = ref_B[0]  # B: redundant gradient matrix.  shape: [natom^2, 3 * natom]
-        ref_U = self._SVD_matrix_B(ref_B) # shape [natom^2, 3 * natom - 6]
+        ref_U, ref_S = self._SVD_matrix_B(ref_B) # shape [natom^2, 3 * natom - 6]
         
         self.ref_U = ref_U 
         self.ref_UT = np.transpose(self.ref_U)
-    
+        self.ref_S = ref_S 
 
     # x - > B
     def _compute_redundant_gradient_matrix_B(self, x):
@@ -96,18 +96,18 @@ class non_redundant_coordinate_transformer():
         if np.size(zero_S) != 0:
             zero_s_max = np.max(np.abs(zero_S))
             if zero_s_max > np.power(1.0, -2) * np.min(np.abs(nonzero_S)):
-                # nonzero value is too large
+                # nonzero value is too largels
                 raise("zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(zero_s_max, np.min(np.abs(nonzero_S))))
 
         # check singular value becomes 0 due to symmetry. In this case, we will have internal coordinate number < 3n - 6.
-        singular_value_cutoff = np.max(nonzero_S) * np.power(10.0, -3)
+        singular_value_cutoff = np.max(nonzero_S) * np.power(10.0, -2)
         S_clip = np.array([s for s in S if s > singular_value_cutoff])
         nonzero_S_index_len = len(S_clip)
 
         U = U[:, :nonzero_S_index_len]
         Vh = Vh[:nonzero_S_index_len, :]
         
-        return U
+        return U, S
 
     
     # x -> d

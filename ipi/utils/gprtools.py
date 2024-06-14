@@ -71,8 +71,13 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             lengthscale_prior = gpytorch.priors.GammaPrior(length_gamma_alpha, length_gamma_beta)
             outputscale_prior = gpytorch.priors.GammaPrior(output_gamma_alpha, output_gamma_alpha / output_scale)
 
+            # also add length scale constraint: minimum cutoff to prevent over-fitting. 
+            length_scale_ratio_cutoff = 0.05
+            length_scale_cutoff = torch.from_numpy(length_scale_ratio_cutoff * train_inputs_range) 
+            lengthscale_constraint = gpytorch.constraints.GreaterThan(length_scale_cutoff)
+
             # set Squared Exponential kernel function
-            base_kernel = gpytorch.kernels.RBFKernelGrad(ard_num_dims= ard_num_dims, lengthscale_prior= lengthscale_prior)
+            base_kernel = gpytorch.kernels.RBFKernelGrad(ard_num_dims= ard_num_dims, lengthscale_prior= lengthscale_prior, lengthscale_constraint= lengthscale_constraint)
             covar_module = gpytorch.kernels.ScaleKernel(base_kernel, outputscale_prior = outputscale_prior)
 
             # Initialize lengthscale and output scale to the mean of priors
@@ -105,8 +110,8 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         task_noise_prior = gpytorch.priors.NormalPrior(noise_mean_tensor, noise_std_tensor)
 
         # set the constraint to be 10 times larger or smaller than the prior mean value.
-        noise_lower_bound_tensor = noise_mean_tensor.div(100)
-        noise_upper_bound_tensor = noise_mean_tensor.mul(100)
+        noise_lower_bound_tensor = noise_mean_tensor.div(10)
+        noise_upper_bound_tensor = noise_mean_tensor.mul(10)
         noise_constraint = gpytorch.constraints.Interval(noise_lower_bound_tensor, noise_upper_bound_tensor)
 
         likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(output_dims, rank= 0, 
@@ -213,6 +218,7 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
     # print("outputscale: " + str(output_scale))
     # print("noise:" + str(likelihood.task_noises))
     # print("\n")
+
     loss_value_list = []
     loss_prior_list = []
     
@@ -245,14 +251,14 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
         train_counts = train_counts + 1
 
         # for debug.
-        if train_counts % 20 == 0:
-            print("Iter %d - Loss %.3f" %(train_counts, loss_value))
-            print("mean_module constant: " + str(model.mean_module.constant))
-            kernel_lengthscale = model.output_kernel_lengthscale()
-            print("kernel lengthscale: " + str(kernel_lengthscale) )
-            output_scale = model.output_kernel_outputscale()
-            print("outputscale: " + str(output_scale))
-            print("\n")
+        # if train_counts % 20 == 0:
+        #     print("Iter %d - Loss %.3f" %(train_counts, loss_value))
+        #     print("mean_module constant: " + str(model.mean_module.constant))
+        #     kernel_lengthscale = model.output_kernel_lengthscale()
+        #     print("kernel lengthscale: " + str(kernel_lengthscale) )
+        #     output_scale = model.output_kernel_outputscale()
+        #     print("outputscale: " + str(output_scale))
+        #     print("\n")
 
 
     # for debug:
@@ -479,12 +485,6 @@ class GPModelWithDerivativesWrapper():
         self.V_mean = np.mean(V)
         self.V_range = np.max(V) - np.min(V)
 
-        # further normalize the force after scale the potential V.
-        f = training_targets[:, 1:]
-        f_normalized1 = f / self.V_range 
-
-        self.grad_V_normalized1_mean = np.mean(f_normalized1, axis = 0)
-        self.grad_V_normalized1_range = np.max(f_normalized1, axis = 0) - np.min(f_normalized1, axis = 0)
 
     def normalization_transform(self, training_targets, training_inputs):
         '''
@@ -503,58 +503,21 @@ class GPModelWithDerivativesWrapper():
         V_normalized = (V - self.V_mean) / self.V_range 
 
         grad_V = training_targets[:,1:]
-        grad_V_normalized1 = grad_V / self.V_range 
-
-        # further normalize the gradient of potential by scale the length scale x.
-        grad_V_normalized = (grad_V_normalized1 - self.grad_V_normalized1_mean) / self.grad_V_normalized1_range 
-        normalized_training_inputs = training_inputs * self.grad_V_normalized1_range
+        grad_V_normalized = grad_V / self.V_range 
 
         normalized_training_targets = np.concatenate( [ V_normalized[:, np.newaxis], grad_V_normalized ] , axis = 1 )
+
+        normalized_training_inputs = training_inputs
 
         return normalized_training_targets, normalized_training_inputs
 
     def normalization_transform_training_inputs(self, training_inputs):
         '''
-        scale the training inputs for GPR model.
-        This is like normalization_transform, but only scale the inputs.
-
+        how training inputs are handled during normalization.
         '''
-        normalized_training_inputs = training_inputs * self.grad_V_normalized1_range
+        normalized_training_inputs = training_inputs 
 
         return normalized_training_inputs
-
-    def transform_cartesian_noise_to_gpr_model_noise(self, likelihood_noise_std_constraint, training_targets):
-        '''
-        transform the noise level in cartesian coordinate to noise in Gaussian Process Regressioin model.
-        '''
-        pot_noise = likelihood_noise_std_constraint["pot_noise_prior"]
-        force_noise_cartesian = likelihood_noise_std_constraint["force_noise_prior"]
-
-        # compute transformation matrix for force between internal coordinate q and cartesian coordinate x. 
-        ref_x = self.coordinate_transformer.ref_x 
-        
-        B_ref_x = self.coordinate_transformer._compute_redundant_gradient_matrix_B(np.expand_dims(ref_x, 0))[0]  # \partial d / \partial x : here d is redundant internal coordinate.
-
-        Bq_ref_x = np.matmul(self.coordinate_transformer.ref_UT, B_ref_x)   # \partial q/ \partial x: here q is nonredundant internal coordinate.
-
-        Bq_T_ref_x = np.transpose(Bq_ref_x, axes = (1,0))
-        inverse_BqT_ref_x = np.linalg.pinv(Bq_T_ref_x, rcond = np.power(10.0, -8))  # transformation between force in internal coordinate and force in cartesian coordinate.
-
-        # because we also scale the force to construct gpr model training targets, we have to scale the noise as well
-        f = training_targets[:,1:]
-        f_range = np.max(f, axis= 0) - np.min(f, axis= 0)
-        f_scaling_matrix = np.diag(1 / f_range)  # 1/F diagonal matrix.
-
-        scaled_inverse_BqT = np.matmul(f_scaling_matrix, inverse_BqT_ref_x)  # matrix to scale for the force noise.
-
-        force_noise_var_matrix = np.matmul(scaled_inverse_BqT, np.transpose(scaled_inverse_BqT)) * np.power(force_noise_cartesian, 2)
-        force_noise_var = np.diagonal(force_noise_var_matrix)
-
-        pot_noise_std = pot_noise / self.V_range 
-        pot_noise_var = np.power(pot_noise_std,2)
-
-        noise_variance = np.concatenate([[pot_noise_var], force_noise_var])
-        return noise_variance 
 
     def inverse_normalization_transform(self, normalized_training_targets):
         '''
@@ -573,16 +536,48 @@ class GPModelWithDerivativesWrapper():
         V_normalized = normalized_training_targets[:, 0]
         grad_V_normalized = normalized_training_targets[:, 1:]
 
-        # scale back the gradient of potential and internal coordinate
-        grad_V_normalized1 = grad_V_normalized * self.grad_V_normalized1_range + self.grad_V_normalized1_mean
-
         # scale the potential and gradient of potential
         V = V_normalized * self.V_range + self.V_mean 
-        grad_V = grad_V_normalized1 * self.V_range 
+        grad_V = grad_V_normalized * self.V_range 
 
         training_targets = np.concatenate([ V[:, np.newaxis], grad_V ], axis = 1)
 
         return training_targets
+
+    def transform_cartesian_noise_to_gpr_model_noise(self, likelihood_noise_std_constraint, training_targets):
+        '''
+        transform the noise level in cartesian coordinate to noise in Gaussian Process Regressioin model.
+        '''
+        pot_noise = likelihood_noise_std_constraint["pot_noise_prior"]
+        force_noise_cartesian = likelihood_noise_std_constraint["force_noise_prior"]
+
+        # compute transformation matrix for force between internal coordinate q and cartesian coordinate x. 
+        ref_x = self.coordinate_transformer.ref_x 
+        
+        B_ref_x = self.coordinate_transformer._compute_redundant_gradient_matrix_B(np.expand_dims(ref_x, 0))[0]  # \partial d / \partial x : here d is redundant internal coordinate.
+
+        Bq_ref_x = np.matmul(self.coordinate_transformer.ref_UT, B_ref_x)   # \partial q/ \partial x: here q is nonredundant internal coordinate.
+
+        Bq_T_ref_x = np.transpose(Bq_ref_x, axes = (1,0))
+        inverse_BqT_ref_x = np.linalg.pinv(Bq_T_ref_x, rcond = np.power(10.0, -8))  # transformation between force in internal coordinate and force in cartesian coordinate.
+
+        # # because we also scale the force to construct gpr model training targets, we have to scale the noise as well
+        # f = training_targets[:,1:]
+        # f_range = np.max(f, axis= 0) - np.min(f, axis= 0)
+        # f_scaling_matrix = np.diag(1 / f_range)  # 1/F diagonal matrix.
+
+        # scaled_inverse_BqT = np.matmul(f_scaling_matrix, inverse_BqT_ref_x)  # matrix to scale for the force noise.
+        scaled_inverse_BqT = inverse_BqT_ref_x * 1/ self.V_range
+
+        force_noise_var_matrix = np.matmul(scaled_inverse_BqT, np.transpose(scaled_inverse_BqT)) * np.power(force_noise_cartesian, 2)
+        force_noise_var = np.diagonal(force_noise_var_matrix)
+
+        pot_noise_std = pot_noise / self.V_range 
+        pot_noise_var = np.power(pot_noise_std,2)
+
+        noise_variance = np.concatenate([[pot_noise_var], force_noise_var])
+        return noise_variance 
+
 
 
     def predict_latent_function(self, test_x, internal_coordinate_bool = False):
@@ -612,7 +607,6 @@ class GPModelWithDerivativesWrapper():
         normalized_test_var = normalized_test_var_tensor.detach().cpu().numpy()
 
         test_var = normalized_test_var * np.power(self.V_range , 2) 
-        test_var[:,1:] = test_var[:,1:] * np.power(self.grad_V_normalized1_range, 2)
         test_mean = self.inverse_normalization_transform(normalized_test_mean)
 
         V = test_mean[:, 0]
@@ -629,49 +623,6 @@ class GPModelWithDerivativesWrapper():
         else:
             return V, grad_x, var_V, var_grad_q
     
-
-
-    def predict_observable(self, test_x, internal_coordinate_bool = False):
-        '''
-        similar to predict_latent_function. But instead of output f(X) = (V, dV/dx) in predict_latent_function, we compute the observable y = f(X) + epsilon. (with noise)
-        
-        :param: test_x: input Cartesian coordinate data [N, 3 * natom]. 
-        
-        :return: V: predicted potential energy.
-                grad_x: dV/dx, predicted gradient of potential energy. In Cartesian coordinate.
-                var_V: uncertainty (variance) of potential energy.
-                var_grad: variance of gradients along different internal coordinate. We can postprocess to get uncertainty about force prediction.
-        '''
-        assert np.shape(test_x)[1] == 3 * self.natom 
-
-        # transform to internal coordinate q.
-        test_q = self.coordinate_transformer.get_internal_coordinate_q(test_x)
-        test_q_normalized = self.normalization_transform_training_inputs(test_q)
-        test_q_normalized_tensor = torch.from_numpy(test_q_normalized)
-
-
-        # use Gaussian process regression to make prediction 
-        normalized_test_observable_mean_tensor, normalized_test_observable_var_tensor = predict_observable_gp_with_derivative(self.gpr_model, test_inputs = test_q_normalized_tensor, covar_bool = False)
-        normalized_test_observable_mean = normalized_test_observable_mean_tensor.detach().cpu().numpy()
-        normalized_test_observable_var = normalized_test_observable_var_tensor.detach().cpu().numpy() 
-
-        test_observable_mean = self.inverse_normalization_transform(normalized_test_observable_mean)
-        test_observable_var = normalized_test_observable_var * np.power(self.V_range, 2) 
-        test_observable_var[:,1:] = test_observable_var[:,1:] * np.power(self.grad_V_normalized1_range, 2)
-
-        V = test_observable_mean[:, 0]
-        grad_q = test_observable_mean[:, 1:]
-
-        # transform the gradient from internal coordinate q back to cartesian coordinate
-        grad_x = self.coordinate_transformer.transform_internal_g_h_to_cartesian_g_h(test_x, grad_q, hessian_bool = False)
-
-        var_V = test_observable_var[:, 0]
-        var_grad_q = test_observable_var[:, 1:]
-
-        if internal_coordinate_bool:
-            return V, grad_q, var_V, var_grad_q 
-        else:
-            return V, grad_x, var_V, var_grad_q
 
     def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad):
         '''

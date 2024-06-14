@@ -385,12 +385,12 @@ class MAPNEBGPRMover(Motion):
             bead_index_for_update = outrange_bead_index
             training_x = dstrip(self.beads.q[bead_index_for_update]).copy()
             training_x = np.array([training_x])
-            training_V_shift, training_grad_x, _, _ = self.gpr_model.predict_observable(training_x)
+            training_V_shift, training_grad_x, _, _ = self.gpr_model.predict_latent_function(training_x)
             training_bead_forces = - training_grad_x[0]
         else:
             # in this case, NEB calculation converges on GPR fitted PES.
             # find the bead with the largest energy uncertainty.
-            beads_V_shift, beads_grad_x, beads_var_V, beads_var_grad_q = self.gpr_model.predict_observable(self.beads.q)
+            beads_V_shift, beads_grad_x, beads_var_V, beads_var_grad_q = self.gpr_model.predict_latent_function(self.beads.q)
             beads_forces = - beads_grad_x 
             bead_index_for_update = np.argmax(beads_var_V)
             training_bead_forces = beads_forces[bead_index_for_update]
@@ -522,7 +522,7 @@ class MAPNEBGPRMover(Motion):
             gpr_bead_index_list = np.array(range(self.beads.nbeads))
             gpr_bead_index_list = np.delete(gpr_bead_index_list, self.ab_initio_bead_index)
 
-            beads_V, beads_grad_x, beads_var_V, beads_var_grad_q = self.gpr_model.predict_observable(self.beads.q)
+            beads_V, beads_grad_x, beads_var_V, beads_var_grad_q = self.gpr_model.predict_latent_function(self.beads.q)
             beads_forces = -beads_grad_x
 
             # find the bead that has the largest energy variance and we haven't evaluated its ab-initio potential.

@@ -120,7 +120,7 @@ def check_gpr_fitting_error(gpr_beads, gpr_forces, gpr_model : GPModelWithDeriva
     ab_initio_force = gpr_forces.f[0]
     ab_initio_pot = gpr_forces.pots[0] - energy_shift
 
-    predicted_V_shift, predicted_V_grad, _, _ = gpr_model.predict_observable(gpr_beads.q)
+    predicted_V_shift, predicted_V_grad, _, _ = gpr_model.predict_latent_function(gpr_beads.q)
     predicted_gpr_bead_force = - predicted_V_grad[0]
     predicted_V_shift = predicted_V_shift[0]
 
