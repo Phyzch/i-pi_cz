@@ -211,37 +211,37 @@ class MAPNEBGPRMover(Motion):
         self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.beads.nbeads
 
         # option to add more training data between data points.
-        self.new_gpr_beads.q[:-1] = (self.beads.q[:-1] + self.beads.q[1:])/2
-        self.new_gpr_beads.q[-1] = self.beads.q[-1] + (self.beads.q[-1] - self.beads.q[-2]) / 2
+        # self.new_gpr_beads.q[:-1] = (self.beads.q[:-1] + self.beads.q[1:])/2
+        # self.new_gpr_beads.q[-1] = self.beads.q[-1] + (self.beads.q[-1] - self.beads.q[-2]) / 2
 
-        new_train_x = np.copy(self.new_gpr_beads.q)
-        new_train_V = np.copy(self.new_gpr_forces.pots)- self.optarrays["energy_shift"]
-        new_train_grad = - np.copy(dstrip(self.new_gpr_forces.f))
+        # new_train_x = np.copy(self.new_gpr_beads.q)
+        # new_train_V = np.copy(self.new_gpr_forces.pots)- self.optarrays["energy_shift"]
+        # new_train_grad = - np.copy(dstrip(self.new_gpr_forces.f))
 
-        # concatenate training data.
-        train_x = np.concatenate([train_x, new_train_x], axis = 0)
-        train_V = np.concatenate([train_V, new_train_V], axis = 0)
-        train_grad = np.concatenate([train_grad, new_train_grad], axis = 0)
-        # count the # of ab-initio calculation we have done.
-        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.new_gpr_beads.nbeads
+        # # concatenate training data.
+        # train_x = np.concatenate([train_x, new_train_x], axis = 0)
+        # train_V = np.concatenate([train_V, new_train_V], axis = 0)
+        # train_grad = np.concatenate([train_grad, new_train_grad], axis = 0)
+        # # count the # of ab-initio calculation we have done.
+        # self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.new_gpr_beads.nbeads
 
-        # add more training data between data points
-        end_bead_index1 = 2
-        end_bead_index2 = 5
-        bead_path_for_interpolation = self.beads.q[end_bead_index1 : end_bead_index2 + 1, :]
-        interpolation_bead_number = 12
-        spline_x, _ = ipi.utils.nebinstool.path_cubic_interpolation(bead_path_for_interpolation, interpolation_bead_number)
-        self.new_gpr_beads.q[:] = spline_x[1:-1]
+        # # add more training data between data points
+        # end_bead_index1 = 2
+        # end_bead_index2 = 5
+        # bead_path_for_interpolation = self.beads.q[end_bead_index1 : end_bead_index2 + 1, :]
+        # interpolation_bead_number = 12
+        # spline_x, _ = ipi.utils.nebinstool.path_cubic_interpolation(bead_path_for_interpolation, interpolation_bead_number)
+        # self.new_gpr_beads.q[:] = spline_x[1:-1]
 
-        new_train_x2 = np.copy(self.new_gpr_beads.q)
-        new_train_V2 = np.copy(self.new_gpr_forces.pots) - self.optarrays["energy_shift"]
-        new_train_grad2 = - np.copy(dstrip(self.new_gpr_forces.f))
-        # concatenate training data.
-        train_x = np.concatenate([train_x, new_train_x2], axis = 0)
-        train_V = np.concatenate([train_V, new_train_V2], axis = 0)
-        train_grad = np.concatenate([train_grad, new_train_grad2], axis = 0)
-        # count the # of ab-initio calculation we have done.
-        self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.new_gpr_beads.nbeads
+        # new_train_x2 = np.copy(self.new_gpr_beads.q)
+        # new_train_V2 = np.copy(self.new_gpr_forces.pots) - self.optarrays["energy_shift"]
+        # new_train_grad2 = - np.copy(dstrip(self.new_gpr_forces.f))
+        # # concatenate training data.
+        # train_x = np.concatenate([train_x, new_train_x2], axis = 0)
+        # train_V = np.concatenate([train_V, new_train_V2], axis = 0)
+        # train_grad = np.concatenate([train_grad, new_train_grad2], axis = 0)
+        # # count the # of ab-initio calculation we have done.
+        # self.ab_initio_force_calculation_number = self.ab_initio_force_calculation_number + self.new_gpr_beads.nbeads
 
 
         # store the initial training_data
@@ -331,7 +331,8 @@ class MAPNEBGPRMover(Motion):
         force_range = self.gpr_model.output_normalized_force_range()
         V_noises, force_noises = self.gpr_model.output_fitted_gpr_model_noises()
         force_noises_ratio = force_noises / force_range
-        print("force noise amplitude: " + str(force_noises_ratio))
+        print("force noise ratio  (amplitude / range): " + str(force_noises_ratio))
+        print("internal coordinate force range: " + str(force_range))
         print("potential noise amplitude: " + str(V_noises))
 
         # check energy:
@@ -784,7 +785,7 @@ class MAPNEBGPRMover(Motion):
         # ideal value is 0.25
         val1 = spring_k * np.power(dt, 2)
         # scale spring_k, left_kappa and right_kappa
-        spring_k_scale = 0.1 / val1
+        spring_k_scale = 0.25 / val1
 
         # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2, it should be smaller than 1 and larger than 0.1
         # ideal value is 0.5
@@ -793,12 +794,12 @@ class MAPNEBGPRMover(Motion):
         
         max_force2 = np.max(np.abs(self.nebgm.rbf[0]))  # maximum gradient of left end bead.
         val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
-        left_kappa_scale = 0.2 / val2
+        left_kappa_scale = 0.5 / val2
 
         # check the right end bead.
         max_force3 = np.max(np.abs(self.nebgm.rbf[-1]))  # maximum gradient of right end bead
         val3 = max_force3 * np.power(dt,2) * right_kappa / np.sqrt(m_H)
-        right_kappa_scale = 0.2 / val3
+        right_kappa_scale = 0.5 / val3
 
         self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
         self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
@@ -974,6 +975,8 @@ class LINEBGradientMapper(object):
 
         :return: action_force:  the negative gradient of abbreviated action W. (for scaled coordinates) size: [nimag, 3 * natom].
         '''
+        # internal_bead_minimum_energy = 0.0005 * units.unit_to_internal("energy", "electronvolt", 1)   # internal bead energy should at least be 0.002 higher than instanton path end energy.
+
         beads_energy = self.beads_energy
 
         bead_displs_vector = mscaled_q[1:] - mscaled_q[:-1]  # displacement vector of beads. [nbeads-1, 3 * natom]
@@ -990,6 +993,8 @@ class LINEBGradientMapper(object):
             else:
                 action_each_bead[i] = np.sqrt(2 * (beads_energy[i] - self.instanton_path_energy))
         
+        action_each_bead_max = np.max(action_each_bead)
+
         action_force = np.zeros([nimage, 3 * natom])
         for j in range(1 , nimage-1):
             dj1 = bead_distance[j-1]  #|r_{j} - r_{j-1}|.  d_{j}
@@ -1002,10 +1007,11 @@ class LINEBGradientMapper(object):
             if action_each_bead[j] > 0:
                 gj_force_component = 0.5 * ( 1/action_each_bead[j] * (dj1 + dj2) * fj )
             else:
-                gj_force_component = 0
-
+                # add negative force component to increase the energy. Make it larger to force the internal beads have higher energy.
+                # add a minimum energy cutoff for internal beads (defined above), this will prevent beads getting dragged back below end beads energy again.
+                gj_force_component = 0.5 * (1/action_each_bead_max * (dj1 + dj2) * (-fj))  * 10 
+            
             gj_curvature_component = 0.5 * (- (action_each_bead[j] + action_each_bead[j-1]) * dj1_unit_vector + (action_each_bead[j] + action_each_bead[j+1]) * dj2_unit_vector)
-
             gj = gj_force_component + gj_curvature_component
 
             action_force[j] = gj 

@@ -65,7 +65,7 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
         bead_internal_q = normalized_internal_coordinate[bead_index]
 
         # distance between gpr training data and beads.
-        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - normalized_gpr_training_internal_coordinate) / initial_effective_kernel_length_scale , axis = 1) 
+        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - normalized_gpr_training_internal_coordinate) / effective_kernel_length_scale , axis = 1) 
         
         nearest_gpr_data_index = np.argmin(internal_coordinate_r)
 
@@ -89,7 +89,7 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
 
     if early_stop_bool:
         print("\n")
-        print("bead index that cause early stop (starting from 0) : " + str(bead_index))
+        print("bead index that cause early stop (starting from 0) : " + str(out_range_bead_index))
         print("@Early Stop for Inner Loop")
         print("\n")
 
