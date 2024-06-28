@@ -9,19 +9,20 @@ from ipi.utils.depend import dstrip
 import re 
 import os 
 
-def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDerivativesWrapper, initial_scaled_internal_coordinate_neb_path_length, initial_effective_kernel_length_scale):
+def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDerivativesWrapper,
+                         outerloop_step, inner_loop_neb_step):
     '''
-    check early stoage criterion for neb algorithm with machine learning.
+    check early stoage criterion for LI-NEB algorithm with machine learning.
     If the bead move out of trusted region, then we stop the current move.
-    This means if the distance between beads and nearest gpr point in internal coordinate "q" exceeds 2 * sigma, 
-    (where sigma is the length scale of gpr kernel), then the bead is out of trusted region.
     Notice because of automatic relevance determination (ARD) (https://mogp-emulator.readthedocs.io/en/latest/methods/proc/ProcAutomaticRelevanceDetermination.html#:~:text=We%20describe%20here%20the%20method,scales%20in%20the%20covariance%20models.)
-    We should use scaled coordinate with respect to the kernel length scale.
+    each internal dimension has one length scale, therefore, the internal distance q should be scaled by kernel length scale.
 
     :param: beads_x: cartesian coordinate X of neb beads 
     :param: trust_region_ratio: cutoff for rmax / neb_path_length. If beads move out of trust region, we stop the inner neb loop. 
     :param: gpr_model: model to perform the Gaussian Process Regression.
-    :param: initial_scaled_internal_coordinate_neb_path_length: the initial neb path length in internal coordinate scaled by kernel length scale. 
+    :param: outerloop_step: step index for the outer loop.
+    :param: inner_loop_neb_step: step index for the inner loop.
+
     :return: early_stop_bool: bool variable to indicate whether there is bead out of trust region.
              out_range_bead_index: the bead index that move out of the trusted region.
     '''
@@ -33,14 +34,6 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
     # kernel output scale and kernel length scale of kernels
     kernel_output_scale = gpr_model.output_kernel_outputscale()
     kernel_length_scale = gpr_model.output_kernel_lengthscale()
-    kernel_number = gpr_model.gpr_SE_kernel_number
-
-    # deal with numerical noise where 1 kernel is very small & overfits the model
-    kernel_output_scale_max = np.max(kernel_output_scale)
-    for i in range(kernel_number):
-        # in case kernel output scale for 1 kernel is too small. Effective eliminate this kernel (this kernel probably overfits the noise.)
-        if kernel_output_scale[i] < 0.01 * kernel_output_scale_max:
-            kernel_output_scale[i] = 0
 
     # normalize the output scale:
     output_scale_sum = np.sum(kernel_output_scale)
@@ -50,47 +43,48 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
 
     # the location of current beads in internal coordinate
     beads_internal_coordinate = coordinate_transformer.get_internal_coordinate_q(np.copy(beads_x))
-    normalized_internal_coordinate = gpr_model.normalization_transform_training_inputs(beads_internal_coordinate)
+    # the path length of neb beads in internal coordinate, scaled by the kernel length scale.
+    scaled_internal_coordinate_neb_path_length = np.sum( np.linalg.norm( (beads_internal_coordinate[1:] - beads_internal_coordinate[:-1]) / effective_kernel_length_scale, axis= 1 ) )
 
     # distance cutoff for trust region.
-    distance_cutoff = initial_scaled_internal_coordinate_neb_path_length * trust_region_ratio
+    distance_cutoff = scaled_internal_coordinate_neb_path_length * trust_region_ratio
     # the location of training data in internal coordinate.
-    normalized_gpr_training_internal_coordinate = gpr_model.output_normalized_training_internal_inputs()
+    gpr_training_internal_coordinate = gpr_model.output_training_internal_inputs()
     
-
     # compute the distance and find beads that move out of the trusted region.
     nbeads = np.shape(beads_x)[0]
-    internal_coordinate_r_closest_list = []
+    internal_coordinate_closest_r_list = []
     for bead_index in range(nbeads):
-        bead_internal_q = normalized_internal_coordinate[bead_index]
+        bead_internal_q = beads_internal_coordinate[bead_index]
 
         # distance between gpr training data and beads.
-        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - normalized_gpr_training_internal_coordinate) / effective_kernel_length_scale , axis = 1) 
+        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - gpr_training_internal_coordinate) / effective_kernel_length_scale , axis = 1) 
         
         nearest_gpr_data_index = np.argmin(internal_coordinate_r)
 
         # distance r between beads and the closest gpr training data
-        internal_coordinate_r_closest = internal_coordinate_r[nearest_gpr_data_index]
+        internal_coordinate_closest_r = internal_coordinate_r[nearest_gpr_data_index]
         
-        internal_coordinate_r_closest_list.append(internal_coordinate_r_closest)
-        if internal_coordinate_r_closest > distance_cutoff:
+        internal_coordinate_closest_r_list.append(internal_coordinate_closest_r)
+        if internal_coordinate_closest_r > distance_cutoff:
             if early_stop_bool == False:
                 early_stop_bool = True 
                 out_range_bead_index = bead_index 
             
     
-    # for debug
+    # output early stop information
     print("\n")
-    print("effective kernel length scale: " + str(effective_kernel_length_scale))
-    print("initial effective kernel length scale: " + str(initial_effective_kernel_length_scale))
+    print("@early stop info: outer loop: {},  inner loop: {} ".format(outerloop_step, inner_loop_neb_step))
+    # print("effective kernel length scale: " + str(effective_kernel_length_scale))
     print("internal coordinate distance cutoff: " + str(distance_cutoff))
-    print("distance for beads to nearest GPR point: " + str(internal_coordinate_r_closest_list))
+    print("distance for beads to nearest GPR point: " + str(internal_coordinate_closest_r_list))
     print("\n")
 
     if early_stop_bool:
         print("\n")
+        print("@Early Stop for Inner Loop. outer loop: {},  inner loop: {} ".format(outerloop_step, inner_loop_neb_step))
         print("bead index that cause early stop (starting from 0) : " + str(out_range_bead_index))
-        print("@Early Stop for Inner Loop")
+        print("distance for beads: {} , distance cutoff: {}".format(internal_coordinate_closest_r_list[out_range_bead_index], distance_cutoff))
         print("\n")
 
     return early_stop_bool, out_range_bead_index

@@ -34,15 +34,15 @@ class non_redundant_coordinate_transformer():
         result is computed for reference point: ref_x.
         '''
         ref_x = np.expand_dims(self.ref_x, 0)  # batch size 1.  size: [1, 3 * natom]
-        ref_B = self._compute_redundant_gradient_matrix_B(ref_x)
-        ref_B = ref_B[0]  # B: redundant gradient matrix.  shape: [natom^2, 3 * natom]
-        ref_U, ref_S = self._SVD_matrix_B(ref_B) # shape [natom^2, 3 * natom - 6]
+        ref_B = self._compute_redundant_gradient_matrix_B(ref_x) # this function takes in an array of coordinate x and return \partial d / \partial x: The B matrix.
+        ref_B = ref_B[0]  # B: redundant Wilson's B matrix.  shape: [natom^2, 3 * natom]
+        ref_U, ref_S = self._SVD_matrix_B(ref_B) # ref_U: shape [natom^2, internal_dof].   ref_S: eigenvalue matrix S, diagonal part is eigenvalue s_i. 
         
-        self.ref_U = ref_U 
+        self.ref_U = ref_U  # left singular vector matrix. each column is one left singular vector.  
         self.ref_UT = np.transpose(self.ref_U)
         self.ref_S = ref_S 
 
-    # x - > B
+    # transformation x - > B_d  (Wilson's B matrix for redundant coordinate d)
     def _compute_redundant_gradient_matrix_B(self, x):
         '''
         compute how changes in Cartesian coordinate x will affect redundant coordinates d.
@@ -69,7 +69,7 @@ class non_redundant_coordinate_transformer():
 
         return B 
 
-    # SVD decomposition of B to obtain U.
+    # SVD decomposition of B to obtain left singular vector matrix U.
     def _SVD_matrix_B(self, B):
         '''
         This code should only be called once for the reference point.
@@ -86,20 +86,21 @@ class non_redundant_coordinate_transformer():
         assert np.size(S) >= 3 * self.natom - 6, "number of nonzero singular value of B is smaller than 3n-6. Wrong"
 
         # sort singular value according to their absolute values. descending order
-        s_index = np.argsort(- np.abs(S)) 
+        s_index = np.array(range(len(S)))
         nonzero_S_index = s_index[: 3 * self.natom - 6]
         nonzero_S = S[nonzero_S_index]
 
-        # sanity check 
+        # sanity check in case we have zero sinuglar value number larger than 3n-6. 
         zero_S_index = s_index[3 * self.natom - 6 :]
         zero_S = S[zero_S_index]
         if np.size(zero_S) != 0:
             zero_s_max = np.max(np.abs(zero_S))
             if zero_s_max > np.power(1.0, -2) * np.min(np.abs(nonzero_S)):
-                # nonzero value is too largels
+                # nonzero value is too large
                 raise("zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(zero_s_max, np.min(np.abs(nonzero_S))))
 
-        # check singular value becomes 0 due to symmetry. In this case, we will have internal coordinate number < 3n - 6.
+        # check the case that non-zero singular value becomes 0 (could because of the extra symmetry). 
+        # In this case, we will have internal coordinate number < 3n - 6.
         singular_value_cutoff = np.max(nonzero_S) * np.power(10.0, -2)
         S_clip = np.array([s for s in S if s > singular_value_cutoff])
         nonzero_S_index_len = len(S_clip)
@@ -110,7 +111,7 @@ class non_redundant_coordinate_transformer():
         return U, S
 
     
-    # x -> d
+    # x -> d. here d is redundant coordinate.
     def _compute_redundant_coordinate_d(self, x):
         '''
         compute redundant coordinates d from Cartessian coordinate x.
@@ -125,14 +126,14 @@ class non_redundant_coordinate_transformer():
         for i in range(self.natom):
             for j in range(i):  
                 # if i<=j, Dij = 0.
-                # element Dij
+                # compute element Dij = d[i * natom + j]
                 index = i * self.natom + j 
                 Dij = 1 / npnorm(cartesian_x[:,i, :] - cartesian_x[:,j,:], axis = 1)
                 d[:, index] = Dij 
         
         return d 
     
-    # d -> q 
+    # d -> q. transform the redundant coordinate d to non-redundant coordinate q.  
     def _transform_redundant_d_to_nonredundant_q(self, d, x):
         '''
         transformation from redundant coordinate d to non-redundant coordinate q using matrix U.
@@ -140,7 +141,7 @@ class non_redundant_coordinate_transformer():
         
         :param: d. redundant coordinate. shape:[nbatch, natom^2]
         
-        return q: non-redundant coordinate. shape:[nbatch, 3 * natom - 6] (if with symmetry, could be smaller than 3 * natom -6)
+        return q: non-redundant coordinate. shape:[nbatch, internal_dof_#] (if with symmetry, internal_dof_# could be smaller than 3 * natom -6)
         '''
         d_stack = np.expand_dims(d, axis = 2)
 
@@ -150,13 +151,13 @@ class non_redundant_coordinate_transformer():
 
         return q 
 
-    # x-> q
+    # x-> q. combine x->d & d->q, transform Cartesian coordinate into non-redundant internal coordinate q. 
     def get_internal_coordinate_q(self, x):
         '''
         transform Cartesian coordinate x to internal coordinate q. 
         :param: x: Cartesian coordinate. Shape: [nbatch, 3 * natom]
         
-        :return: q: internal coordinate. Shape: [nbatch, 3 * natom -6]
+        :return: q: internal coordinate. Shape: [nbatch, internal_dof_#]
         '''
         # redundant internal coordinate
         d = self._compute_redundant_coordinate_d(x)
@@ -224,8 +225,8 @@ class non_redundant_coordinate_transformer():
         '''
         transform from internal coordinate's gradient g & hessian H to cartesian coordinate gradient g & hessian H.
         x: Cartesian coordinate. size: [nbatch, 3 * natom]
-        g_q: gradient in nonredundant internal coordinate. shape: [nbatch, 3 * natom - 6]
-        H_q: Hessian in nonredundant internal coordinate.  shape: [nbatch, 3 * natom - 6, 3 * natom - 6]
+        g_q: gradient in nonredundant internal coordinate. shape: [nbatch, internal_dof_#]
+        H_q: Hessian in nonredundant internal coordinate.  shape: [nbatch, internal_dof_#, internal_dof_#]
         hessian_bool: if true. transform H_q to H_x. otherwise, only transform g_q -> g_x. default: False
 
         :return: g_x: gradient in cartesian coordinate. shape: [nbatch, 3 * natom]
@@ -236,7 +237,6 @@ class non_redundant_coordinate_transformer():
         
         # compute transformation matrix U for each point
         Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
-
 
         Bq_T = np.transpose(Bq, axes = (0, 2, 1))  # transpose of Bq. shape: [nbatch, 3n, 3n-6]
 
@@ -290,11 +290,7 @@ class non_redundant_coordinate_transformer():
         '''
         nbatch = np.shape(x)[0]
         B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2 , 3n]
-        
-        # compute transformation matrix U for each point
-        # U, UT = self._compute_transformation_matrix_U(x)
-        # Bq = np.matmul(UT, B) 
-
+    
         Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n] 
 
         Bq_T = np.transpose(Bq, axes = (0,2,1))  # transpose of Bq. shape:[nbatch, 3n, 3n - 6]

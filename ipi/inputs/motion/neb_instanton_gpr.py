@@ -168,7 +168,11 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 0.1,
-                "help": "the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2).  Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)"
+                "help": """
+                        the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2). 
+                        Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)
+                        Therefore, we do not need this specify this value. The value will be used for restarting the algorithm.
+                        """
             }
         ),
 
@@ -183,8 +187,8 @@ class InputNebInstGPR(InputDictionary):
                 See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018).
                 We need two different values of kappa for asymmetric potential. 
                 For symmetric potential, we can set left and right kappa to the same value.
-                Two kappa values will be updated accordingly during the simulation using force information |dV/dx|. So, choosing the value here is not that important.
-                        |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value)
+                Two kappa values will be updated accordingly during the simulation using the force information |dV/dx|. So, we do not need to specify this value.
+                        |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value). The value will be used for restarting the algorithm. 
                         """
             },
         ),
@@ -234,16 +238,16 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
-        "gpr_kernel_outputscale_prior_mean":(
+        "gpr_kernel_outputscale":(
             InputArray,
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
-                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Mean value for output scale prior of Gaussian process regression kernel. Typically it is the  variance of potential energy"
+                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Mean value for output scale prior of Gaussian process regression kernel. Typically it is the variance of potential energy"
             }
         ),
 
-        "gpr_kernel_lengthscale_prior_mean_ratio":(
+        "gpr_kernel_lengthscale_ratio":(
             InputArray,
             {
                 "dtype": float,
@@ -253,12 +257,12 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
-        "gpr_likelihood_noise_std_constraint":(
+        "gpr_noise_std":(
             InputDictionary,
             {
                 "dtype": float,
                 "options": [ "pot_noise_prior", "force_noise_prior"],
-                 "default": [1e-5, 1e-5],
+                 "default": [1e-6, 1e-4],
                  "help": "constraint for the variance of noise in the Gaussian Process Regression",
             },
         ),
@@ -324,9 +328,9 @@ class InputNebInstGPR(InputDictionary):
         # store parameters about gaussian process regression
         self.gpr_force_criterion.store(optarrays["gpr_force_criterion"])
         self.gpr_trust_region_ratio.store(optarrays["gpr_trust_region_ratio"])
-        self.gpr_kernel_outputscale_prior_mean.store(optarrays["gpr_kernel_outputscale_prior_mean"])
-        self.gpr_kernel_lengthscale_prior_mean_ratio.store(optarrays["gpr_kernel_lengthscale_prior_mean_ratio"])
-        self.gpr_likelihood_noise_std_constraint.store(optarrays["gpr_likelihood_noise_std_constraint"])
+        self.gpr_kernel_outputscale.store(optarrays["gpr_kernel_outputscale"])
+        self.gpr_kernel_lengthscale_ratio.store(optarrays["gpr_kernel_lengthscale_ratio"])
+        self.gpr_noise_std.store(optarrays["gpr_noise_std"])
 
 
         # store result of instanton calculation
