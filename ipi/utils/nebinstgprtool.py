@@ -27,8 +27,8 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
              out_range_bead_index: the bead index that move out of the trusted region.
     '''
     early_stop_bool = False 
-    out_range_bead_index = -1
-    
+    out_range_bead_index_list = []
+
     coordinate_transformer = gpr_model.coordinate_transformer
 
     # kernel output scale and kernel length scale of kernels
@@ -67,10 +67,10 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
         
         internal_coordinate_closest_r_list.append(internal_coordinate_closest_r)
         if internal_coordinate_closest_r > distance_cutoff:
-            if early_stop_bool == False:
-                early_stop_bool = True 
-                out_range_bead_index = bead_index 
-            
+            early_stop_bool = True 
+            out_range_bead_index_list.append(bead_index)
+    
+    internal_coordinate_closest_r_list = np.array(internal_coordinate_closest_r_list)
     
     # output early stop information
     print("\n")
@@ -83,11 +83,12 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
     if early_stop_bool:
         print("\n")
         print("@Early Stop for Inner Loop. outer loop: {},  inner loop: {} ".format(outerloop_step, inner_loop_neb_step))
-        print("bead index that cause early stop (starting from 0) : " + str(out_range_bead_index))
-        print("distance for beads: {} , distance cutoff: {}".format(internal_coordinate_closest_r_list[out_range_bead_index], distance_cutoff))
+        print("bead index that cause early stop (starting from 0) : " + str(out_range_bead_index_list))
+        print("distance for beads out of trust region: " + str(internal_coordinate_closest_r_list[out_range_bead_index_list]))
+        print("distance cutoff: {}".format(distance_cutoff))
         print("\n")
 
-    return early_stop_bool, out_range_bead_index
+    return early_stop_bool, out_range_bead_index_list, internal_coordinate_closest_r_list, distance_cutoff
 
 
 def print_ab_initio_calculation_number(ab_initio_calculation_number, output_maker):
