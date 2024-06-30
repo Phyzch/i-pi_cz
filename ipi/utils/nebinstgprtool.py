@@ -91,11 +91,11 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
     return early_stop_bool, out_range_bead_index_list, internal_coordinate_closest_r_list, distance_cutoff
 
 
-def print_ab_initio_calculation_number(ab_initio_calculation_number, output_maker):
+def print_ab_initio_calculation_number(ab_initio_calculation_number, output_maker, step):
     '''
     print number of ab initio calculation during GPR optimization. Used to see how much computational effort GPR saves
     '''
-    outfile = output_maker.get_output(" ab_initio_force_number.txt", "w")
+    outfile = output_maker.get_output(" ab_initio_force_number step " + str(step) + ".txt" , "w")
     print("ab initio calculation number:  " + str(ab_initio_calculation_number), file = outfile)
     outfile.close_stream()
 
