@@ -149,8 +149,6 @@ def interpolate_ring_polymer_beads(period, t_list, x_list, v_list, instanton_bea
                 t_index_start = t_index
                 break 
 
-        
-
     rp_x_list = np.array(rp_x_list)
     
     return rp_t_list, rp_x_list 

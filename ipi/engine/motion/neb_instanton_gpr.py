@@ -24,7 +24,7 @@ from ipi.utils.mintools import Damped_BFGS, FIRE
 from ipi.utils.messages import verbosity, info
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
-from ipi.utils.nebinstool import RK4, dydt_inverted_pot
+from ipi.utils.nebinstool import RK4
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
@@ -129,6 +129,7 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["instanton_hessian"] = instanton_hessian 
 
         self.nebgm = LINEBGradientMapper()
+        self.rp_map = RP_MAP()
 
         # variables for neb move
         self.velocity_mscaled = None 
@@ -158,9 +159,6 @@ class MAPNEBGPRMover(Motion):
         self.force_diff_ratio_list = []
         self.ab_initio_force_amplitude_list = []
         self.gpr_force_prediction_amplitude_list = []
-
-        self.gpr_one_image_strategy_max = 3  # maximum times to do one image evaluation strategy when gpr fails to converge. after that, we do all image evaluation.
-        self.gpr_one_image_strategy_number = 0  # number of one image strategy used when LI-NEB
 
         self.coordinate_transformer = None # coordinate transformer between the Cartesian coordinate and the internal coordinate 
         self.gpr_model = None  # Gaussian Process Regression model instance.
@@ -200,7 +198,94 @@ class MAPNEBGPRMover(Motion):
         self.gpr_forces = self.forces.copy(self.gpr_beads, self.cell)
 
         self.nebgm.bind(self)
-    
+        self.rp_map.bind(self)
+
+    def step(self, step=None):
+        """
+        Does one simulation time step.
+        if stage = 'neb', we will do LI-NEB with Gaussian Process Regression.
+        if stage = 'instanton', we will evolve instanton beads along the path. 
+        if stage = 'converged', we will stop the simulation. 
+        """
+        print(" @NEB Outerloop STEP %d, stage: %s" % (step, self.options["stage"]))
+        
+        if step == 0:
+            # print initial geometry and energy of neb path.
+            ipi.utils.nebinstool.print_neb_instanton_geo(
+                self.options["prefix"] + "_initial_",
+                step,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker
+            )
+
+            # The instanton path energy is defined relative to the energy shift.
+            # We perform the transformation only when we start the initial calculation. Not for restarting the calculation.
+            self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
+            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
+            self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
+        
+        if self.coordinate_transformer == None:
+            # initialize Gaussian Process Regression(GPR) model and coordiante transformer
+            self.initialialize_GPR_model()
+            # check the training result on the test data which is unseen by GPR.
+            self.check_initial_training_result()
+
+            # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
+            # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
+            self.nebgm.gpr_model = self.gpr_model 
+            self.nebgm.coordinate_transformer = self.coordinate_transformer
+
+            self.rp_map.gpr_model = self.gpr_model
+            self.rp_map.coordinate_transformer = self.coordinate_transformer
+
+        # Check if we restarted a converged calculation or the calculation converged.
+        if self.options["stage"] == "converged":
+            # output number of ab-initio calculation.
+            ipi.utils.nebinstgprtool.print_ab_initio_calculation_number(self.ab_initio_bead_calculation_number, self.output_maker, step)
+            print("ab initio calculation number : " + str(self.ab_initio_bead_calculation_number))
+
+            # output the time for execuation 
+            self.end_time = timer()
+            time_elapsed = (self.end_time - self.start_time) / 60  # time elapsed in minutes 
+            print("the running time for the program: " + str(time_elapsed) + " min.")
+
+            softexit.trigger(
+                status="success",
+                message="neb calculation converged. Instanton geometry calculation finishes. Exiting simulation",
+            )
+
+        elif self.options["stage"] == "neb":
+            # use nudged elastic band method to find minmum action path.
+            # then we will switch to the stage "instanton"
+            # perform LI-NEB algorithm on the surrogated PES generated by GPR. stop either LI-NEB converge or one bead move out of the trust region.
+            early_stop_bool, outrange_bead_index_list = self.neb_loop(step)
+
+            # update Gaussian Process Regression model with new training data
+            self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
+
+        elif self.options["stage"] == 'instanton':
+            # generate instanton ring polymer beads from minimum action path found by NEB.
+            info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
+            self.rp_map.generate_ring_polymer_beads(self.beads, self.LINEB_pots, self.LINEB_forces, step)
+
+            # save the potential, q, temperature, hessian of instanton beads for RESTART.
+            self.save_instanton_ring_polymer()
+
+            # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
+            # therefore, we set ["stage"] == "converged" and exit at next step.
+            self.options["stage"] = "converged"
+
+        else:
+            raise("unrecognized stage parameter. The stage has to be neb or instanton or converged")
+
+
+
     def generate_initial_training_data(self):
         '''
         generate training data for Gaussian Process Regression model
@@ -215,9 +300,8 @@ class MAPNEBGPRMover(Motion):
         self.ab_initio_bead_calculation_number = self.ab_initio_bead_calculation_number + self.beads.nbeads
         
         # store the initial training_data: potential V and forces f.
-        train_V_to_store = train_V + self.optarrays["energy_shift"]
-        train_f_to_store = - train_grad 
-        ipi.utils.nebinstgprtool.store_initial_training_data(train_x, train_V_to_store, train_f_to_store)
+        # train_V_to_store = train_V + self.optarrays["energy_shift"]
+        # train_f_to_store = - train_grad 
 
         return train_x, train_V, train_grad 
     
@@ -225,7 +309,7 @@ class MAPNEBGPRMover(Motion):
         '''
         read initial training data stored in files (previously computed)
         '''
-        train_x, stored_train_V, stored_train_f = ipi.utils.nebinstgprtool.read_initial_training_data()
+        train_x, stored_train_V, stored_train_f = ipi.utils.nebinstgprtool.read_training_data(prefix= "neb_final_gpr_training")
         # count the # of ab-initio calculation we have done
         ab_initio_calculation_number = np.shape(train_x)[0]
         self.ab_initio_bead_calculation_number = self.ab_initio_bead_calculation_number + ab_initio_calculation_number 
@@ -234,6 +318,7 @@ class MAPNEBGPRMover(Motion):
         train_grad = - stored_train_f 
 
         return train_x, train_V, train_grad
+
 
     def initialialize_GPR_model(self):
         '''
@@ -345,76 +430,6 @@ class MAPNEBGPRMover(Motion):
 
         self.ab_initio_bead_calculation_number = self.ab_initio_bead_calculation_number + 4 
         pass 
-
-    def step(self, step=None):
-        """
-        Does one simulation time step.
-        if stage = 'neb', we will do LI-NEB with Gaussian Process Regression.
-        if stage = 'instanton', we will evolve instanton beads along the path. 
-        if stage = 'converged', we will stop the simulation. 
-        """
-        print(" @NEB Outerloop STEP %d, stage: %s" % (step, self.options["stage"]))
-        
-        if step == 0:
-            # print initial geometry and energy of neb path.
-            ipi.utils.nebinstool.print_neb_instanton_geo(
-                self.options["prefix"] + "_initial_",
-                step,
-                self.beads.nbeads,
-                self.beads.natoms,
-                self.beads.names,
-                self.beads.q,
-                self.forces.pots,
-                self.cell,
-                self.optarrays["energy_shift"],
-                self.output_maker
-            )
-
-            # The instanton path energy is defined relative to the energy shift.
-            # We perform the transformation only when we start the initial calculation. Not for restarting the calculation.
-            self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
-            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
-            
-            # TODO: assign instanton path energy also for RP_MAP object.
-        
-        if self.coordinate_transformer == None:
-            # initialize Gaussian Process Regression(GPR) model and coordiante transformer
-            self.initialialize_GPR_model()
-            # check the training result on the test data which is unseen by GPR.
-            self.check_initial_training_result()
-
-            # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
-            # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
-            self.nebgm.gpr_model = self.gpr_model 
-            self.nebgm.coordinate_transformer = self.coordinate_transformer
-
-        # Check if we restarted a converged calculation or the calculation converged.
-        if self.options["stage"] == "converged":
-            # output number of ab-initio calculation.
-            ipi.utils.nebinstgprtool.print_ab_initio_calculation_number(self.ab_initio_bead_calculation_number, self.output_maker, step)
-            print("ab initio calculation number : " + str(self.ab_initio_bead_calculation_number))
-
-            # output the time for execuation 
-            self.end_time = timer()
-            time_elapsed = (self.end_time - self.start_time) / 60  # time elapsed in minutes 
-            print("the running time for the program: " + str(time_elapsed) + " min.")
-
-            softexit.trigger(
-                status="success",
-                message="neb calculation converged. Instanton geometry calculation finishes. Exiting simulation",
-            )
-
-        if self.options["stage"] == "neb":
-            # use nudged elastic band method to find minmum action path.
-            # then we will switch to the stage "instanton"
-            # perform LI-NEB algorithm on the surrogated PES generated by GPR. stop either LI-NEB converge or one bead move out of the trust region.
-            early_stop_bool, outrange_bead_index_list = self.neb_loop(step)
-
-            # update Gaussian Process Regression model with new training data
-            self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
-
-
-
   
 
     def neb_loop(self, outer_loop_step):
@@ -721,10 +736,10 @@ class MAPNEBGPRMover(Motion):
                     
             # all beads pass the test. The simulation has converged
             if len(self.bead_index_with_converged_gpr_force) == self.beads.nbeads:
-                beads_pots_shift, beads_forces, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
-                beads_pots = beads_pots_shift + self.optarrays["energy_shift"]
+                ab_initial_shifted_energy = self.gpr_model.train_cartesian_targets[ - self.beads.nbeads: , 0]
+                ab_initio_beads_energy = ab_initial_shifted_energy + self.optarrays["energy_shift"]
 
-                self.neb_stage_exit_step(step, beads_pots)
+                self.neb_stage_exit_step(step, ab_initio_beads_energy)
         
     
     def update_GPR_model_all_image_strategy(self,step):
@@ -768,7 +783,8 @@ class MAPNEBGPRMover(Motion):
         gpr_force_converge_bool = True 
         for i in range(self.beads.nbeads):
             # when the bead force is too small, we do not require relative error of force to be small.
-            if self.force_diff_ratio_list[i] < self.optarrays["gpr_force_criterion"] or self.ab_initio_force_amplitude_list[i] < small_value_beads_forces_cutoff:
+            if (self.force_diff_ratio_list[i] < self.optarrays["gpr_force_criterion"] or 
+                self.ab_initio_force_amplitude_list[i] < small_value_beads_forces_cutoff):
                 pass 
             else:
                 gpr_force_converge_bool = False
@@ -788,18 +804,11 @@ class MAPNEBGPRMover(Motion):
             # in this case, several beads have moved out of trust region. We add this bead into the training data.
             self.update_GPR_model_with_beads_cause_early_stop(outrange_bead_index_list)
         else:
-            if self.gpr_one_image_strategy_number < self.gpr_one_image_strategy_max:
-                # One image strategy.
-                # We compute potential and force for one image and add them to the training data.
-                # The convergence criterion is reached when all beads pass the test and gpr beads forces converge to ab initio forces
-                self.gpr_one_image_strategy_number = self.gpr_one_image_strategy_number + 1
-                self.update_GPR_model_one_image_strategy(step)
+            # All image strategy
+            # We compute the potential and force for all images and add them to the training data.
+            # The convergence criterion is reached when gpr forces for all beads converge to the ab initio forces.
+            self.update_GPR_model_all_image_strategy(step)
 
-            else:
-                # All image strategy
-                # We compute the potential and force for all images and add them to the training data.
-                # The convergence criterion is reached when gpr forces for all beads converge to the ab initio forces.
-                self.update_GPR_model_all_image_strategy(step)
 
         # output info about force diff ratio |f_GPR -f|/|f|
         print("@Outerloop Exit info: ab initio |f|: " + str(self.ab_initio_force_amplitude_list))
@@ -838,8 +847,23 @@ class MAPNEBGPRMover(Motion):
             self.output_maker
         )
 
-        self.options["stage"] = "converged"
-      
+        self.options["stage"] = "instanton"
+        
+        # store potential and forces for the final LI-NEB beads.
+        self.LINEB_pots = self.gpr_model.train_cartesian_targets[-self.beads.nbeads: , 0] + self.optarrays["energy_shift"]
+        self.LINEB_forces = - self.gpr_model.train_cartesian_targets[-self.beads.nbeads: , 1:] 
+
+        ipi.utils.nebinstgprtool.store_training_data(self.beads.q, self.LINEB_pots, self.LINEB_forces, prefix= "LINEB_beads")
+
+        # store all training data
+        train_x = self.gpr_model.train_cartesian_inputs 
+        train_V = self.gpr_model.train_cartesian_targets[:,0]
+        train_V_to_store = train_V + self.optarrays["energy_shift"]
+        train_grad = self.gpr_model.train_cartesian_targets[:,1:]
+        train_f_to_store = -train_grad
+
+        ipi.utils.nebinstgprtool.store_training_data(train_x, train_V_to_store, train_f_to_store, prefix= "neb_final_gpr_training")
+
 # ------ code below is for auxiliary functions --------------
     def check_spring_k_kappa(self):
         '''
@@ -890,7 +914,24 @@ class MAPNEBGPRMover(Motion):
                 self.optarrays["energy_shift"],
                 self.output_maker
             )
-          
+
+    def save_instanton_ring_polymer(self):
+        '''
+        save the ring polymer instanton computed in RP_MAP class.
+        Therefore, the result can be stored in RESTART file
+        '''
+        self.optarrays["instanton_temperature"] = self.rp_map.instanton_temp
+        self.optarrays["instanton_bead_q"] = self.rp_map.rp_beads.q 
+        self.optarrays["instanton_bead_pot"] = self.rp_map.rp_beads_pots
+        self.optarrays["instanton_hessian"] = self.rp_map.rp_hessian 
+
+        # print hessian
+        if self.options["final_hessian_bool"]:
+            ipi.utils.nebinstool.print_instanton_hess(
+                self.options["prefix"] + "_FINAL",
+                self.optarrays["instanton_hessian"],
+                self.output_maker)
+
 class LINEBGradientMapper(object):
     """Creation of the Line Integral function that will be minimized.
         Functional analog of a GradientMapper in geop.py
@@ -1205,7 +1246,358 @@ class LINEBGradientMapper(object):
 
         return beads_potential, beads_forces 
         
+class RP_MAP(object):
+    '''
+    Generate Ring polymer for Minimum Action Path (MAP) obtained by NEB method.
+    Evolve dynamics of particle on inverted potential along minimum action path. 
+    The period T of periodic motion (here 2 * total_time for travel from one end to another end) gives beta * hbar (temperature).
+    The Ring-polymer for instanton is chosen as evenly spaced beads in time.
+    Attributes:
 
+    '''
+    def __init__(self):
+        """
+        Initializatioin of RP_MAP
+        """
+        self.bead_path_x = None  # coordinate of interpolated beads along MAP
+        self.bead_path_r = None  # cumulative sum of distance along MAP
+
+        self.imag_time_period = 0
+        self.instanton_temp = 0
+
+
+    def bind(self, nebmover: MAPNEBGPRMover):
+        """
+        bind function for RP_MAP
+        nebmover: MAPNEBMover instance.
+        """
+        self.prefix = nebmover.options["prefix"]
+        self.final_hessian_bool = nebmover.options["final_hessian_bool"]
+
+        self.energy_shift = nebmover.optarrays["energy_shift"]
+        self.output_maker = nebmover.output_maker
+
+        self.path_interpolation_bead_number = nebmover.optarrays["path_interpolation_bead_number"]  # bead number for cubic interpolation of neb beads along minimum action path.
+                # for cubic interpolation of neb_beads
+
+        self.neb_beads = nebmover.beads.copy()
+        self.dcell = nebmover.cell.copy()
+        self.fixatoms = nebmover.fixatoms.copy()
+
+
+        self.time_step = nebmover.optarrays["instanton_time_step"]  # time step for dynamics along instanton path.
+        self.instanton_path_energy = nebmover.optarrays["instanton_path_energy"]
+
+        # Mask to exclude fixed atoms from 3N-arrays
+        self.fixatoms_mask = np.ones(3 * nebmover.beads.natoms, dtype=bool)
+        if len(nebmover.fixatoms) > 0:
+            self.fixatoms_mask[3 * nebmover.fixatoms] = 0
+            self.fixatoms_mask[3 * nebmover.fixatoms + 1] = 0
+            self.fixatoms_mask[3 * nebmover.fixatoms + 2] = 0
+
+        # ring polymer beads.
+        self.rp_bead_number = nebmover.optarrays["instanton_bead_number"] # bead number for instanton ring polymer
+        self.rp_beads = Beads(self.neb_beads.natoms, self.rp_bead_number)  # bead object for instanton ring polymer
+        self.rp_forces = nebmover.forces.copy(self.rp_beads, self.dcell)
+        self.rp_hessian = np.eye(0,0,0, float)
+
+        # particle that perform classical dynamics on inverted potential.
+        self.cl_bead = Beads(self.neb_beads.natoms, 1)
+        self.m3 = np.copy(dstrip(nebmover.beads.m3[0]))  # mass of atoms.
+
+        self.gpr_model = nebmover.gpr_model
+        self.coordinate_transformer = nebmover.coordinate_transformer
+    
+    def initialize(self, neb_beads, LINEB_pots, LINEB_forces, neb_final_step):
+        '''
+        initialize the RP_MAP dynamics. This should be called after beads have converged to minimum action path using line integral nudged elastic band method.
+        :param: neb_beads: beads in MAPNEBMover, with optimized geometry for Minimum Action Path.
+        :param: neb_forces: LINEBGradientMapper.rforces object. 
+        :param: step: final step in MAPNEBMover simulation. (Used for output of instanton geometry.)
+        '''
+        self.neb_beads.q[:] = neb_beads.q[:]  # initialize neb beads position.
+        self.cl_bead.q[:] = [neb_beads.q[0]]  # classical particle is initialized at one end of optimized neb beads
+    
+        # Cubic interpolation of neb beads to enable accurate dynamics evolution.
+        self.bead_path_x, self.bead_path_r = \
+                ipi.utils.nebinstool.path_cubic_interpolation(self.neb_beads.q, self.path_interpolation_bead_number) 
+
+
+        print("use cubic interpolation to generate MAP path. The cumulative distance r along the path:  " + str(self.bead_path_r))
+
+        self.final_step = neb_final_step 
+   
+
+    def analyze_cl_dynamics_along_MAP(self, x_list, v_list, a_list, t_list, r_list, pot_list):
+        '''
+        '''
+        x_list = np.array(x_list)
+        v_list = np.array(v_list)
+        t_list = np.array(t_list)
+        r_list = np.array(r_list)
+        a_list = np.array(a_list)
+        
+        pot_list = np.array(pot_list)
+        pot_list = pot_list - self.energy_shift  # ground state energy shift
+        kinetic_energy_list = 0.5 * np.sum(np.array(self.m3) * np.power(v_list,2), axis = 1)
+        total_energy_list = kinetic_energy_list - pot_list  # total_E = K - V.
+
+        pot_list = units.unit_to_user("energy", "electronvolt", pot_list)   # convert to eV unit.
+        total_energy_list = units.unit_to_user("energy", "electronvolt", total_energy_list)
+        kinetic_energy_list = units.unit_to_user("energy", "electronvolt", kinetic_energy_list)
+
+        a_norm = npnorm(a_list, axis = 1)
+
+        self.imag_time_period = 2 * t_list[-1]  # period of periodic motion is twice of time move from one end to another end. (= beta hbar corresponds to imaginary time.)
+        self.instanton_temp = 1 / self.imag_time_period  # temperature of instanton path.
+        info("finish evolution of dynamics along Minimum action path, the period of motion is : {} " + str(self.imag_time_period) )
+
+        # for debug.
+        print("list of time for dynamic evolution of each time step: " + str(t_list) )
+        print("\n")
+        print("list of distance along path for dynamics evolution of each time step: " + str(r_list) )
+        print("\n")
+        print("acceleration amplitude :  " + str(a_norm) )
+        print("\n")
+        print("potential of points (eV): " + str(pot_list) )
+        print("\n")
+        print("kinetic energy (eV): " + str( kinetic_energy_list ))
+        print("\n")
+        print("total energy (eV): " + str(total_energy_list))
+        print("\n")
+
+    def cl_dynamics_along_MAP(self):
+        '''
+        classical dynamics on the inverted potential -V(x) 
+        the final time will be 1/2 of the imaginary period.
+        :return:  t_list: a list of time of trajectories.
+                  v_list: a list of velocity of trajectories.
+                  x_list: a list of coordinate of trajectories.
+        '''
+        t = 0
+        r = 0    # distance traveled along MEP
+        x = np.copy(self.bead_path_x[0])  # coordinate
+        self.cl_bead.q[0] = np.copy(x)  # update bead location.  
+        v = np.zeros([3 * self.cl_bead.natoms])   # velocity
+        
+        end_bead_index = 1 
+        end_bead_r = self.bead_path_r[end_bead_index]  # cumulative sum of distance along Minimum action path (MAP).
+
+        tau = self.bead_path_x[end_bead_index] - self.bead_path_x[end_bead_index - 1]  
+        tau = tau / np.linalg.norm(tau)       # tangent direction of the path
+
+        #  compute the negative force (force in inverted potential)
+        shifted_V, grad_V, _, _ = self.gpr_model.predict_latent_function(self.cl_bead.q)
+        # the negative force is the gradient, predicted by the GPR model.
+        f = grad_V[0] 
+
+        a = f / self.m3 # acceleration
+        a = np.dot(a , tau) * tau  # project acceleration along the tangent direction of the path.
+
+        pot = shifted_V[0] + self.energy_shift
+
+        x_list = [x]
+        v_list = [v]
+        a_list = [a]
+        t_list = [t]
+        r_list = [r]
+        pot_list = [pot]
+
+
+        while end_bead_index < self.path_interpolation_bead_number:
+            tau, t, x, v, a, r, end_bead_index, end_bead_r = \
+                        self.cl_dynamics_step(tau, t, x, v, a, r, end_bead_index, end_bead_r)  # evolve particle along Minimum action path on inverted potential with one time step.
+            
+            shifted_V, grad_V, _, _ = self.gpr_model.predict_latent_function(self.cl_bead.q)
+            pot = shifted_V[0] + self.energy_shift
+
+            x_list.append(x)
+            v_list.append(v)
+            a_list.append(a)
+            t_list.append(t)
+            r_list.append(r)
+            pot_list.append(pot)
+
+        self.analyze_cl_dynamics_along_MAP(x_list, v_list, a_list, t_list, r_list, pot_list)
+    
+
+        return t_list, v_list, x_list 
+
+
+    def cl_dynamics_step(self, tau, t, x, v, a, r, end_bead_index, end_bead_r):
+        '''
+        evolve dynamics for one step with dt = self.time_step
+        :param: tau: tangent direction along path
+                t: time
+                x: coordinate
+                v: velocity
+                a: acceleration
+                r: cumulative distance along the path.
+                end_bead_index: the bead index for the end point of the current segment. The dynamics is along current straight segement line.
+                end_bead_r: cumulative distance along the path until the end point.
+        '''
+        # param for RK4.
+        param = [self.gpr_model, self.m3, tau]
+        dt = self.time_step
+        
+        old_x = np.copy(x)
+        old_v = np.copy(v)
+        y = np.array([ np.copy(x), np.copy(v) ])
+        
+        new_y = RK4(y, t, ipi.utils.nebinstgprtool.dydt_inverted_pot_gpr , param, dt)
+        x = np.copy(new_y[0])
+        v = np.copy(new_y[1])
+
+        dx = x - old_x 
+        dr = np.linalg.norm(dx)
+
+        if (r + dr) < end_bead_r :
+            # move bead normally along tau.
+            # update r and bead location in cl_bead
+            r = r + dr 
+            self.cl_bead.q[0] = np.copy(x)
+
+            # update accleration:
+            _ , grad_V, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+            a = grad_V[0] / self.m3  # negative force (-f), force in inverted potential.
+            a = np.dot(a, tau) * tau 
+
+            # update time:
+            t = t + dt 
+        else:
+            # adjust the time step 
+            dt_right = self.time_step 
+            dt_left = 0
+            target_dr = end_bead_r - r 
+            # bisect search for the time step 
+            old_y = np.copy([np.copy(old_x), np.copy(old_v)])
+            
+            dt , new_y = ipi.utils.nebinstgprtool.bisect_dt_gpr(dt_right, dt_left, old_y, t, param, target_dr)
+
+            # update x & r
+            r = end_bead_r 
+            x = np.copy(self.bead_path_x[end_bead_index])
+            self.cl_bead.q[0] = np.copy(x)
+
+            # update velocity
+            v = np.copy(new_y[1])
+
+            # update acceleration (acceleration should align along the new tau)
+            _ , grad_V, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+            a = grad_V[0] / self.m3  # negative force (-f), force in inverted potential.
+            a = np.dot(a, tau) * tau
+
+            # update time 
+            t = t + dt 
+
+            # update end_bead_index
+            end_bead_index = end_bead_index + 1 
+            
+            if end_bead_index > self.path_interpolation_bead_number - 1:
+                # end of path.
+                return tau, t, x, v, a, r, end_bead_index, end_bead_r 
+            
+            end_bead_r = self.bead_path_r[end_bead_index]
+
+            # update tangent vector
+            tau = self.bead_path_x[end_bead_index] - self.bead_path_x[end_bead_index - 1]
+            tau = tau / npnorm(tau)
+
+            # reorient velocity but keep the kinetic energy
+            scaled_v = np.sqrt(self.m3) * v 
+            scaled_tau = tau * np.sqrt(self.m3)
+            scaled_tau = scaled_tau / npnorm(scaled_tau)
+            scaled_v = npnorm(scaled_v) * scaled_tau   # re-orient sqrt(m) * v 
+            v = scaled_v / np.sqrt(self.m3)  # now v conserve the energy and align with direction of tau.
+
+        return tau, t, x, v, a, r, end_bead_index, end_bead_r
+    
+    def interpolate_ring_polymer_beads(self, t_list, v_list, x_list):
+        '''
+        interpolate ring polymer beads from the imaginary time trajectory along Minimum Action Path (MAP).
+        t_list , v_list, x_list: list of time / velocity / trajectory from MD simulation along path.
+        '''
+        # interpolate to get ring polymer position.
+        rp_t_list, rp_x_list = ipi.utils.nebinstool.interpolate_ring_polymer_beads(self.imag_time_period, t_list, x_list, v_list, self.rp_bead_number)
+
+        ipi.utils.nebinstool.print_instanton_rp_time("rp_time_FINAL", self.imag_time_period, rp_t_list, self.output_maker)
+
+        self.rp_beads.q = rp_x_list 
+
+        # print ring polymer instanton geometry. 
+        pots, _, _, _ = self.gpr_model.predict_latent_function(rp_x_list) 
+
+        self.rp_beads_pots = pots
+
+        ipi.utils.nebinstool.print_neb_instanton_geo(
+            "instanton_along_MAP_FINAL",
+            self.final_step,
+            self.rp_beads.nbeads,
+            self.rp_beads.natoms,
+            self.neb_beads.names,
+            self.rp_beads.q,
+            pots,
+            self.dcell,
+            self.energy_shift,
+            self.output_maker
+        )
+
+    def compute_ring_polymer_hessian(self):
+        '''
+        compute hessian of ring polymer
+        '''
+        if self.final_hessian_bool:
+            # compute final hessian.
+
+            # create bead and forces object for computing hessian.
+            hess_rp_beads = self.rp_beads.copy() 
+            hess_forces = self.rp_forces.copy(hess_rp_beads, self.dcell)
+
+            self.rp_hessian = ipi.utils.nebinstool.get_hessian(
+                hess_rp_beads,
+                hess_forces,
+                self.rp_beads.q,
+                self.rp_beads.natoms,
+                self.rp_beads.nbeads,
+                self.fixatoms
+            )
+        
+
+
+
+    def print_temperature(self):
+        '''
+        output temperature to the log file and a separate file
+        '''
+        temp_kelvin = units.unit_to_user("temperature", "kelvin", self.instanton_temp)  # temperature in "kelvin" unit
+
+        print("temperature for instanton path : {} K".format(temp_kelvin))
+
+        # output temperature to a separate file
+        outfile = self.output_maker.get_output( "instanton_temperature.txt", "w")
+        print("temperature for instanton path : (K)", file = outfile)
+        print(str(temp_kelvin), file = outfile)
+        outfile.close_stream()
+
+    def generate_ring_polymer_beads(self, neb_beads, LINEB_pots, LINEB_forces, neb_final_step):
+        '''
+        Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
+        '''
+        self.initialize(neb_beads, LINEB_pots, LINEB_forces , neb_final_step)
+        
+        # start classical dynamics along minimum action path (MEP) on the inverted potential.
+        t_list, v_list, x_list  = self.cl_dynamics_along_MAP()
+
+        # print the temperature for the found minimum action path in Kelvin unit.
+        self.print_temperature()
+
+        # interpolate the ring polymer beads from the generated trajectory. 
+        self.interpolate_ring_polymer_beads(t_list, v_list, x_list)
+
+        # compute hessian of ring polymers
+        # TODO: Need to figure out how to Gaussian Process Regression to predict the Hessian.
+        self.compute_ring_polymer_hessian()
+    
  
 
 

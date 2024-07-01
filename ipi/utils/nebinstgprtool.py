@@ -8,6 +8,7 @@ from ipi.engine.beads import Beads
 from ipi.utils.depend import dstrip
 import re 
 import os 
+from ipi.utils.nebinstool import RK4
 
 def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDerivativesWrapper,
                          outerloop_step, inner_loop_neb_step):
@@ -129,7 +130,7 @@ def check_gpr_fitting_error(gpr_beads, gpr_forces, gpr_model : GPModelWithDeriva
     return predicted_V_shift, predicted_gpr_bead_force, ab_initio_pot, ab_initio_force
     
 
-def store_initial_training_data(cartesian_coordinate_x, V, forces):
+def store_training_data(cartesian_coordinate_x, V, forces, prefix):
     '''
     store the initial training data for training of GPR model.
     In this way, when we do fine-tuning of hyper-parameter for GPR model, we do not to compute ab-initio potential and force again.
@@ -142,7 +143,9 @@ def store_initial_training_data(cartesian_coordinate_x, V, forces):
     training_bead_number = np.shape(cartesian_coordinate_x)[0]
     dofs = np.shape(cartesian_coordinate_x)[1]
     # for cartesian coordinate_x
-    coordinate_file_name = "gpr_initial_training_coord.txt"
+    coordinate_file_name = prefix + "_coord.txt"
+    if os.path.exists(coordinate_file_name):
+        os.rename(coordinate_file_name, "#" + coordinate_file_name)
     with open(coordinate_file_name, "w") as f:
         f.write("Total Bead number: \n")
         f.write(str(training_bead_number) + "\n")
@@ -155,7 +158,9 @@ def store_initial_training_data(cartesian_coordinate_x, V, forces):
             f.write("\n")
     
     # for potential V.
-    V_file_name = "gpr_initial_training_pot.txt"
+    V_file_name = prefix + "_pot.txt"
+    if os.path.exists(V_file_name):
+        os.rename(V_file_name, "#" + V_file_name)
     with open(V_file_name, "w") as f:
         f.write("Total Bead number: \n")
         f.write(str(training_bead_number) + "\n")
@@ -165,7 +170,9 @@ def store_initial_training_data(cartesian_coordinate_x, V, forces):
             f.write(str(i) + "    " + str(V[i]) + "\n")
     
     # for force f:
-    force_file_name = "gpr_initial_training_force.txt"
+    force_file_name = prefix + "_force.txt"
+    if os.path.exists(force_file_name):
+        os.rename(force_file_name, "#" + force_file_name)
     with open(force_file_name, "w") as f:
         f.write("Total Bead number: \n")
         f.write(str(training_bead_number) + "\n")
@@ -183,17 +190,17 @@ def extract_number_from_line(line):
 
     return line 
 
-def read_initial_training_data():
+def read_training_data(prefix):
     '''
     read coordinate, potential V and force f for training data.
     '''
-    coordinate_file_name = "gpr_initial_training_coord.txt"
-    V_file_name = "gpr_initial_training_pot.txt"
-    force_file_name = "gpr_initial_training_force.txt"
+    coordinate_file_name = prefix + "_coord.txt"
+    V_file_name = prefix + "_pot.txt"
+    force_file_name = prefix + "_force.txt"
 
-    assert os.path.exists(coordinate_file_name), "gpr training data: coordinate file: " + str(coordinate_file_name) + "  does not exist."
-    assert os.path.exists(V_file_name), "gpr training data: potential V file: " + str(V_file_name) + "  does not exist."
-    assert os.path.exists(force_file_name), "gpr training data: force f file: " + str(force_file_name) + "  does not exist"
+    assert os.path.exists(coordinate_file_name), "data: coordinate file: " + str(coordinate_file_name) + "  does not exist."
+    assert os.path.exists(V_file_name), "data: potential V file: " + str(V_file_name) + "  does not exist."
+    assert os.path.exists(force_file_name), "data: force f file: " + str(force_file_name) + "  does not exist"
 
     # read coordinate.
     cartesian_coordinate_x = []
@@ -240,3 +247,52 @@ def read_initial_training_data():
     training_forces = np.array(training_forces)
 
     return cartesian_coordinate_x, training_V, training_forces
+
+
+def dydt_inverted_pot_gpr(y, t, param):
+    '''
+    y=[x,v]. That is y[0] = x. y[1] = v.
+    dydt[0] = v. dydt[1] = a (inverted pot)
+    param = [cl_beads, cl_forces, m3, tau]
+    cl_beads: bead object that record the coordinate of current particle
+    gpr_model: gaussian process regression model 
+    m3 : mass. size : [3 * natom]
+    tau: tangent direction of motion. unit vector.
+    '''
+    x = y[0]
+    v = y[1]
+
+    gpr_model = param[0]
+    m3 = param[1]
+    tau = param[2]
+
+    # update coordinate of bead object to enable the forces object to compute force
+    _ , grad_V, _, _ = gpr_model.predict_latent_function(np.array([x]))
+    a = grad_V[0] / m3  # negative force (-f), force in inverted potential.
+    a = np.dot(a, tau) * tau 
+
+    dydt = np.array([ v, a ])
+
+    return dydt 
+
+def bisect_dt_gpr(dt_right, dt_left, old_y, t, param, target_dr):
+    '''
+    using bisection search method to find the appropriate dt value to go to end beads.
+    '''
+    old_x = np.copy(old_y[0])
+    dr = 1000
+
+    while abs(target_dr - dr) > 0.0005:
+        dt = (dt_left + dt_right)/2
+        new_y = RK4(np.copy(old_y), t, dydt_inverted_pot_gpr, param, dt)
+        new_x = np.copy(new_y[0])
+        dr = np.linalg.norm(new_x - old_x)
+
+        if dr > target_dr:
+            # dt is too large. make dt smaller.
+            dt_right = dt 
+        else:
+            # dt is too small. make dt larger.
+            dt_left = dt 
+    
+    return dt, new_y 

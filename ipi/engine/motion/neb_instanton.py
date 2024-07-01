@@ -215,7 +215,7 @@ class MAPNEBMover(Motion):
             info("Now generate instanton path from Minimum Action Path (MAP) found by NEB.")
             self.rp_map.generate_ring_polymer_beads(self.beads, self.forces, step)
 
-            # save the potential , q, temperature, hessian of instanton beads for RESTART.
+            # save the potential, q, temperature, hessian of instanton beads for RESTART.
             self.save_instanton_ring_polymer()
 
             # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
