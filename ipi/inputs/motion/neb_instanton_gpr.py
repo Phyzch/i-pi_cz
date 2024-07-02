@@ -219,14 +219,23 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
         
-        "gpr_force_criterion":(
+        "gpr_relative_force_error_criterion":(
             InputValue,
             {
                 "dtype": float,
                 "default": 0.05,
-                "help": "convergence criterion for gpr outer loop. |f^GPR - f|/|f| < gpr_force_criterion means GPR prediction is reliable for force is reliable. Stop the outer loop."
+                "help": "convergence criterion for gpr outer loop. |f^GPR - f|/|f| < gpr_relative_force_error_criterion means GPR prediction is reliable for force is reliable. Stop the outer loop."
             }
 
+        ),
+
+        "gpr_absolute_force_error_criterion":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.0002, 
+                "help": "convergence criterion for gpr outer loop. When |f^GPR - f| < gpr_absolute_force_error_criterion, this means the GPR prediction is already reliable for that bead."
+            }
         ),
 
         "gpr_trust_region_ratio":(
@@ -326,7 +335,8 @@ class InputNebInstGPR(InputDictionary):
         self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
 
         # store parameters about gaussian process regression
-        self.gpr_force_criterion.store(optarrays["gpr_force_criterion"])
+        self.gpr_relative_force_error_criterion.store(optarrays["gpr_relative_force_error_criterion"])
+        self.gpr_absolute_force_error_criterion.store(optarrays["gpr_absolute_force_error_criterion"])
         self.gpr_trust_region_ratio.store(optarrays["gpr_trust_region_ratio"])
         self.gpr_kernel_outputscale.store(optarrays["gpr_kernel_outputscale"])
         self.gpr_kernel_lengthscale_ratio.store(optarrays["gpr_kernel_lengthscale_ratio"])
