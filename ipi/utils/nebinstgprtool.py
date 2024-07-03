@@ -10,7 +10,7 @@ import re
 import os 
 from ipi.utils.nebinstool import RK4
 
-def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDerivativesWrapper,
+def check_neb_early_stop(beads_x, trust_region_distance, gpr_model: GPModelWithDerivativesWrapper,
                          outerloop_step, inner_loop_neb_step):
     '''
     check early stoage criterion for LI-NEB algorithm with machine learning.
@@ -44,11 +44,11 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
 
     # the location of current beads in internal coordinate
     beads_internal_coordinate = coordinate_transformer.get_internal_coordinate_q(np.copy(beads_x))
-    # the path length of neb beads in internal coordinate, scaled by the kernel length scale.
-    scaled_internal_coordinate_neb_path_length = np.sum( np.linalg.norm( (beads_internal_coordinate[1:] - beads_internal_coordinate[:-1]) / effective_kernel_length_scale, axis= 1 ) )
+    # # the path length of neb beads in internal coordinate, scaled by the kernel length scale.
+    # scaled_internal_coordinate_neb_path_length = np.sum( np.linalg.norm( (beads_internal_coordinate[1:] - beads_internal_coordinate[:-1]) / effective_kernel_length_scale, axis= 1 ) )
 
     # distance cutoff for trust region.
-    distance_cutoff = scaled_internal_coordinate_neb_path_length * trust_region_ratio
+    distance_cutoff = trust_region_distance
     # the location of training data in internal coordinate.
     gpr_training_internal_coordinate = gpr_model.output_training_internal_inputs()
     
@@ -89,16 +89,17 @@ def check_neb_early_stop(beads_x, trust_region_ratio, gpr_model: GPModelWithDeri
         print("distance cutoff: {}".format(distance_cutoff))
         print("\n")
 
-    return early_stop_bool, out_range_bead_index_list, internal_coordinate_closest_r_list, distance_cutoff
+    return early_stop_bool, out_range_bead_index_list, internal_coordinate_closest_r_list
 
 
 def print_ab_initio_calculation_number(ab_initio_calculation_number, output_maker, step):
     '''
     print number of ab initio calculation during GPR optimization. Used to see how much computational effort GPR saves
     '''
-    outfile = output_maker.get_output(" ab_initio_force_number step " + str(step) + ".txt" , "w")
-    print("ab initio calculation number:  " + str(ab_initio_calculation_number), file = outfile)
-    outfile.close_stream()
+    file_name = "ab_initio_force_number step " + str(step) + ".txt"
+    with open(file_name, "w") as f:
+        f.write("ab initio calculation number:  " + str(ab_initio_calculation_number) + "\n")
+
 
 def check_gpr_fitting_error(gpr_beads, gpr_forces, gpr_model : GPModelWithDerivativesWrapper, energy_shift, q):
     '''

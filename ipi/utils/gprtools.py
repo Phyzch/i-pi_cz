@@ -334,7 +334,51 @@ def predict_latent_function_gp_with_derivative(model:GPModelWithDerivatives, tes
     else:
         return test_mean, test_var 
 
-def update_model_with_new_data(model : GPModelWithDerivatives, new_train_inputs, new_train_targets):
+def filter_new_training_data(model: GPModelWithDerivatives ,new_train_inputs, existing_train_inputs, distance_cutoff):
+    '''
+    we will reject adding new data when the new data point is too close to the existing data point. (given by distance_cutoff)
+    Having two similar data points in the training set will make kernel matrix become ill-conditioned, 
+    when we try to make prediction, inverting kernel matrix K will be unstable, which causes GPR model to crash. 
+    :param: model: GPR model
+    :param: new_train_inputs: numpy array. potential new training inputs to add to gpr model
+    :param: existing_train_inputs: numpy array.  training inputs already in the GPR model.
+    :param: distance_cutoff: cutoff of distance in the internal coordinate. The new training data should have distance from the existing training data larger than distance_cutoff.
+    
+    :return: filtered_new_train_inputs_index: numpy array. The index of the new training inputs after we deleting  the data which is too close to the existing data.
+    '''
+    filtered_new_train_inputs_index = []
+
+    # kernel output scale and kernel length scale of kernels
+    kernel_output_scale = model.output_kernel_outputscale()
+    kernel_length_scale = model.output_kernel_lengthscale()
+    # normalize the output scale:
+    output_scale_sum = np.sum(kernel_output_scale)
+    kernel_output_scale_normalized = kernel_output_scale / output_scale_sum
+    # effective kernel lengthscale for scaling internal coordinate. l_eff^{-2} = sum_{n} output_scale_n / (l_n)^2.   
+    effective_kernel_length_scale = np.power(np.sum(kernel_output_scale_normalized[:, np.newaxis] / np.power(kernel_length_scale, 2) , axis = 0), -0.5)
+    
+    new_data_num = len(new_train_inputs)
+
+    for data_index in range(new_data_num):
+        new_input = new_train_inputs[data_index]
+
+        # distance from new input to the existing training data 
+        internal_coordinate_r = np.linalg.norm((new_input - existing_train_inputs)/ effective_kernel_length_scale, axis= 1)
+
+        # the data that is closest to the new input 
+        nearest_existing_training_inputs_index = np.argmin(internal_coordinate_r)
+
+        internal_coordinate_closest_r = internal_coordinate_r[nearest_existing_training_inputs_index]
+
+        if internal_coordinate_closest_r > distance_cutoff:
+            filtered_new_train_inputs_index.append(data_index)
+    
+    filtered_new_train_inputs_index = np.array(filtered_new_train_inputs_index)
+
+    return filtered_new_train_inputs_index
+
+
+def update_model_with_new_data(model : GPModelWithDerivatives, new_train_inputs, new_train_targets, distance_cutoff):
     '''
     add new training data into the model. 
     Then train the model to update the hyper-parameter.
@@ -362,15 +406,30 @@ def update_model_with_new_data(model : GPModelWithDerivatives, new_train_inputs,
     # check the output dimension of the new_train_targets
     assert new_train_targets_tensor.shape[-1] == model.output_dim, "the output dimension of new_train_targets is wrong. new_train_targets dim {}, required output dim {}".format(new_train_targets.shape[-1], model.output_dim)
 
+    # filter the new inputs which is too close to the existing data point.
+    new_train_inputs_numpy = new_train_inputs_tensor.numpy() 
+    train_inputs_numpy = train_inputs.numpy() 
+
+    # filter the training input data to delete the one which is too close to the existing data.
+    filtered_new_train_inputs_index = filter_new_training_data(model, new_train_inputs_numpy, train_inputs_numpy, distance_cutoff)
+    filtered_new_train_inputs_tensor = new_train_inputs_tensor[filtered_new_train_inputs_index, :]
+    filtered_new_train_targets_tensor = new_train_targets_tensor[filtered_new_train_inputs_index, :]
+
+    if len(filtered_new_train_inputs_index) == 0:
+        # all new data is too close to the existing data, we do not update the model.
+        return filtered_new_train_inputs_index
+
     # create new training inputs and training targets
-    full_train_inputs = torch.cat([train_inputs, new_train_inputs_tensor], dim = 0)
-    full_train_targets = torch.cat([train_targets, new_train_targets_tensor], dim = 0)
+    full_train_inputs = torch.cat([train_inputs, filtered_new_train_inputs_tensor], dim = 0)
+    full_train_targets = torch.cat([train_targets, filtered_new_train_targets_tensor], dim = 0)
 
     # set the training data for the model
     model.set_train_data(inputs= full_train_inputs, targets= full_train_targets, strict= False)
 
     # re-train the model to update the hyper-parameter 
     train_gpr(model)
+
+    return filtered_new_train_inputs_index
 
 
 class GPModelWithDerivativesWrapper():
@@ -588,7 +647,7 @@ class GPModelWithDerivativesWrapper():
         else:
             return V, grad_x, var_V,  var_grad_x_trace 
     
-    def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad):
+    def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad, distance_cutoff):
         '''
         add new training data into the model. 
         Then train the model to update the hyper-parameter.
@@ -620,16 +679,17 @@ class GPModelWithDerivativesWrapper():
         normalized_new_train_targets_tensor = torch.from_numpy(normalized_new_train_targets)
         new_train_inputs_tensor = torch.from_numpy(new_train_inputs)
 
-        update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, normalized_new_train_targets_tensor)
+        filtered_new_train_inputs_index = update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, normalized_new_train_targets_tensor, distance_cutoff)
 
-        # update the training data and targets in internal coordinate q.
-        self.train_inputs = np.concatenate([self.train_inputs, new_train_inputs], axis = 0)
-        self.normalized_train_targets = np.concatenate([self.normalized_train_targets, normalized_new_train_targets], axis = 0)
+        if len(filtered_new_train_inputs_index) != 0:
+            # update the training data and targets in internal coordinate q.
+            self.train_inputs = np.concatenate([self.train_inputs, new_train_inputs[filtered_new_train_inputs_index] ], axis = 0)
+            self.normalized_train_targets = np.concatenate([self.normalized_train_targets, normalized_new_train_targets[filtered_new_train_inputs_index]  ], axis = 0)
 
-        # update the training data and targets in cartesian coordinate x.
-        new_train_cartesian_targets = np.concatenate([new_train_V[:,np.newaxis], new_train_grad] , axis = 1)
-        self.train_cartesian_inputs = np.concatenate([self.train_cartesian_inputs, new_train_x], axis = 0)
-        self.train_cartesian_targets = np.concatenate([self.train_cartesian_targets, new_train_cartesian_targets], axis = 0)
+            # update the training data and targets in cartesian coordinate x.
+            new_train_cartesian_targets = np.concatenate([new_train_V[:,np.newaxis], new_train_grad] , axis = 1)
+            self.train_cartesian_inputs = np.concatenate([self.train_cartesian_inputs, new_train_x[filtered_new_train_inputs_index]], axis = 0)
+            self.train_cartesian_targets = np.concatenate([self.train_cartesian_targets, new_train_cartesian_targets[filtered_new_train_inputs_index]], axis = 0)
 
 
 # ------ functions below are auxiliary functions to output gpr model parameters ------------------------

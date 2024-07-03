@@ -238,12 +238,12 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
-        "gpr_trust_region_ratio":(
+        "gpr_trust_region":(
             InputValue,
             {
                 "dtype": float,
-                "default": 0.03,
-                "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region_ratio * NEB_path_length. If the distance between NEB beads and nearest GPR point exceed r_max, we stop the NEB inner loop and evaluate ab-initio force on that point."
+                "default": 0.1,
+                "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region. If the distance between NEB beads and nearest GPR point exceed r_max, we stop the NEB inner loop and evaluate ab-initio force on that point."
             }
         ),
 
@@ -337,7 +337,7 @@ class InputNebInstGPR(InputDictionary):
         # store parameters about gaussian process regression
         self.gpr_relative_force_error_criterion.store(optarrays["gpr_relative_force_error_criterion"])
         self.gpr_absolute_force_error_criterion.store(optarrays["gpr_absolute_force_error_criterion"])
-        self.gpr_trust_region_ratio.store(optarrays["gpr_trust_region_ratio"])
+        self.gpr_trust_region.store(optarrays["gpr_trust_region"])
         self.gpr_kernel_outputscale.store(optarrays["gpr_kernel_outputscale"])
         self.gpr_kernel_lengthscale_ratio.store(optarrays["gpr_kernel_lengthscale_ratio"])
         self.gpr_noise_std.store(optarrays["gpr_noise_std"])

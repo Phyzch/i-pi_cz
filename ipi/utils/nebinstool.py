@@ -123,7 +123,6 @@ def interpolate_ring_polymer_beads(period, t_list, x_list, v_list, instanton_bea
     rp_t_list = rp_t_list + period / (4 * instanton_bead_number)  # (1/2 + i) * (beta * hbar / (2N)) : here i = 0, .., N-1
 
     print("imaginary time list for ring polymer: " + str(rp_t_list))
-    # print("time list for evolution: " + str(t_list))
         
     t_list_len = len(t_list)
 
