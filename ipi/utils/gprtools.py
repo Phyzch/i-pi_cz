@@ -118,11 +118,8 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         for i in range(gpr_SE_kernel_number):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs. 
             # this is bad for cross-validation, but for simply training the model, it should be fine.
-            train_inputs_numpy_array = train_inputs.detach().numpy()
-            train_inputs_range = np.max(train_inputs_numpy_array, axis = 0) - np.min(train_inputs_numpy_array , axis = 0)
-            length_scale = kernel_lengthscale_ratio[i] * train_inputs_range   # set it as a given ratio of the training input range.
-
-            length_scale = torch.from_numpy(length_scale)  
+            train_inputs_range = torch.max(train_inputs, dim= 0).values - torch.min(train_inputs , dim= 0).values 
+            length_scale = torch.from_numpy(kernel_lengthscale_ratio[i]) * train_inputs_range   # set it as a given ratio of the training input range.
             length_gamma_beta = torch.div(length_gamma_alpha, length_scale)  # value of beta: rate of the gamma distribution.
 
             output_scale = kernel_outputscale[i]
@@ -133,7 +130,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
             # also add length scale constraint: minimum cutoff to prevent over-fitting. 
             length_scale_ratio_cutoff = 0.1
-            length_scale_cutoff = torch.from_numpy(length_scale_ratio_cutoff * train_inputs_range) 
+            length_scale_cutoff = length_scale_ratio_cutoff * train_inputs_range
             lengthscale_constraint = gpytorch.constraints.GreaterThan(length_scale_cutoff)
 
             # set Squared Exponential kernel function
@@ -215,7 +212,7 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
     '''
     the function that trains the model.
     :param: model: GPytorch model 
-    :param: training_error_cutoff: train until the change of loss function is smaller
+    :param: training_error_cutoff: train until the change of loss function is smaller than the cutoff.
     
     :return: None
     '''
