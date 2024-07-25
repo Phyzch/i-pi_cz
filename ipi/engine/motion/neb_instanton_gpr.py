@@ -4,6 +4,8 @@ J. Chem. Phys. 148, 102334 (2018); https://doi.org/10.1063/1.5007180
 The LI-NEB calculation is accelerated by Gaussian Process Regression method. See: J. Chem. Phys. 147, 152720 (2017) and Faraday Discuss., 2018,212, 237-258 (https://doi.org/10.1039/C8FD00085A)
 
 The algorithm is first implemented by Chenghao Zhang, 2023. Adapted from neb module & instanton module in i-pi package.
+
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
 """
 
 # This file is part of i-PI.
@@ -74,6 +76,9 @@ class MAPNEBGPRMover(Motion):
         path_interpolation_bead_number = 20,
         spring_k = 0.1,
         kappa = { "left" : 50, "right": 50 },
+        variable_spring_constant = False,
+        VSC_E_ref = 0.00,
+        VSC_spring_k_max_ratio = 3.00,
         final_hessian_bool = False,
         alt_out = 5,
         gpr_relative_force_error_criterion = 0.05,
@@ -112,6 +117,11 @@ class MAPNEBGPRMover(Motion):
         
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
+
+        # option to vary the spring constant term 
+        self.optarrays["variable_spring_constant"] = variable_spring_constant
+        self.optarrays["VSC_E_ref"] = VSC_E_ref
+        self.optarrays["VSC_spring_k_max_ratio"] = VSC_spring_k_max_ratio
 
         self.optarrays["time_step"] = time_step
         self.optarrays["instanton_time_step"] = instanton_time_step
@@ -239,6 +249,10 @@ class MAPNEBGPRMover(Motion):
             self.optarrays["instanton_path_energy"] = self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]  # shift the instanton path energy according to energy shift.
             self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
             self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
+
+            self.optarrays["VSC_E_ref"] = self.optarrays["VSC_E_ref"] + self.optarrays["energy_shift"]
+            self.nebgm.VSC_E_ref = self.nebgm.VSC_E_ref + self.optarrays["energy_shift"]
+
         
         if self.coordinate_transformer == None:
             # initialize Gaussian Process Regression(GPR) model and coordiante transformer
@@ -503,6 +517,10 @@ class MAPNEBGPRMover(Motion):
         
         # negative gradient of LI-NEB action for each bead on mass scaled coordinate
         self.old_f_mscaled = np.zeros([self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))])  
+
+        # adjust the spring constant k and energy constraint term.
+        self.nebgm.initialize_force(self.x)
+        self.check_spring_k_kappa()
 
         self.f_mscaled, self.action = self.nebgm(self.x)  
 
@@ -884,6 +902,8 @@ class MAPNEBGPRMover(Motion):
         spring_k_scale = 0.25 / val1
         self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
         self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
+        self.nebgm.VSC_k_max = self.nebgm.spring_k 
+        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
         # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2. We use stability criterion to set it as 0.5 (empirical value).
         m_H = 1837 # mass of hydrogen in atomic unit.
@@ -990,6 +1010,25 @@ class LINEBGradientMapper(object):
         self.spring_k = ens.optarrays["spring_k"] # bind spring force spring_k from NEBMover.
         self.kappa = ens.optarrays["kappa"] # bind end beads energy constraint constant kappa from NEBMover. 
 
+        # Option to vary the spring constant and have larger spring constant at two end point. (This is for the case we have the flat potential at end point)
+        self.variable_spring_constant = ens.optarrays["variable_spring_constant"]  # bool variable to decide whether to increase the spring constant at two ends.
+        self.VSC_E_ref = ens.optarrays["VSC_E_ref"]   # the reference energy (> instanton_path_energy), below reference energy, we increase the spring constant
+        self.VSC_spring_k_max_ratio = ens.optarrays["VSC_spring_k_max_ratio"]  # the spring constant k at the end beads, also the maximum spring constant k when we vary the k.
+        self.VSC_k_max = None
+        self.VSC_k_ref = None 
+
+        if self.variable_spring_constant:
+            # in case variable_spring_constant = True, we need to check whether VSC_E_ref & VSC_spring_k_max is provided
+            assert self.VSC_E_ref != 0.0, "Must provide the value of reference energy (VSC_E_ref) when we vary the spring constant (variable_spring_constant = True)"
+            assert self.VSC_E_ref > self.instanton_path_energy, "The reference energy (VSC_E_ref) must be larger than the energy of end beads of instanton path (instanton_path_energy) when we vary the spring constant (variable_spring_constant = True)"
+            print("\n")
+            print("@Variable Spring Constant: the current ratio between k_max & k_min for variable spring constant is {}: ".format(self.VSC_spring_k_max_ratio))
+            print("\n")
+
+            self.VSC_k_max = self.spring_k  
+            self.VSC_k_ref = self.VSC_k_max / self.VSC_spring_k_max_ratio
+
+
         self.energy_shift = ens.optarrays["energy_shift"]
 
         # bind the gpr model from NEBMover.
@@ -998,6 +1037,19 @@ class LINEBGradientMapper(object):
         self.ab_initio_pot = np.zeros([self.dbeads.nbeads])
         self.ab_initio_force = np.zeros([self.dbeads.nbeads, 3 * self.dbeads.natoms])
 
+
+
+    def initialize_force(self, x):
+        '''
+        initialize rbf. This will enable us to use check_spring_k_kappa in the initialization() step of neb gm in MAPNEBGPRMover
+        '''
+        self.rbeads.q[:, self.fixatoms_mask] = x
+
+        # use Gaussian Process Regression to get the potential and forces for beads.
+        self.beads_energy , beads_forces = self.get_gpr_potential_and_forces()
+
+        # Forces for free moving dofs.
+        self.rbf = beads_forces.copy()[:, self.fixatoms_mask]
 
 
     def __call__(self, x):
@@ -1009,17 +1061,11 @@ class LINEBGradientMapper(object):
         rbq: position for reduced beads
         btau: tangent vector directions.
         """
-        self.rbeads.q[:, self.fixatoms_mask] = x
-        rbq = np.copy(x)
-        
-        mscaled_q = rbq * np.sqrt( self.dbeads.m3[:, self.fixatoms_mask] )  # mass scaled coordinates.
+        self.initialize_force(x)
+
+        # mass scaled coordinate.
+        mscaled_q = np.copy(x) * np.sqrt( self.dbeads.m3[:, self.fixatoms_mask] )  # mass scaled coordinates.
         self.mscaled_q = mscaled_q
-
-        # use Gaussian Process Regression to get the potential and forces for beads.
-        self.beads_energy , beads_forces = self.get_gpr_potential_and_forces()
-
-        # Forces for free moving dofs.
-        self.rbf = beads_forces.copy()[:, self.fixatoms_mask]
 
         # mass weighted force
         mscaled_f = self.rbf / np.sqrt( self.dbeads.m3[: , self.fixatoms_mask] )  # 1/sqrt(m) * f: mass scaled force.
@@ -1163,6 +1209,56 @@ class LINEBGradientMapper(object):
 
         return action_force 
     
+    def compute_spring_force(self, nimage, natom, mscaled_q, mscaled_f, btau):
+        '''
+        '''
+        beads_energy = self.beads_energy 
+
+        spring_k_list = np.zeros([nimage - 1])
+
+        if not self.variable_spring_constant:
+            # do not vary the spring constant for different beads.
+            spring_k_list = np.ones([nimage - 1]) * self.spring_k 
+        else:
+            end_beads_energy = self.instanton_path_energy
+            k_change = self.VSC_k_max - self.VSC_k_ref 
+            E_ref = self.VSC_E_ref
+            k_max = self.VSC_k_max 
+ 
+            for i in range(nimage - 1):
+                if i != nimage - 2 and i != 0:
+                   bead_energy_min = np.min([beads_energy[i], beads_energy[i + 1]])  # the minimum of the energy of two beads connected by spring.
+                elif i == 0:
+                   bead_energy_min = beads_energy[0]
+                else:
+                   bead_energy_min = beads_energy[nimage - 1]
+                
+                if bead_energy_min > E_ref:
+                   spring_k_list[i] = self.VSC_k_ref 
+                else:
+                    # make the spring constant k change linearly with energy.  The spring is more tight at lower energy.
+                    spring_k_list[i] = k_max - k_change * (bead_energy_min - end_beads_energy) / (E_ref - end_beads_energy)
+
+        # spring forces for beads. Note the spring force at two ends are different from spring forces for internal beads.
+        spring_force = np.zeros([nimage, 3 * natom])
+        # spring force for internal beads
+        for ii in range(1, nimage - 1):
+            spring_force[ii] = (npnorm(mscaled_q[ii + 1] - mscaled_q[ii]) * spring_k_list[ii] - npnorm(mscaled_q[ii] - mscaled_q[ii-1]) * spring_k_list[ii - 1] ) * btau[ii]
+        
+        # spring force for end bead 0
+        unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(mscaled_q[1] - mscaled_q[0])  # unit vector for q[1] - q[0]
+        spring_force_bead0 =  ( spring_k_list[0] * npnorm(mscaled_q[1] - mscaled_q[0]) - spring_k_list[1] * npnorm(mscaled_q[2] - mscaled_q[1])) * unit_vec_1  
+        f0 = mscaled_f[0] / npnorm(mscaled_f[0])   # unit vector along force at beads: 0
+        spring_force[0] = spring_force_bead0 - np.dot(spring_force_bead0 , f0) * f0  # spring force component transverse to the gradient of potential.
+
+        # spring force for end bead nimag - 1
+        unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1])
+        spring_force_bead1 = ( spring_k_list[nimage - 2] *  npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) - spring_k_list[nimage - 3] *  npnorm(mscaled_q[nimage - 3] - mscaled_q[nimage -2]) ) * unit_vec_2 
+        f1 = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1])  # unit vector along force at beads: nimage - 1 
+        spring_force[nimage - 1] = spring_force_bead1 - np.dot(spring_force_bead1 , f1) * f1  # spring force component transverse to the gradient of potential.
+
+        return spring_force
+
     def compute_neb_optimization_force(self, nimage, natom, btau, mscaled_q,  mscaled_f):
         '''
         compute the optimization forces for nudged elastic band beads. See eq.(15 - 22) in J. Chem. Phys. 148, 102334 (2018).
@@ -1180,30 +1276,15 @@ class LINEBGradientMapper(object):
         # kappa: restraint force back to iso-energy contour.
         left_kappa = self.kappa["left"]   #  kappa for the left end beads
         right_kappa = self.kappa["right"] # kappa for the right end beads. 
-        spring_k = self.spring_k    # spring force between beads.
 
         neb_optimization_force = np.zeros([nimage, 3 * natom])
         self.neb_transverse_force = np.zeros([nimage, 3* natom])
 
-        # spring forces for beads. Note the spring force at two ends are different from spring forces for internal beads.
-        spring_force = np.zeros([nimage, 3 * natom])
-        # spring force for internal beads
-        for ii in range(1, nimage - 1):
-            spring_force[ii] = (npnorm(mscaled_q[ii+1] - mscaled_q[ii]) - npnorm(mscaled_q[ii] - mscaled_q[ii-1])) * spring_k * btau[ii]
-        
-        # spring force for end bead 0
-        unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(mscaled_q[1] - mscaled_q[0])  # unit vector for q[1] - q[0]
-        spring_force_bead0 = spring_k * (npnorm(mscaled_q[1] - mscaled_q[0]) - npnorm(mscaled_q[2] - mscaled_q[1])) * unit_vec_1  
-        f0 = mscaled_f[0] / npnorm(mscaled_f[0])   # unit vector along force at beads: 0
-        spring_force[0] = spring_force_bead0 - np.dot(spring_force_bead0 , f0) * f0  # spring force component transverse to the gradient of potential.
-
-        # spring force for end bead nimag - 1
-        unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1])
-        spring_force_bead1 = spring_k * ( npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) - npnorm(mscaled_q[nimage - 3] - mscaled_q[nimage -2]) ) * unit_vec_2 
-        f1 = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1])  # unit vector along force at beads: nimage - 1 
-        spring_force[nimage - 1] = spring_force_bead1 - np.dot(spring_force_bead1 , f1) * f1  # spring force component transverse to the gradient of potential.
+        spring_force = self.compute_spring_force(nimage, natom, mscaled_q, mscaled_f, btau)
 
         # end_beads_energy_constraint_force: force to draw end beads back to isoenergy contours.
+        f0 = mscaled_f[0] / npnorm(mscaled_f[0])   # unit vector along force at beads: 0
+        f1 = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1])  # unit vector along force at beads: nimage - 1 
         end_beads_energy_constraint_force = np.zeros([2, 3 * natom])
         end_beads_energy_constraint_force[0] = f0 * left_kappa * (beads_energy[0] - self.instanton_path_energy)  # kappa * (V(r) - E) * \hat{f}(r) for beads 0
         end_beads_energy_constraint_force[1] = f1 * right_kappa * (beads_energy[nimage -1] - self.instanton_path_energy)  # kappa * (V(r) - E) * \hat{f}(r) for beads n-1.

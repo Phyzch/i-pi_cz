@@ -119,7 +119,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs. 
             # this is bad for cross-validation, but for simply training the model, it should be fine.
             train_inputs_range = torch.max(train_inputs, dim= 0).values - torch.min(train_inputs , dim= 0).values 
-            length_scale = torch.from_numpy(kernel_lengthscale_ratio[i]) * train_inputs_range   # set it as a given ratio of the training input range.
+            length_scale = kernel_lengthscale_ratio[i] * train_inputs_range   # set it as a given ratio of the training input range.
             length_gamma_beta = torch.div(length_gamma_alpha, length_scale)  # value of beta: rate of the gamma distribution.
 
             output_scale = kernel_outputscale[i]
@@ -676,7 +676,8 @@ class GPModelWithDerivativesWrapper():
         normalized_new_train_targets_tensor = torch.from_numpy(normalized_new_train_targets)
         new_train_inputs_tensor = torch.from_numpy(new_train_inputs)
 
-        filtered_new_train_inputs_index = update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, normalized_new_train_targets_tensor, distance_cutoff)
+        filtered_new_train_inputs_index = update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, 
+                                                                     normalized_new_train_targets_tensor, distance_cutoff)
 
         if len(filtered_new_train_inputs_index) != 0:
             # update the training data and targets in internal coordinate q.

@@ -292,6 +292,34 @@ class InputNebInstGPR(InputDictionary):
                 "default": False,
                 "help" : "Bool variable to decide whether to read the stored training data."
             }
+        ),
+
+         "variable_spring_constant":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help": "Bool variable. Enable variable spring constant. Make the spring constant near the end bead region larger, to have a higher resolution near the instanton path end."
+            }
+        ),
+
+        "VSC_E_ref":(
+            InputValue,
+            {
+                "dtype": float, 
+                "default": 0.000,
+                "help": "reference energy E_ref for variable spring constant (VSC). For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. The spring constant between beads at lower energy has larger spring constant. ",
+                "dimension": "energy"
+            }
+        ),
+
+        "VSC_spring_k_max_ratio":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 3.00,
+                "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. The spring constant between beads at lower energy has larger spring constant. k_max specify the spring constant at two end beads"
+            }
         )
 
     }
@@ -327,6 +355,11 @@ class InputNebInstGPR(InputDictionary):
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
         self.kappa.store(optarrays["kappa"])
+
+        self.variable_spring_constant.store(optarrays["variable_spring_constant"])
+        self.VSC_E_ref.store(optarrays["VSC_E_ref"])
+        self.VSC_spring_k_max_ratio.store(optarrays["VSC_spring_k_max_ratio"])
+
         self.time_step.store(optarrays["time_step"])
         self.instanton_time_step.store(optarrays["instanton_time_step"])
 
