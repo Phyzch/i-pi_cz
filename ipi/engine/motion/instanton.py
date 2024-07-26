@@ -1480,16 +1480,6 @@ class HessianOptimizer(DummyOptimizer):
                     "Powell update for friction hessian is not implemented. We move on without updating it. In all tested cases this is not a problem",
                     verbosity.medium,
                 )
-        elif update == "DFP":   # need to update dictionary "hessian_update" in /inputs/motion/instanton.py. add "DFP" to "options"
-            i = self.fix.fixbeads.natoms * 3 
-            for j in range(self.fix.fixbeads.nbeads):
-                aux = active_hessian[:, j * i : (j+1) * i]
-                dg = d_g[j, :]
-                dx = d_x[j, :]
-                Davidon_Fletcher_Powell(dx, dg, aux)  # here aux is updated in the program, thus active_hessian is also updated.
-            phys_hessian = active_hessian
-            info("Customary DFP method Using Davidon_Fletcher_Powell method to update  Hessian", verbosity.medium,)
-
 
         elif update == "recompute":
             active_hessian = get_hessian(
