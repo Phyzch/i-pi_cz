@@ -90,12 +90,16 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
     neb_bead_q_array = np.array(neb_bead_q)
     neb_bead_number = len(neb_bead_q)
 
-    a = np.arange(neb_bead_number)
+    neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis = 1)
+    neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
+    # make the variable in the range of [0, neb_bead_number]
+    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] * neb_bead_number
+
     b = neb_bead_q_array
 
-    cs = CubicSpline(a, b, axis = 0)  # object for cubic spline interpolation. interpolate along axis 0.
+    cs = CubicSpline(neb_bead_path_r_scaled, b, axis = 0)  # object for cubic spline interpolation. interpolate along axis 0.
 
-    new_a = np.linspace(0, a[-1], num = interpolation_bead_number)  
+    new_a = np.linspace(0, neb_bead_path_r_scaled[-1], num = interpolation_bead_number)  
 
     bead_path_x = cs(new_a)
 
@@ -193,8 +197,16 @@ def dydt_inverted_pot(y, t, param):
     if (cl_beads.q[0] != x).any() :
         cl_beads.q[0] = np.copy(x)
 
-    a = -dstrip(cl_forces.f).copy()[0] / m3  # negative force (-f), force in inverted potential.
-    a = np.dot(a, tau) * tau 
+    f = -dstrip(cl_forces.f).copy()[0]  # negative force
+    # go to mass scaled coordinate
+    tau_mass_scaled = tau * np.sqrt(m3)
+    tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
+    f_mass_scaled = f / np.sqrt(m3)
+    f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled 
+    a = f_mass_scaled_projected / np.sqrt(m3)
+
+    # a = f / m3  # negative force (-f), force in inverted potential.
+    # a = np.dot(a, tau) * tau 
 
     dydt = np.array([ v, a ])
 

@@ -182,11 +182,11 @@ class MAPNEBGPRMover(Motion):
 
         # minimum value for allowed trust region ratio. 
         # This is to prevent the algorithm making the trust region ratio too small. 
-        self.minimum_trust_region = 0.02
+        self.minimum_trust_region = 0.03
 
         # The cutoff for the scaled internal coordinate distnace for training data.
         # The training data is not allowed to be too close to each other, which will make the kernel matrix ill-conditioned.
-        self.distance_cutoff_for_training_data = 0.01 
+        self.distance_cutoff_for_training_data = 0.02 
 
         self.start_time = timer()  # used to record the time for the calculation.
 

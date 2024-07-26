@@ -269,8 +269,16 @@ def dydt_inverted_pot_gpr(y, t, param):
 
     # update coordinate of bead object to enable the forces object to compute force
     _ , grad_V, _, _ = gpr_model.predict_latent_function(np.array([x]))
-    a = grad_V[0] / m3  # negative force (-f), force in inverted potential.
-    a = np.dot(a, tau) * tau 
+
+    # go to mass scaled coordinate
+    tau_mass_scaled = tau * np.sqrt(m3)
+    tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
+    f_mass_scaled = grad_V[0] / np.sqrt(m3)
+    f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled 
+    a = f_mass_scaled_projected / np.sqrt(m3)
+   
+    # a = grad_V[0] / m3  # negative force (-f), force in inverted potential.
+    # a = np.dot(a, tau) * tau 
 
     dydt = np.array([ v, a ])
 
