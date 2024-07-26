@@ -171,6 +171,7 @@ class MAPNEBGPRMover(Motion):
         self.force_diff_ratio_list = []
         self.ab_initio_force_amplitude_list = []
         self.gpr_force_prediction_amplitude_list = []
+        self.force_diff_amplitude_list = []
 
         self.coordinate_transformer = None # coordinate transformer between the Cartesian coordinate and the internal coordinate 
         self.gpr_model = None  # Gaussian Process Regression model instance.
@@ -182,11 +183,11 @@ class MAPNEBGPRMover(Motion):
 
         # minimum value for allowed trust region ratio. 
         # This is to prevent the algorithm making the trust region ratio too small. 
-        self.minimum_trust_region = 0.03
+        self.minimum_trust_region = 0.02
 
         # The cutoff for the scaled internal coordinate distnace for training data.
         # The training data is not allowed to be too close to each other, which will make the kernel matrix ill-conditioned.
-        self.distance_cutoff_for_training_data = 0.02 
+        self.distance_cutoff_for_training_data = 0.01 
 
         self.start_time = timer()  # used to record the time for the calculation.
 
@@ -678,6 +679,7 @@ class MAPNEBGPRMover(Motion):
             force_diff_list.append(force_diff)
 
         force_diff_amplitude_list =  np.linalg.norm(force_diff_list, axis= 1)
+        self.force_diff_amplitude_list = force_diff_amplitude_list
         # deal with the case that the trust region distance cutoff could be too large.
         # we can detect this situation when the gpr model predict the force for beads close to the trust region far away from the true force.
         # in this case, we have to decrease the trust region distance.
@@ -792,9 +794,11 @@ class MAPNEBGPRMover(Motion):
         # check whether the ab-initio forces are close to gpr predicted forces.
         force_diff_list = beads_forces - ab_initio_forces 
         force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis= 1)
+        self.force_diff_amplitude_list = force_diff_amplitude_list
         self.ab_initio_force_amplitude_list = np.linalg.norm(ab_initio_forces, axis= 1)
         self.gpr_force_prediction_amplitude_list = np.linalg.norm(beads_forces, axis= 1)
         self.force_diff_ratio_list = np.linalg.norm(force_diff_list, axis= 1) / self.ab_initio_force_amplitude_list
+
 
         # when the error of force is smaller than a given value, we assume GPR fitting is successful.
         gpr_absolute_force_error_criterion = self.optarrays["gpr_absolute_force_error_criterion"]
@@ -837,7 +841,8 @@ class MAPNEBGPRMover(Motion):
         print("@Outerloop Exit info: ab initio |f|: " + str(self.ab_initio_force_amplitude_list))
         print("@Outloop Exit info: GPR predicted |f_GPR|: " + str(self.gpr_force_prediction_amplitude_list))
         print("@Outerloop Exit info: |f_GPR -f|/|f|:" + str(self.force_diff_ratio_list))
-        print("@Outerloop Exit info: max(|f_GPR - f|/|f|): " + str(np.max(self.force_diff_ratio_list)))        
+        print("@Outerloop Exit info: max(|f_GPR - f|/|f|): " + str(np.max(self.force_diff_ratio_list)))
+        print("@Outerloop Exit info: |f_GPR -f| :" + str(self.force_diff_amplitude_list))        
         print("Finish Outerloop: " + str(step))
         print("\n")
         print("\n")
@@ -1247,13 +1252,13 @@ class LINEBGradientMapper(object):
         
         # spring force for end bead 0
         unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(mscaled_q[1] - mscaled_q[0])  # unit vector for q[1] - q[0]
-        spring_force_bead0 =  ( spring_k_list[0] * npnorm(mscaled_q[1] - mscaled_q[0]) - spring_k_list[1] * npnorm(mscaled_q[2] - mscaled_q[1])) * unit_vec_1  
+        spring_force_bead0 =  spring_k_list[0] * npnorm(mscaled_q[1] - mscaled_q[0])  * unit_vec_1  
         f0 = mscaled_f[0] / npnorm(mscaled_f[0])   # unit vector along force at beads: 0
         spring_force[0] = spring_force_bead0 - np.dot(spring_force_bead0 , f0) * f0  # spring force component transverse to the gradient of potential.
 
         # spring force for end bead nimag - 1
         unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1])
-        spring_force_bead1 = ( spring_k_list[nimage - 2] *  npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) - spring_k_list[nimage - 3] *  npnorm(mscaled_q[nimage - 3] - mscaled_q[nimage -2]) ) * unit_vec_2 
+        spring_force_bead1 = spring_k_list[nimage - 2] *  npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1])  * unit_vec_2 
         f1 = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1])  # unit vector along force at beads: nimage - 1 
         spring_force[nimage - 1] = spring_force_bead1 - np.dot(spring_force_bead1 , f1) * f1  # spring force component transverse to the gradient of potential.
 
@@ -1483,10 +1488,14 @@ class RP_MAP(object):
         #  compute the negative force (force in inverted potential)
         shifted_V, grad_V, _, _ = self.gpr_model.predict_latent_function(self.cl_bead.q)
         # the negative force is the gradient, predicted by the GPR model.
-        f = grad_V[0] 
+        f = grad_V[0]
 
-        a = f / self.m3 # acceleration
-        a = np.dot(a , tau) * tau  # project acceleration along the tangent direction of the path.
+        m3 = self.m3 
+        tau_mass_scaled = tau * np.sqrt(m3)
+        tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
+        f_mass_scaled = f / np.sqrt(m3)
+        f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled 
+        a = f_mass_scaled_projected / np.sqrt(m3)  # acceleration is along the negative force.
 
         pot = shifted_V[0] + self.energy_shift
 

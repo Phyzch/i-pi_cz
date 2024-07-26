@@ -703,13 +703,13 @@ class LINEBGradientMapper(object):
         
         # spring force for end bead 0
         unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(mscaled_q[1] - mscaled_q[0])  # unit vector for q[1] - q[0]
-        spring_force_bead0 = ( spring_k_list[0] * npnorm(mscaled_q[1] - mscaled_q[0]) - spring_k_list[1] * npnorm(mscaled_q[2] - mscaled_q[1])) * unit_vec_1  
+        spring_force_bead0 =  spring_k_list[0] * npnorm(mscaled_q[1] - mscaled_q[0])  * unit_vec_1  
         f0 = mscaled_f[0] / npnorm(mscaled_f[0])   # unit vector along force at beads: 0
         spring_force[0] = spring_force_bead0 - np.dot(spring_force_bead0 , f0) * f0  # spring force transverse to gradient.
 
         # spring force for end bead nimag - 1
         unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1])
-        spring_force_bead1 = ( spring_k_list[nimage - 2] *  npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) - spring_k_list[nimage - 3] * npnorm(mscaled_q[nimage - 3] - mscaled_q[nimage -2]) ) * unit_vec_2 
+        spring_force_bead1 = spring_k_list[nimage - 2] *  npnorm(mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) * unit_vec_2 
         f1 = mscaled_f[nimage - 1] / npnorm(mscaled_f[nimage - 1])  # unit vector along force at beads: nimage - 1 
         spring_force[nimage - 1] = spring_force_bead1 - np.dot(spring_force_bead1 , f1) * f1  # spring force transverse to gradient.
 
