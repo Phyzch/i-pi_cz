@@ -428,6 +428,81 @@ def update_model_with_new_data(model : GPModelWithDerivatives, new_train_inputs,
 
     return filtered_new_train_inputs_index
 
+class FixInternalDofs(object):
+    """
+    class that fix certain internal dofs in the training data before feeding data into the Gaussian Process Regression model 
+    """
+    def __init__(self, train_inputs: np.ndarray, train_targets: np.ndarray):
+        self.input_dim = np.shape(train_inputs)[1]
+        self.output_dim = np.shape(train_targets)[1]
+        self.fix_internal_dofs_cutoff = np.power(10.0, -4)
+
+        # check whether coordinate along certain internal dof is fixed
+        train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
+        self.fixed_internal_dofs = np.array([i for i in range(self.input_dim) if train_inputs_change[i] < self.fix_internal_dofs_cutoff])
+        self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
+
+        self.targets_fixed_dofs = np.mean(train_targets, axis= 0)[self.fixed_internal_dofs + 1]  # the first column of the target is the potential V.
+        
+
+    def transform_training_data_to_free_moving_dofs(self, train_inputs: np.ndarray, train_targets: np.ndarray, noise_var= None):
+        '''
+        delete fixdofs from training data
+        :param: train_inputs: the training inputs in internal dofs. Including all internal dofs.
+        :param: train_targets: the training targets in internal dofs. Including all internal dofs.
+        :param: noise_var: the variance of noise in internal dofs.
+        '''
+        moving_train_inputs = self.transform_training_inputs_to_free_moving_dofs(train_inputs)
+        moving_train_targets = self.transform_training_targets_to_free_moving_dofs(train_targets) # the first column of target is potential V.
+
+        if type(noise_var) != type(None):
+            moving_noise_var = np.delete(noise_var, self.fixed_internal_dofs + 1)
+            return moving_train_inputs, moving_train_targets, moving_noise_var 
+        else:
+            return moving_train_inputs, moving_train_targets 
+    
+    def transform_training_inputs_to_free_moving_dofs(self, train_inputs: np.ndarray):
+        '''
+        delete fixdofs from training inputs.
+        :param: train_inputs: the training inputs in internal dofs. 
+        '''
+        moving_train_inputs = np.delete(train_inputs, self.fixed_internal_dofs, axis = 1)
+
+        return moving_train_inputs
+
+    def transform_training_targets_to_free_moving_dofs(self, train_targets: np.ndarray):
+        '''
+        delete fixdofs from training targets
+        :param: train_targets: the training targets in internal dofs
+        '''
+        moving_train_targets =  np.delete(train_targets, self.fixed_internal_dofs + 1, axis= 1) # the first column of target is potential V.
+
+        return moving_train_targets
+
+    def transform_from_free_moving_dofs_to_full_dofs(self, moving_test_mean: np.ndarray, moving_test_var: np.ndarray):
+        '''
+        Transform the prediction of GPR model from free moving dofs into full dofs.
+        :param: moving_prediction_mean: the mean value of posterior prediction for moving dofs 
+        :param: moving_prediction_var: the variance of posterior prediction for moving dofs 
+        '''
+        test_data_num = moving_test_mean.shape[0]
+
+        # the prediction of fixed dof for testing data.
+        test_target_fixed_dofs = np.repeat([self.targets_fixed_dofs], test_data_num, axis= 0)
+
+        # the mean value of the prediction of the test data with all dofs
+        test_mean = np.zeros([test_data_num, self.output_dim])
+        test_mean[:,0] = moving_test_mean[:, 0]  # potential
+        test_mean[:, self.free_moving_dofs + 1] = moving_test_mean[:, 1:]
+        test_mean[:, self.fixed_internal_dofs + 1] = test_target_fixed_dofs 
+
+        # the variance of the prediction of the test data with all dofs 
+        test_var = np.zeros([test_data_num, self.output_dim])
+        test_var[:,0] = moving_test_var[:, 0] # potential
+        test_var[:, self.fixed_internal_dofs + 1] = 0 
+        test_var[:, self.free_moving_dofs + 1] = moving_test_var[:, 1:]
+
+        return test_mean, test_var 
 
 class GPModelWithDerivativesWrapper():
     '''
@@ -485,27 +560,38 @@ class GPModelWithDerivativesWrapper():
         # perform normalization on training targets.
         normalized_train_targets = self.normalization_transform(train_targets)
 
-        # transform input from numpy array to torch.tensor
-        train_inputs_tensor = torch.from_numpy(train_inputs)
-        normalized_train_targets_tensor = torch.from_numpy(normalized_train_targets)
+        # compute the estimated noise covariance factor for the force in the internal coordinate q. noise for Fq = dV/dq. 
+        likelihood_noise_variance  = self.transform_cartesian_noise_to_gpr_model_noise(noise_std, train_targets)
 
         self.train_inputs = train_inputs  # training inputs in internal coordinate space q.
         self.normalized_train_targets = normalized_train_targets  # training outputs in internal coordinates q. (V, dV/dq)
 
         self.train_cartesian_inputs = train_x  # training inputs in cartesian coordinate x
         self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
+        
+        # For the case we have to fix certain internal dofs.
+        self.FixingDofs = FixInternalDofs(train_inputs, normalized_train_targets)
+        moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = self.FixingDofs.transform_training_data_to_free_moving_dofs(train_inputs, 
+                                                                                                                                            normalized_train_targets,
+                                                                                                                                            likelihood_noise_variance)
+        moving_input_dim = input_dim - len(self.FixingDofs.fixed_internal_dofs)
+        moving_output_dim = output_dim - len(self.FixingDofs.fixed_internal_dofs)        
 
-        # compute the estimated noise covariance factor for the force in the internal coordinate q. noise for Fq = dV/dq. 
-        likelihood_noise_variance  = self.transform_cartesian_noise_to_gpr_model_noise(noise_std, train_targets)
-
+        # transform input from numpy array to torch.tensor
+        moving_train_inputs_tensor = torch.from_numpy(moving_train_inputs)
+        moving_train_targets_tensor = torch.from_numpy(moving_train_targets)
+        
         # initialize the gaussian process regression model with inpt training data.
-        self.gpr_model = GPModelWithDerivatives(train_inputs_tensor, normalized_train_targets_tensor, input_dim, output_dim,
+        self.gpr_model = GPModelWithDerivatives(moving_train_inputs_tensor, moving_train_targets_tensor, 
+                                                moving_input_dim, moving_output_dim,
                                                 gpr_SE_kernel_number,
                                                 kernel_outputscale, kernel_lengthscale_ratio, 
-                                                likelihood_noise_variance)
+                                                moving_likelihood_noise_variance)
 
         # train self.gpr_model() to get optimized hyperparameter
         train_gpr(self.gpr_model)
+
+
 
     def compute_potential_normalization_parameter(self, training_targets):
         '''
@@ -612,16 +698,20 @@ class GPModelWithDerivativesWrapper():
                 var_grad_x_trace: trace of the covariance matrix in the Cartesian coordinate. This can be used as a measure of the force noise. 
         '''
         assert np.shape(test_x)[1] == 3 * self.natom , "dim of coordinates for input data is not 3 * natom"
-
+        
+        test_data_num = np.shape(test_x)[0]
         # transform to internal coordinate q.
-        test_q = self.coordinate_transformer.get_internal_coordinate_q(test_x)
-        test_q_tensor = torch.from_numpy(test_q)
+        moving_test_q = self.get_free_moving_internal_coordinate(test_x)
+        moving_test_q_tensor = torch.from_numpy(moving_test_q)
 
         # use Gaussian process regression model to make prediction 
-        normalized_test_mean_tensor, normalized_test_var_tensor = predict_latent_function_gp_with_derivative(self.gpr_model, test_inputs = test_q_tensor, covar_bool = False)
+        moving_normalized_test_mean_tensor, moving_normalized_test_var_tensor = predict_latent_function_gp_with_derivative(self.gpr_model, test_inputs = moving_test_q_tensor, covar_bool = False)
         
-        normalized_test_mean = normalized_test_mean_tensor.detach().cpu().numpy()
-        normalized_test_var = normalized_test_var_tensor.detach().cpu().numpy()
+        moving_normalized_test_mean = moving_normalized_test_mean_tensor.detach().cpu().numpy()
+        moving_normalized_test_var = moving_normalized_test_var_tensor.detach().cpu().numpy()
+
+        # attach test_mean and test_var (0) of fixed dofs
+        normalized_test_mean, normalized_test_var = self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(moving_normalized_test_mean, moving_normalized_test_var)
 
         test_var = normalized_test_var * np.power(self.V_range , 2) 
         test_mean = self.inverse_normalization_transform(normalized_test_mean)
@@ -644,7 +734,7 @@ class GPModelWithDerivativesWrapper():
         else:
             return V, grad_x, var_V,  var_grad_x_trace 
     
-    def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad, distance_cutoff):
+    def update_model_with_new_data(self, new_train_x, new_train_V, new_train_grad_x, distance_cutoff):
         '''
         add new training data into the model. 
         Then train the model to update the hyper-parameter.
@@ -655,29 +745,33 @@ class GPModelWithDerivativesWrapper():
 
         :param: new_train_x: [N, 3 * natom], input Cartesian coordinate data.  numpy array
                 new_train_V: [N], ab-initio potential data.   numpy array
-                new_train_grad: [N, 3 * natom], ab-initio force data.  numpy array.
+                new_train_grad_x: [N, 3 * natom], ab-initio force data.  numpy array.
         
         :return: None.
         '''
         assert np.shape(new_train_x)[1] == 3 * self.natom, "dim of coordinates for input data is not 3 * natom"
-        assert np.shape(new_train_grad)[1] == 3 * self.natom, "dim of gradients for input data is not 3 * natom"
+        assert np.shape(new_train_grad_x)[1] == 3 * self.natom, "dim of gradients for input data is not 3 * natom"
 
         # input data for machine learning model
         # internal coordinate
         new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(new_train_x)
 
         # gradient of potential in internal coordinate
-        new_train_grad_q = self.coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(new_train_x, new_train_grad, hessian_bool = False)
+        new_train_grad_q = self.coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(new_train_x, new_train_grad_x, hessian_bool = False)
         assert np.shape(new_train_grad_q)[1] == self.input_dim, "train_grad_q for internal coordiante has wrong dimension"
         new_train_targets = np.concatenate([ new_train_V[:,np.newaxis], new_train_grad_q ], axis = 1)
 
         # normalize the new_train_targets
         normalized_new_train_targets = self.normalization_transform(new_train_targets)
-        normalized_new_train_targets_tensor = torch.from_numpy(normalized_new_train_targets)
-        new_train_inputs_tensor = torch.from_numpy(new_train_inputs)
 
-        filtered_new_train_inputs_index = update_model_with_new_data(self.gpr_model, new_train_inputs_tensor, 
-                                                                     normalized_new_train_targets_tensor, distance_cutoff)
+        # For the case we have to fix certain dofs
+        moving_new_train_inputs, moving_new_train_targets = self.FixingDofs.transform_training_data_to_free_moving_dofs(new_train_inputs, normalized_new_train_targets)
+
+        normalized_moving_new_train_targets_tensor = torch.from_numpy(moving_new_train_targets)
+        moving_new_train_inputs_tensor = torch.from_numpy(moving_new_train_inputs)
+
+        filtered_new_train_inputs_index = update_model_with_new_data(self.gpr_model, moving_new_train_inputs_tensor, 
+                                                                     normalized_moving_new_train_targets_tensor, distance_cutoff)
 
         if len(filtered_new_train_inputs_index) != 0:
             # update the training data and targets in internal coordinate q.
@@ -685,7 +779,7 @@ class GPModelWithDerivativesWrapper():
             self.normalized_train_targets = np.concatenate([self.normalized_train_targets, normalized_new_train_targets[filtered_new_train_inputs_index]  ], axis = 0)
 
             # update the training data and targets in cartesian coordinate x.
-            new_train_cartesian_targets = np.concatenate([new_train_V[:,np.newaxis], new_train_grad] , axis = 1)
+            new_train_cartesian_targets = np.concatenate([new_train_V[:,np.newaxis], new_train_grad_x] , axis = 1)
             self.train_cartesian_inputs = np.concatenate([self.train_cartesian_inputs, new_train_x[filtered_new_train_inputs_index]], axis = 0)
             self.train_cartesian_targets = np.concatenate([self.train_cartesian_targets, new_train_cartesian_targets[filtered_new_train_inputs_index]], axis = 0)
 
@@ -717,13 +811,13 @@ class GPModelWithDerivativesWrapper():
 
         return train_cartesian_X
     
-    def output_training_internal_inputs(self):
+    def output_free_moving_training_internal_inputs(self):
         '''
         output the training data set Q (in non-redundant internal coordinate) used to train the GPR model
         '''
-        train_internal_q = np.copy(self.train_inputs)
+        free_moving_train_inputs = self.FixingDofs.transform_training_inputs_to_free_moving_dofs(np.copy(self.train_inputs))
         
-        return train_internal_q
+        return free_moving_train_inputs
     
     def output_fitted_gpr_model_noises(self):
         '''
@@ -737,8 +831,18 @@ class GPModelWithDerivativesWrapper():
         '''
         output the range of normalized force
         '''
-        normalized_force = self.normalized_train_targets[:,1:]
-        normalized_force_range = np.max(normalized_force, axis = 0) - np.min(normalized_force, axis = 0)
+        free_moving_normalized_targets = self.FixingDofs.transform_training_targets_to_free_moving_dofs(self.normalized_train_targets)
+        free_moving_normalized_force = free_moving_normalized_targets[:,1:]
+        free_moving_normalized_force_range = np.max(free_moving_normalized_force, axis = 0) - np.min(free_moving_normalized_force, axis = 0)
 
-        return normalized_force_range
+        return free_moving_normalized_force_range
     
+    def get_free_moving_internal_coordinate(self, beads_x):
+        '''
+        get the free moving internal coordinates q.
+        '''
+        beads_internal_coordinate = self.coordinate_transformer.get_internal_coordinate_q(beads_x)
+        
+        free_moving_beads_internal_coordinate = self.FixingDofs.transform_training_inputs_to_free_moving_dofs(beads_internal_coordinate)
+
+        return free_moving_beads_internal_coordinate

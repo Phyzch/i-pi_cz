@@ -30,8 +30,6 @@ def check_neb_early_stop(beads_x, trust_region_distance, gpr_model: GPModelWithD
     early_stop_bool = False 
     out_range_bead_index_list = []
 
-    coordinate_transformer = gpr_model.coordinate_transformer
-
     # kernel output scale and kernel length scale of kernels
     kernel_output_scale = gpr_model.output_kernel_outputscale()
     kernel_length_scale = gpr_model.output_kernel_lengthscale()
@@ -43,23 +41,21 @@ def check_neb_early_stop(beads_x, trust_region_distance, gpr_model: GPModelWithD
     effective_kernel_length_scale = np.power(np.sum(kernel_output_scale_normalized[:, np.newaxis] / np.power(kernel_length_scale, 2) , axis = 0), -0.5)
 
     # the location of current beads in internal coordinate
-    beads_internal_coordinate = coordinate_transformer.get_internal_coordinate_q(np.copy(beads_x))
-    # # the path length of neb beads in internal coordinate, scaled by the kernel length scale.
-    # scaled_internal_coordinate_neb_path_length = np.sum( np.linalg.norm( (beads_internal_coordinate[1:] - beads_internal_coordinate[:-1]) / effective_kernel_length_scale, axis= 1 ) )
-
+    beads_free_moving_internal_coordinate = gpr_model.get_free_moving_internal_coordinate(np.copy(beads_x))
+    
     # distance cutoff for trust region.
     distance_cutoff = trust_region_distance
     # the location of training data in internal coordinate.
-    gpr_training_internal_coordinate = gpr_model.output_training_internal_inputs()
+    gpr_training_free_moving_internal_coordinate = gpr_model.output_free_moving_training_internal_inputs()
     
     # compute the distance and find beads that move out of the trusted region.
     nbeads = np.shape(beads_x)[0]
     internal_coordinate_closest_r_list = []
     for bead_index in range(nbeads):
-        bead_internal_q = beads_internal_coordinate[bead_index]
+        bead_internal_q = beads_free_moving_internal_coordinate[bead_index]
 
         # distance between gpr training data and beads.
-        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - gpr_training_internal_coordinate) / effective_kernel_length_scale , axis = 1) 
+        internal_coordinate_r = np.linalg.norm( (bead_internal_q[np.newaxis, :] - gpr_training_free_moving_internal_coordinate) / effective_kernel_length_scale , axis = 1) 
         
         nearest_gpr_data_index = np.argmin(internal_coordinate_r)
 

@@ -246,7 +246,7 @@ class InputNebInstGPR(InputDictionary):
                 "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region. If the distance between NEB beads and nearest GPR point exceed r_max, we stop the NEB inner loop and evaluate ab-initio force on that point."
             }
         ),
-
+        
         "gpr_kernel_outputscale":(
             InputArray,
             {

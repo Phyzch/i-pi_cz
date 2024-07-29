@@ -397,7 +397,7 @@ class MAPNEBGPRMover(Motion):
 
         # check length scale for possible over-fitting
         learned_kernel_length_scale = self.gpr_model.output_kernel_lengthscale()
-        internal_input_range = np.max(self.gpr_model.output_training_internal_inputs(), axis=0) - np.min(self.gpr_model.output_training_internal_inputs(), axis = 0)
+        internal_input_range = np.max(self.gpr_model.output_free_moving_training_internal_inputs(), axis=0) - np.min(self.gpr_model.output_free_moving_training_internal_inputs(), axis = 0)
         scaled_kernel_lengthscale = learned_kernel_length_scale / internal_input_range 
 
         # check the size of covariance function (kernel). 
