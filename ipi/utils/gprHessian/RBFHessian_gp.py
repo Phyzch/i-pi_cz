@@ -424,7 +424,7 @@ def predict_latent_function_GPHessian(model: GPModelWithHessians, test_inputs: t
 
         return pots, grads, hessians, pots_var, grads_var, hessians_var
 
-def update_model_with_new_data(model: GPModelWithHessians, new_train_inputs: torch.Tensor, new_train_targets: torch.Tensor, new_train_data_hessian_data_point_index: torch.Tensor):
+def update_model_with_new_data_GPHessian(model: GPModelWithHessians, new_train_inputs: torch.Tensor, new_train_targets: torch.Tensor, new_train_data_hessian_data_point_index: torch.Tensor):
     '''
     Add new training input data and training target data.
     '''

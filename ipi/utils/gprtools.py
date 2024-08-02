@@ -765,15 +765,14 @@ class GPModelWithDerivativesWrapper():
 
         :param: new_train_x: [N, 3 * natom], input Cartesian coordinate data.  numpy array
                 new_train_V: [N], ab-initio potential data.   numpy array
-                new_train_grad_x: [N, 3 * natom], ab-initio force data.  numpy array.
+                new_train_grad_x: [N, 3 * natom], ab-initio gradient data.  numpy array.
         
         :return: None.
         '''
         assert np.shape(new_train_x)[1] == 3 * self.natom, "dim of coordinates for input data is not 3 * natom"
         assert np.shape(new_train_grad_x)[1] == 3 * self.natom, "dim of gradients for input data is not 3 * natom"
 
-        # input data for machine learning model
-        # internal coordinate
+        # input data in internal coordinate
         new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(new_train_x)
 
         # gradient of potential in internal coordinate

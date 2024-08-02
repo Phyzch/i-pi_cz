@@ -44,6 +44,10 @@ def take_upper_triangular_part(tensor):
     Take the upper triangular part of the matrix of tensor (upper triangular part of last 2 dimensions).
     :param: tensor: tensor to take the upper triangular part. Can be numpy or torch.Tensor
     '''
+    if len(tensor) == 0:
+        # in case the tensor is empty.
+        return tensor
+    
     batch_shape = tensor.shape[:-2]
     size1 = tensor.shape[-2]
     size2 = tensor.shape[-1]
