@@ -1,3 +1,7 @@
+"""
+utility code for neb_instanton.py. 
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
+"""
 import numpy as np
 from scipy.interpolate import CubicSpline
 from ipi.engine.beads import Beads
@@ -175,6 +179,20 @@ def RK4(y , t , dydt , param , h):
 
     return new_y
 
+def compute_acceleration_along_path(negative_f: np.ndarray, tau: np.ndarray, m3: np.ndarray):
+    '''
+    :param: negative_f : negative force 
+    :param: tau: tangent vector along the path
+    :param: m3: mass vector. mass for different atoms.
+    '''
+    tau_mass_scaled = tau * np.sqrt(m3)
+    tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
+    f_mass_scaled = negative_f / np.sqrt(m3)
+    f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled
+    a = f_mass_scaled_projected / np.sqrt(m3)
+
+    return a 
+
 def dydt_inverted_pot(y, t, param):
     '''
     y=[x,v]. That is y[0] = x. y[1] = v.
@@ -197,16 +215,10 @@ def dydt_inverted_pot(y, t, param):
     if (cl_beads.q[0] != x).any() :
         cl_beads.q[0] = np.copy(x)
 
-    f = -dstrip(cl_forces.f).copy()[0]  # negative force
-    # go to mass scaled coordinate
-    tau_mass_scaled = tau * np.sqrt(m3)
-    tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
-    f_mass_scaled = f / np.sqrt(m3)
-    f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled 
-    a = f_mass_scaled_projected / np.sqrt(m3)
-
-    # a = f / m3  # negative force (-f), force in inverted potential.
-    # a = np.dot(a, tau) * tau 
+    negative_f = -dstrip(cl_forces.f).copy()[0]  # negative force
+    
+    # compute the acceleration along the path
+    a = compute_acceleration_along_path(negative_f, tau, m3)
 
     dydt = np.array([ v, a ])
 

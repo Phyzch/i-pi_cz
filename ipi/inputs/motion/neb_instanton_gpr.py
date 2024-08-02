@@ -70,7 +70,7 @@ class InputNebInstGPR(InputDictionary):
                 "help": "time step for evolve neb beads",
                 "dimension": "time"
             }
-        ),
+        ), 
 
         "instanton_time_step":(
             InputValue,
@@ -270,8 +270,8 @@ class InputNebInstGPR(InputDictionary):
             InputDictionary,
             {
                 "dtype": float,
-                "options": [ "pot_noise_prior", "force_noise_prior"],
-                 "default": [1e-6, 1e-4],
+                "options": [ "pot_noise_prior", "force_noise_prior", "hessian_noise_prior"],
+                 "default": [1e-6, 1e-4, 1e-3],
                  "help": "constraint for the variance of noise in the Gaussian Process Regression",
             },
         ),

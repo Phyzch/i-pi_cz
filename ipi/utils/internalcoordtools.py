@@ -107,6 +107,7 @@ class non_redundant_coordinate_transformer():
 
         U = U[:, :nonzero_S_index_len]
         Vh = Vh[:nonzero_S_index_len, :]
+        S = S_clip 
         
         return U, S
 
@@ -220,19 +221,15 @@ class non_redundant_coordinate_transformer():
 
 
     # transformation between gradients and hessian. g_x <-> g_q.  h_x <-> h_q
-    # for prediction: g_q - > g_x, h_q -> h_x
-    def transform_internal_g_h_to_cartesian_g_h(self, x, g_q , hessian_bool = False, H_q = None):
+    # for prediction: g_q - > g_x, transform gradient.
+    def transform_internal_gradient_to_cartesian_gradient(self, x, g_q):
         '''
-        transform from internal coordinate's gradient g & hessian H to cartesian coordinate gradient g & hessian H.
-        x: Cartesian coordinate. size: [nbatch, 3 * natom]
-        g_q: gradient in nonredundant internal coordinate. shape: [nbatch, internal_dof_#]
-        H_q: Hessian in nonredundant internal coordinate.  shape: [nbatch, internal_dof_#, internal_dof_#]
-        hessian_bool: if true. transform H_q to H_x. otherwise, only transform g_q -> g_x. default: False
+        transform from internal coordinate's gradient g to cartesian coordinate gradient g.
+        :param: x: Cartesian coordinate. size: [nbatch, 3 * natom]
+        :param: g_q: gradient in nonredundant internal coordinate. shape: [nbatch, internal_dof_#]
 
         :return: g_x: gradient in cartesian coordinate. shape: [nbatch, 3 * natom]
-                 H_x: hessian in cartesian coordinate. shape: [nbatch, 3 * natom, 3 * natom]
         '''
-        nbatch = np.shape(x)[0]
         B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2, 3n]
         
         # compute transformation matrix U for each point
@@ -243,50 +240,56 @@ class non_redundant_coordinate_transformer():
         # g_x = Bq_T * g_q
         g_x = np.squeeze(np.matmul(Bq_T, np.expand_dims(g_q, axis = 2)), axis = 2)  # gradient in Cartesian coordinate. [nbatch, 3n ]
 
-        if hessian_bool == False:
-            return g_x 
-        else:
-            # need to compute Hessian H_x:
-            if H_q == None:
-                raise("To also transform internal Hessian, please provide its value. It can not be None")
-            
-            # check the shape of H_q
-            H_q_shape = np.shape(H_q)
-            assert ( (H_q_shape[1] == 3 * self.natom - 6) and (H_q_shape[2] == 3 * self.natom -6) ), "shape of Hessian matrix in internal coordinate H_q is wrong."
-
-            # shape: [nbatch, 3*natom, 3*natom]
-            H_x_part1 = np.matmul(np.matmul(Bq_T, H_q),Bq)
-
-            # H_x_part2 = g_q^T * U^T * (partial^2 d / partial x partial x'). here (partial^2 d / partial x partial x') is a tensor.
-            g_q_T = np.expand_dims(g_q, axis = 1)  # shape : [nbatch, 1, 3n -6]
-            # g_q^T * U^T.  shape: [nbatch, natom^2]
-            prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
-            # prefactor = np.squeeze(np.matmul(g_q_T, UT), axis = 1)
-
-            # compute hessian_d: rank-3 tensor. size [nbatch, natom^2, 3 * natom, 3 * natom] 
-            hessian_d = self._compute_hessian_d(x)
-
-            # shape: [nbatch, 3 * natom, 3 * natom] 
-            H_x_part2 = np.sum( prefactor[:,:, np.newaxis, np.newaxis] * hessian_d , axis = 1 )
-
-            H_x = H_x_part1 + H_x_part2 
-
-            return g_x, H_x 
+        return g_x 
     
-
-    # for training: g_x -> g_q, h_x -> h_q
-    def transform_cartesian_g_h_to_internal_g_h(self, x, g_x, hessian_bool = False, H_x = None):
+    # for prediction: H_q -> H_x. transform hessian.
+    def transform_internal_hessian_to_cartesian_hessian(self, x, g_q, H_q):
         '''
-        transform from Cartesian coordinate system's gradient g_x and hessian h_x to 
-        internal coordinate gradient g_q and hessian h_q.
-        if hessian_bool = True, we also transform Hessian.
+        See eq.(18) in Faraday Discuss., 2018, 212, 237
+        transform from internal coordinate's hessian H to cartesian coordinate hessian H.
+        In this case, we need hessian in all dofs.
+        :param: x: Cartesian coordinate. size: [nbatch, 3 * natom]
+        :param: g_q: gradients in non-redundant internal coordinates. shape: [nbatch, internal_dof_#]
+        :param: H_q: Hessians in non-redundant internal coordinates. shape: [nbatch, internal_dof_#, internal_dof_#]
+        
+        :return: H_x: Hessian in Cartesian dofs.
+        '''
+        nbatch = np.shape(x)[0]
+        assert nbatch == np.shape(g_q)[0], "the number of data points with gradients for internal coordinate transform is wrong."
+        assert nbatch == np.shape(H_q)[0], "the number of data points with hessians for internal coordinate transform is wrong."
+
+        B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2, 3n]
+        
+        # compute transformation matrix U for each point
+        Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+
+        Bq_T = np.transpose(Bq, axes = (0, 2, 1))  # transpose of Bq. shape: [nbatch, 3n, 3n-6]
+
+        # shape: [nbatch, 3*natom, 3*natom]
+        H_x_part1 = np.matmul(np.matmul(Bq_T, H_q),Bq)
+        # H_x_part2 = g_q^T * U^T * (partial^2 d / partial x partial x'). here (partial^2 d / partial x partial x') is a tensor.
+        g_q_T = np.expand_dims(g_q, axis = 1)  # shape : [nbatch, 1, 3n -6]
+        # g_q^T * U^T.  shape: [nbatch, natom^2]
+        prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
+
+        # compute hessian_d: rank-3 tensor for each data point.. size [nbatch, natom^2, 3 * natom, 3 * natom] 
+        hessian_d = self._compute_hessian_d(x)
+
+        # shape: [nbatch, 3 * natom, 3 * natom] 
+        H_x_part2 = np.sum( prefactor[:,:, np.newaxis, np.newaxis] * hessian_d , axis = 1 )
+
+        H_x = H_x_part1 + H_x_part2 
+
+        return H_x
+
+    # for training: g_x -> g_q
+    def transform_cartesian_gradient_to_internal_gradient(self, x, g_x):
+        '''
+        transform from Cartesian coordinate system's gradient g_x to internal coordinate gradient g_q.
         :param: x: Cartesian coordinate. shape: [nbatch, 3 * natom]
         :param: g_x: gradient in Cartesian coordinate. shape:[nbatch, 3 * natom]
-        :param: H_x: hessian in Cartesian coordinate.  shape:[nbatch, 3 * natom, 3 * natom]
-        :param: hessian_bool: if true, transform H_x to H_q. otherwise, only transform gradient g_x -> g_q. default: False.
 
         :return g_q: gradient in internal coordinate. shape:[nbatch, 3 * natom - 6]
-        :return: H_q: (only if hessian_bool = True). hessian in internal coordinate. shape:[nbatch, 3 * natom - 6, 3 * natom - 6]
         '''
         nbatch = np.shape(x)[0]
         B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2 , 3n]
@@ -301,32 +304,56 @@ class non_redundant_coordinate_transformer():
         # shape: [nbatch, 3n-6]
         g_q = np.squeeze(np.matmul(inverse_Bq_T, g_x[:,:,np.newaxis]), axis = 2)
 
-        if hessian_bool == False:
-            return g_q 
-        else:
-            if H_x == None:
-                raise("To also transform Cartesian hessian, please provide its value. It can not be None")
-            
-            H_x_shape = np.shape(H_x)
-            assert ( (H_x_shape[1] == 3 * self.natom) and (H_x_shape[2] == 3 * self.natom)) , "shape of Hessian matrix in cartesian coordinate H_x is wrong."
+        return g_q 
 
-            inverse_Bq = np.transpose(inverse_Bq_T, axes= (0,2,1))
 
-            # Below we reverse the computation in transform_internal_g_h_to_cartesian_g_h
-            # compute g_q^{T} \partial B_q / \partial x.  shape [nbatch, 1, 3n-6]
-            g_q_T = np.expand_dims(g_q, axis = 1)
-            # g_q^T * U^T.  shape: [nbatch, natom^2]
-            prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
-            # prefactor = np.squeeze(np.matmul(g_q_T, UT), axis = 1)
+    # for training: H_x -> H_q
+    def transform_cartesian_hessian_to_internal_hessian(self, x, g_x, H_x):
+        '''
+        See eq.(21) in Faraday Discuss., 2018, 212, 237
+        transform from Cartesian hessian H to internal dofs hessian H. 
+        In this case, we need hessian in all dofs.
+        
+        :param: x: Cartesian coordinate. shape: [nbatch, 3 * natom]
+        :param: g_x: gradient in Cartesian coordinate. shape:[nbatch, 3 * natom]
+        :param: H_x: hessian in Cartesian coordinate.  shape:[nbatch, 3 * natom, 3 * natom]
 
-            # compute hessian_d: rank-3 tensor. size [nbatch, natom^2, 3 * natom, 3 * natom] 
-            hessian_d = self._compute_hessian_d(x)
-            # shape: [nbatch, 3 * natom, 3 * natom]
-            H_x_part2 = np.sum(prefactor[:,:, np.newaxis, np.newaxis] * hessian_d , axis = 1 )
+        :return: H_q: (only if hessian_bool = True). hessian in internal coordinate. shape:[nbatch, 3 * natom - 6, 3 * natom - 6]
+        '''
+        nbatch = np.shape(x)[0]
+        assert nbatch == np.shape(g_x)[0], "the number of data points with gradients for internal coordinate transform is wrong."
+        assert nbatch == np.shape(H_x)[0], "the number of data points with hessians for internal coordinate transform is wrong."
 
-            H_x_part1 = np.subtract(H_x , H_x_part2)
+        B = self._compute_redundant_gradient_matrix_B(x) # \partial d / \partial x. shape: [nbatch, n^2 , 3n]
 
-            H_q = np.matmul(np.matmul(inverse_Bq_T, H_x_part1), inverse_Bq)
+        Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n] 
 
-            return g_q, H_q 
+        Bq_T = np.transpose(Bq, axes = (0,2,1))  # transpose of Bq. shape:[nbatch, 3n, 3n - 6]
 
+        # inverse of Bq_T matrix.
+        inverse_Bq_T = np.array([np.linalg.pinv(Bq_T_element, rcond = np.power(10.0, -8) ) for Bq_T_element in Bq_T])
+
+        # gradient in internal dofs
+        g_q = np.squeeze(np.matmul(inverse_Bq_T, g_x[:,:,np.newaxis]), axis = 2)
+
+        H_x_shape = np.shape(H_x)
+        assert ( (H_x_shape[1] == 3 * self.natom) and (H_x_shape[2] == 3 * self.natom)) , "shape of Hessian matrix in cartesian coordinate H_x is wrong."
+
+        inverse_Bq = np.transpose(inverse_Bq_T, axes= (0,2,1))
+
+        # Below we reverse the computation in transform_internal_hessian_to_cartesian_hessian
+        # compute g_q^{T} \partial B_q / \partial x.  shape [nbatch, 1, 3n-6]
+        g_q_T = np.expand_dims(g_q, axis = 1)
+        # g_q^T * U^T.  shape: [nbatch, natom^2]
+        prefactor = np.squeeze(np.matmul(g_q_T, self.ref_UT), axis = 1) 
+
+        # compute hessian_d: rank-3 tensor. size [nbatch, natom^2, 3 * natom, 3 * natom] 
+        hessian_d = self._compute_hessian_d(x)
+        # shape: [nbatch, 3 * natom, 3 * natom]
+        H_x_part2 = np.sum(prefactor[:,:, np.newaxis, np.newaxis] * hessian_d , axis = 1 )
+
+        H_x_part1 = np.subtract(H_x , H_x_part2)
+
+        H_q = np.matmul(np.matmul(inverse_Bq_T, H_x_part1), inverse_Bq)
+
+        return H_q

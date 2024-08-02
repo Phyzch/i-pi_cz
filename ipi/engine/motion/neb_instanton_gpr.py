@@ -86,7 +86,7 @@ class MAPNEBGPRMover(Motion):
         gpr_trust_region = 0.1,
         gpr_kernel_outputscale = np.zeros(0, float),
         gpr_kernel_lengthscale_ratio = np.zeros(0, float),
-        gpr_noise_std = {"pot_noise_prior": 1e-6, "force_noise_prior": 1e-4},
+        gpr_noise_std = {"pot_noise_prior": 1e-6, "force_noise_prior": 1e-4, "hessian_noise_prior": 1e-3},
         gpr_SE_kernel_number = 1,
         read_initial_gpr_training_data = False
     ):
@@ -1046,7 +1046,7 @@ class LINEBGradientMapper(object):
 
     def initialize_force(self, x):
         '''
-        initialize rbf. This will enable us to use check_spring_k_kappa in the initialization() step of neb gm in MAPNEBGPRMover
+        initialize rbf & energy. This will enable us to use check_spring_k_kappa in the initialization() step of neb gm in MAPNEBGPRMover
         '''
         self.rbeads.q[:, self.fixatoms_mask] = x
 
@@ -1488,14 +1488,9 @@ class RP_MAP(object):
         #  compute the negative force (force in inverted potential)
         shifted_V, grad_V, _, _ = self.gpr_model.predict_latent_function(self.cl_bead.q)
         # the negative force is the gradient, predicted by the GPR model.
-        f = grad_V[0]
-
-        m3 = self.m3 
-        tau_mass_scaled = tau * np.sqrt(m3)
-        tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
-        f_mass_scaled = f / np.sqrt(m3)
-        f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled 
-        a = f_mass_scaled_projected / np.sqrt(m3)  # acceleration is along the negative force.
+        negative_f = grad_V[0]
+        # compute acceleration along the path.
+        a = ipi.utils.nebinstool.compute_acceleration_along_path(negative_f, tau, self.m3)
 
         pot = shifted_V[0] + self.energy_shift
 

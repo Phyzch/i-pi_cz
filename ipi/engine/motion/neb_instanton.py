@@ -934,13 +934,7 @@ class RP_MAP(object):
 
         f = - dstrip(self.cl_forces.f).copy()[0]  # compute negative force (force in inverted potential)
 
-        m3 = self.m3 
-        tau_mass_scaled = tau * np.sqrt(m3)
-        tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
-        f_mass_scaled = f / np.sqrt(m3)
-        f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled 
-        a = f_mass_scaled_projected / np.sqrt(m3)  # acceleration is along the negative force direction.
-
+        a = ipi.utils.nebinstool.compute_acceleration_along_path(f, tau, self.m3)
 
         pot = self.cl_forces.pots[0]
 

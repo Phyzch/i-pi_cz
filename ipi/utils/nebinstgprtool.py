@@ -1,5 +1,6 @@
 '''
-utility module for neb_instanton_gpr.py module
+utility module for neb_instanton_gpr.py module.
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
 '''
 import numpy as np 
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
@@ -9,6 +10,7 @@ from ipi.utils.depend import dstrip
 import re 
 import os 
 from ipi.utils.nebinstool import RK4
+import ipi.utils.nebinstool 
 
 def check_neb_early_stop(beads_x, trust_region_distance, gpr_model: GPModelWithDerivativesWrapper,
                          outerloop_step, inner_loop_neb_step):
@@ -265,16 +267,10 @@ def dydt_inverted_pot_gpr(y, t, param):
 
     # update coordinate of bead object to enable the forces object to compute force
     _ , grad_V, _, _ = gpr_model.predict_latent_function(np.array([x]))
+    negative_f = grad_V[0]
 
-    # go to mass scaled coordinate
-    tau_mass_scaled = tau * np.sqrt(m3)
-    tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
-    f_mass_scaled = grad_V[0] / np.sqrt(m3)
-    f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled 
-    a = f_mass_scaled_projected / np.sqrt(m3)
-   
-    # a = grad_V[0] / m3  # negative force (-f), force in inverted potential.
-    # a = np.dot(a, tau) * tau 
+    # compute acceleration along the path.
+    a = ipi.utils.nebinstool.compute_acceleration_along_path(negative_f, tau, m3)
 
     dydt = np.array([ v, a ])
 

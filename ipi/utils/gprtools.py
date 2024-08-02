@@ -1,6 +1,7 @@
 '''
 packages for constructing gaussian process regression model
-using gpytorch framework (See https://docs.gpytorch.ai/en/stable/)
+using gpytorch framework (See https://docs.gpytorch.ai/en/stable/).
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
 '''
 import torch 
 import gpytorch
@@ -13,8 +14,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
     '''
     Gaussian Process model with multiple output (f(x), df/dx1, .. , df/dxn)
     '''
-    def __init__(self, train_inputs, train_targets, ard_num_dims, output_dims,
-                 gpr_SE_kernel_number,
+    def __init__(self, train_inputs: torch.Tensor, train_targets: torch.Tensor, 
+                 ard_num_dims: int, output_dims: int,
+                 gpr_SE_kernel_number: int,
                  kernel_outputscale, kernel_lengthscale_ratio,
                  likelihood_noise_variance):
         '''
@@ -440,9 +442,14 @@ class FixInternalDofs(object):
         # check whether coordinate along certain internal dof is fixed
         train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
         self.fixed_internal_dofs = np.array([i for i in range(self.input_dim) if train_inputs_change[i] < self.fix_internal_dofs_cutoff])
-        self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
+        if len(self.fixed_internal_dofs) != 0:
+            self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
+            self.targets_fixed_dofs = np.mean(train_targets, axis= 0)[self.fixed_internal_dofs + 1]  # the first column of the target is the potential V.
+        else:
+            self.free_moving_dofs = np.arange(self.input_dim)
+            self.targets_fixed_dofs = np.array([])
 
-        self.targets_fixed_dofs = np.mean(train_targets, axis= 0)[self.fixed_internal_dofs + 1]  # the first column of the target is the potential V.
+        
         
 
     def transform_training_data_to_free_moving_dofs(self, train_inputs: np.ndarray, train_targets: np.ndarray, noise_var= None):
@@ -456,7 +463,11 @@ class FixInternalDofs(object):
         moving_train_targets = self.transform_training_targets_to_free_moving_dofs(train_targets) # the first column of target is potential V.
 
         if type(noise_var) != type(None):
-            moving_noise_var = np.delete(noise_var, self.fixed_internal_dofs + 1)
+            if len(self.fixed_internal_dofs) != 0:
+                moving_noise_var = np.delete(noise_var, self.fixed_internal_dofs + 1)
+            else:
+                moving_noise_var = noise_var 
+
             return moving_train_inputs, moving_train_targets, moving_noise_var 
         else:
             return moving_train_inputs, moving_train_targets 
@@ -466,7 +477,10 @@ class FixInternalDofs(object):
         delete fixdofs from training inputs.
         :param: train_inputs: the training inputs in internal dofs. 
         '''
-        moving_train_inputs = np.delete(train_inputs, self.fixed_internal_dofs, axis = 1)
+        if len(self.fixed_internal_dofs) != 0:
+            moving_train_inputs = np.delete(train_inputs, self.fixed_internal_dofs, axis = 1)
+        else:
+            moving_train_inputs = train_inputs
 
         return moving_train_inputs
 
@@ -475,7 +489,10 @@ class FixInternalDofs(object):
         delete fixdofs from training targets
         :param: train_targets: the training targets in internal dofs
         '''
-        moving_train_targets =  np.delete(train_targets, self.fixed_internal_dofs + 1, axis= 1) # the first column of target is potential V.
+        if len(self.fixed_internal_dofs) != 0:
+            moving_train_targets =  np.delete(train_targets, self.fixed_internal_dofs + 1, axis= 1) # the first column of target is potential V.
+        else:
+            moving_train_targets = train_targets
 
         return moving_train_targets
 
@@ -494,112 +511,25 @@ class FixInternalDofs(object):
         test_mean = np.zeros([test_data_num, self.output_dim])
         test_mean[:,0] = moving_test_mean[:, 0]  # potential
         test_mean[:, self.free_moving_dofs + 1] = moving_test_mean[:, 1:]
-        test_mean[:, self.fixed_internal_dofs + 1] = test_target_fixed_dofs 
+        if len(self.fixed_internal_dofs) != 0:
+            test_mean[:, self.fixed_internal_dofs + 1] = test_target_fixed_dofs 
 
         # the variance of the prediction of the test data with all dofs 
         test_var = np.zeros([test_data_num, self.output_dim])
         test_var[:,0] = moving_test_var[:, 0] # potential
-        test_var[:, self.fixed_internal_dofs + 1] = 0 
         test_var[:, self.free_moving_dofs + 1] = moving_test_var[:, 1:]
+        if len(self.fixed_internal_dofs) != 0:
+            test_var[:, self.fixed_internal_dofs + 1] = 0 
 
         return test_mean, test_var 
 
-class GPModelWithDerivativesWrapper():
+class NormalizeTrainingData(object):
     '''
-    wrapper class for GPModelWithDerivatives. 
-    handles the transformation between internal coordinate and cartesian coordinate + GPR training.
+    normalize the potential & force of training data.
     '''
-    def __init__(self, train_x, train_V, train_grad, 
-                 natom, coordinate_transformer : non_redundant_coordinate_transformer,
-                 gpr_SE_kernel_number,
-                 kernel_outputscale, kernel_lengthscale_ratio,
-                 noise_std):
+    def __init__(self, training_targets: np.ndarray):
         '''
-        initialize the model.
-        :param: train_x: [N, 3 * natom]. initial N training points x. (Cartesian coordinate)  numpy array.
-        :param: train_V: [N]. initial N training potential V.    numpy array.
-        :param: train_grad: [N, 3 * natom], initial N training data. gradient of potential V.  numpy array.
-        :param: natom: number of atoms.
-        :param: coordinate transformer: an instance of the class: non_redundant_coordinate_transformer. Responsible for transformation between external and internal coordinate. 
-        :param: gpr_SE_kernel_number: number of squared exponential kernel used to construct the covariance function.
-        :param: kernel_outputscale: output scale of each squared exponential kernel used to construct covariance function. numpy array. 
-        :param: kernel_lengthscale_ratio: length scale ratio of each squared exponential kernel used to construct covariance function. numpy array.
-        :param: noise_std:  the noise of likelihood function p(y|f). 
-                                                       y = f + epsilon, where the variance of epsilon noise term is defined by likelihood noise variance.
-                            Note the potential V and force f have different noise.
-                            The noise for force is defined in the Cartesian coordinate, we need to transform it into the internal coordinate. 
-        '''
-        assert np.shape(train_x)[1] == 3 * natom, "dim of coordinates for input data is not 3 * natom, this is wrong. train_x data shape: {} , 3 * natom: {}".format(np.reshape(train_x)[1], 3 * natom)
-        assert np.shape(train_grad)[1] == 3 * natom, "dim of gradients for input data is not 3 * natom, this is wrong. train_grad shape:{}, 3 * natom: {}".format(np.shape(train_grad)[1], 3 * natom)
-        
-        self.natom = natom
-        self.gpr_SE_kernel_number = gpr_SE_kernel_number
-
-        self.coordinate_transformer = coordinate_transformer
-
-        # the training targets for the GPR with derivative is [V, dV/dx1, ..., dV/dxn]
-        train_cartesian_targets = np.concatenate([train_V[:, np.newaxis], train_grad ], axis = 1)
-
-        # transform cartesian coordinate x to internal coordinate q
-        train_inputs = coordinate_transformer.get_internal_coordinate_q(train_x)
-
-        input_dim = np.shape(train_inputs)[1]   # numbers of degree of freedom for the non-redundant internal coordinate q.
-        output_dim = input_dim + 1 # output_dim = input_dim + 1 (train_targets = [V, dV/dx1, ..., dV/dxn])
-        self.input_dim = input_dim
-        self.output_dim = output_dim 
-
-        # shape: [N, 3 * natom - 6]
-        # transform the gradient of potential V: dV/dx -> dV/dq  
-        train_grad_q = coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(train_x, train_grad, hessian_bool = False)
-        # target data: [V, dV/dx1, ..., dV/dxn]
-        train_targets = np.concatenate( [ train_V[:, np.newaxis] , train_grad_q ], axis = 1 )
-
-        # decide normalization parameter. Here we normalize the potential as (V- <V>)/range(V). The force also needs to be scaled. 
-        self.compute_potential_normalization_parameter(train_targets)
-
-        # perform normalization on training targets.
-        normalized_train_targets = self.normalization_transform(train_targets)
-
-        # compute the estimated noise covariance factor for the force in the internal coordinate q. noise for Fq = dV/dq. 
-        likelihood_noise_variance  = self.transform_cartesian_noise_to_gpr_model_noise(noise_std, train_targets)
-
-        self.train_inputs = train_inputs  # training inputs in internal coordinate space q.
-        self.normalized_train_targets = normalized_train_targets  # training outputs in internal coordinates q. (V, dV/dq)
-
-        self.train_cartesian_inputs = train_x  # training inputs in cartesian coordinate x
-        self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
-        
-        # For the case we have to fix certain internal dofs.
-        self.FixingDofs = FixInternalDofs(train_inputs, normalized_train_targets)
-        moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = self.FixingDofs.transform_training_data_to_free_moving_dofs(train_inputs, 
-                                                                                                                                            normalized_train_targets,
-                                                                                                                                            likelihood_noise_variance)
-        moving_input_dim = input_dim - len(self.FixingDofs.fixed_internal_dofs)
-        moving_output_dim = output_dim - len(self.FixingDofs.fixed_internal_dofs)        
-
-        # transform input from numpy array to torch.tensor
-        moving_train_inputs_tensor = torch.from_numpy(moving_train_inputs)
-        moving_train_targets_tensor = torch.from_numpy(moving_train_targets)
-        
-        # initialize the gaussian process regression model with inpt training data.
-        self.gpr_model = GPModelWithDerivatives(moving_train_inputs_tensor, moving_train_targets_tensor, 
-                                                moving_input_dim, moving_output_dim,
-                                                gpr_SE_kernel_number,
-                                                kernel_outputscale, kernel_lengthscale_ratio, 
-                                                moving_likelihood_noise_variance)
-
-        # train self.gpr_model() to get optimized hyperparameter
-        train_gpr(self.gpr_model)
-
-
-
-    def compute_potential_normalization_parameter(self, training_targets):
-        '''
-        normalize the potential V & force F.
         V_normalized = (V - V_mean)/V_range.
-
-        This function decide normalize parameter from the initial training data. 
-
         :param: training_targets : [V, dV/dx]. numpy array.
         '''
         V = training_targets[:, 0]
@@ -614,9 +544,8 @@ class GPModelWithDerivativesWrapper():
 
         This function perform the normalize procedure.  
         :param: training_targets : [V, dV/dq]. numpy array.
-        '''    
-        # normalize the potential
-        V = training_targets[:,0]
+        '''
+        V = training_targets[:, 0]
         V_normalized = (V - self.V_mean) / self.V_range 
 
         grad_V = training_targets[:,1:]
@@ -629,16 +558,12 @@ class GPModelWithDerivativesWrapper():
     def inverse_normalization_transform(self, normalized_training_targets):
         '''
         inverse the normalization procedure of potential V & force F.
-        First scale the force:
-        F_normalized1 = F_normalized * F_scale + F_mean
 
-        Then we further scale the potential. 
         V = V_normalized * V_range + V_mean
-        F = F_normalized1 * V_range 
+        F = F_normalized * V_range 
 
         This function perform the inverse of normalization procedure.
         :param: normalized_training_targets: [V_normalized, d V_normalized /dx]. numpy array.
-        :param: 
         '''
         V_normalized = normalized_training_targets[:, 0]
         grad_V_normalized = normalized_training_targets[:, 1:]
@@ -650,32 +575,125 @@ class GPModelWithDerivativesWrapper():
         training_targets = np.concatenate([ V[:, np.newaxis], grad_V ], axis = 1)
 
         return training_targets
-
-    def transform_cartesian_noise_to_gpr_model_noise(self, noise_std, training_targets):
+    
+    def normalize_noise_var(self, noise_var):
         '''
-        transform the noise level in cartesian coordinate to noise in Gaussian Process Regressioin model.
+        normalize the variance of noise
+        '''
+        normalized_noise_var = noise_var / np.power(self.V_range, 2)
+
+        return normalized_noise_var 
+    
+    def inverse_normalize_noise_var(self, normalized_noise_var):
+        '''
+        inverse normalize the variance of the noise 
+        '''
+        noise_var = normalized_noise_var * np.power(self.V_range ,2)
+
+        return noise_var
+
+class GPModelWithDerivativesWrapper():
+    '''
+    wrapper class for GPModelWithDerivatives. 
+    handles the transformation between internal coordinate and cartesian coordinate + GPR training.
+    '''
+    def __init__(self, train_x: np.ndarray, train_V: np.ndarray, train_grad_x: np.ndarray, 
+                 natom: int, coordinate_transformer : non_redundant_coordinate_transformer,
+                 gpr_SE_kernel_number: int,
+                 kernel_outputscale: np.ndarray, kernel_lengthscale_ratio: np.ndarray,
+                 noise_std):
+        '''
+        initialize the model.
+        :param: train_x: [N, 3 * natom]. initial N training points x. (Cartesian coordinate)  numpy array.
+        :param: train_V: [N]. initial N training potential V.    numpy array.
+        :param: train_grad: [N, 3 * natom], initial N training data. gradient of potential V.  numpy array.
+        :param: natom: number of atoms.
+        :param: coordinate transformer: an instance of the class: non_redundant_coordinate_transformer. Responsible for transformation between external and internal coordinate. 
+        :param: gpr_SE_kernel_number: number of squared exponential kernels that is used to construct the covariance function.
+        :param: kernel_outputscale: output scale of each squared exponential kernel used to construct covariance function. numpy array. 
+        :param: kernel_lengthscale_ratio: length scale ratio of each squared exponential kernel used to construct covariance function. numpy array.
+        :param: noise_std:  the noise of likelihood function p(y|f). 
+                                                       y = f + epsilon.
+                            Note the potential V and force f have different noise.
+                            The noise for force is defined in the Cartesian coordinate, we need to transform it into the internal coordinate. 
+        '''
+        assert np.shape(train_x)[1] == 3 * natom, "dim of coordinates for input data is not 3 * natom, this is wrong. train_x data shape: {} , 3 * natom: {}".format(np.reshape(train_x)[1], 3 * natom)
+        assert np.shape(train_grad_x)[1] == 3 * natom, "dim of gradients for input data is not 3 * natom, this is wrong. train_grad shape:{}, 3 * natom: {}".format(np.shape(train_grad_x)[1], 3 * natom)
+        
+        self.natom = natom
+        self.gpr_SE_kernel_number = gpr_SE_kernel_number
+
+        self.coordinate_transformer = coordinate_transformer
+
+        # the training targets for the GPR with derivative is [V, dV/dx1, ..., dV/dxn]
+        train_cartesian_targets = np.concatenate([train_V[:, np.newaxis], train_grad_x ], axis = 1)
+
+        # transform cartesian coordinate x to internal coordinate q
+        train_inputs = coordinate_transformer.get_internal_coordinate_q(train_x)
+
+        input_dim = np.shape(train_inputs)[1]   # numbers of degree of freedom for the non-redundant internal coordinate q.
+        output_dim = input_dim + 1 # output_dim = input_dim + 1 (train_targets = [V, dV/dx1, ..., dV/dxn])
+        self.input_dim = input_dim
+        self.output_dim = output_dim 
+
+        # shape: [N, 3 * natom - 6]
+        # transform the gradient of potential V: dV/dx -> dV/dq  
+        train_grad_q = coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(train_x, train_grad_x)
+        # target data: [V, dV/dx1, ..., dV/dxn]
+        train_targets = np.concatenate( [ train_V[:, np.newaxis] , train_grad_q ], axis = 1 )
+
+        # compute the estimated noise covariance factor for the force in the internal coordinate q. noise for Fq = dV/dq. 
+        likelihood_noise_variance  = self.transform_cartesian_noise_to_gpr_model_noise(noise_std)
+
+        # decide normalization parameter. Here we normalize the potential as (V- <V>)/range(V). The force also needs to be scaled. 
+        self.Normalizer = NormalizeTrainingData(train_targets)
+        # perform normalization on training targets.
+        normalized_train_targets = self.Normalizer.normalization_transform(train_targets)
+        likelihood_noise_variance = self.Normalizer.normalize_noise_var(likelihood_noise_variance)
+
+        self.train_inputs = train_inputs  # training inputs in internal coordinate space q.
+        self.normalized_train_targets = normalized_train_targets  # training outputs in internal coordinates q. (V, dV/dq)
+
+        self.train_cartesian_inputs = train_x  # training inputs in cartesian coordinate x
+        self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
+        
+        # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
+        self.FixingDofs = FixInternalDofs(train_inputs, normalized_train_targets)
+        moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = self.FixingDofs.transform_training_data_to_free_moving_dofs(train_inputs, 
+                                                                                                                                            normalized_train_targets,
+                                                                                                                                            likelihood_noise_variance)
+        moving_input_dim = input_dim - len(self.FixingDofs.fixed_internal_dofs)
+        moving_output_dim = output_dim - len(self.FixingDofs.fixed_internal_dofs)        
+
+        # transform input from numpy array to torch.tensor
+        moving_train_inputs_tensor = torch.from_numpy(moving_train_inputs)
+        moving_train_targets_tensor = torch.from_numpy(moving_train_targets)
+        
+        # initialize the gaussian process regression model with input training data.
+        self.gpr_model = GPModelWithDerivatives(moving_train_inputs_tensor, moving_train_targets_tensor, 
+                                                moving_input_dim, moving_output_dim,
+                                                gpr_SE_kernel_number,
+                                                kernel_outputscale, kernel_lengthscale_ratio, 
+                                                moving_likelihood_noise_variance)
+
+        # train self.gpr_model() to get optimized hyperparameter
+        train_gpr(self.gpr_model)
+
+    def transform_cartesian_noise_to_gpr_model_noise(self, noise_std):
+        '''
+        transform the noise in cartesian coordinate to noise in Gaussian Process Regressioin model.
         This is critical for the successful training of the GPR model, otherwise, we will treat the noise incorrectly. 
         '''
-        pot_noise = noise_std["pot_noise_prior"]
-        force_noise_cartesian = noise_std["force_noise_prior"]  # noise of force in the Cartesian coordinate. We assume the noise is isotropic. 
+        pot_noise_std = noise_std["pot_noise_prior"]
+        force_noise_std_cartesian = noise_std["force_noise_prior"]  # noise of force in the Cartesian coordinate. We assume the noise is isotropic. 
 
-        # compute transformation matrix for force between internal coordinate q and cartesian coordinate x. 
-        ref_x = self.coordinate_transformer.ref_x 
-        B_ref_x = self.coordinate_transformer._compute_redundant_gradient_matrix_B(np.expand_dims(ref_x, 0))[0]  # \partial d / \partial x : here d is redundant internal coordinate.
-        Bq_ref_x = np.matmul(self.coordinate_transformer.ref_UT, B_ref_x)   # \partial q/ \partial x: here q is nonredundant internal coordinate.  Bq: Wilson's B-matrix for internal coordinate q.
-        Bq_T_ref_x = np.transpose(Bq_ref_x, axes = (1,0))   # Bq_T: transpose of Bq matrix.
-        inverse_BqT_ref_x = np.linalg.pinv(Bq_T_ref_x, rcond = np.power(10.0, -8))  # pseudo-inverse of BqT, used for the transformation between force in internal coordinate and force in cartesian coordinate.
+        # force noise has to be scaled by the inverse of the singular value of Wilson's B matrix.
+        self.Bmatrix_singular_value_square = np.power(self.coordinate_transformer.ref_S, 2)
 
-        # The covariance matrix for the joint gaussian distribution of the noise in the internal coordinate q. 
-        # This should be a diagonal matrix. The element for scaling is S^-2, where S is eigenvalue matrix of Wilson's B-matrix.
-        Wilson_Bmatrix_singular_value_matrix_inverse_square = np.matmul(inverse_BqT_ref_x, np.transpose(inverse_BqT_ref_x)) 
-        singular_value_inverse_square_array = np.diagonal(Wilson_Bmatrix_singular_value_matrix_inverse_square)
+        singular_value_square_inverse = 1 / self.Bmatrix_singular_value_square
 
-        self.Bmatrix_singular_value_square = 1 / singular_value_inverse_square_array
+        force_noise_var = singular_value_square_inverse * np.power(force_noise_std_cartesian, 2) 
 
-        force_noise_var = singular_value_inverse_square_array * np.power(force_noise_cartesian, 2) / np.power(self.V_range, 2)
-
-        pot_noise_std = pot_noise / self.V_range 
         pot_noise_var = np.power(pot_noise_std, 2)
 
         noise_variance = np.concatenate([[pot_noise_var], force_noise_var])
@@ -686,10 +704,11 @@ class GPModelWithDerivativesWrapper():
         compute the predicted potential V and gradient dV/dx (mean value of latent prediction distribution) in Cartesian coordinate.
         Also compute the variance of potential & gradients dV/dq. 
         This function wraps predict_latent_function_gp_with_derivative defined in GPModelWithDerivative.
-
+        This function handles 1. normalization  2. filter fixed dofs  3. transformation between Cartesian and internal dofs.
+        
         :param: test_x: input Cartesian coordinate data [N, 3 * natom]. 
         :param: internal_coordinate_bool: if internal coordinate bool = True, then we output gradient of potential in internal coordinate.
-                                          otherwise, we output the gradient potential in Cartesian coordinate.
+                                          otherwise, we output the gradient of potential in Cartesian coordinate.
 
         :return: V: predicted potential energy.
                 grad_x: dV/dx, predicted gradient of potential energy. In Cartesian coordinate.  
@@ -713,14 +732,15 @@ class GPModelWithDerivativesWrapper():
         # attach test_mean and test_var (0) of fixed dofs
         normalized_test_mean, normalized_test_var = self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(moving_normalized_test_mean, moving_normalized_test_var)
 
-        test_var = normalized_test_var * np.power(self.V_range , 2) 
-        test_mean = self.inverse_normalization_transform(normalized_test_mean)
+        # inverse the normalization procedure for mean value and variance.
+        test_var = self.Normalizer.inverse_normalize_noise_var(normalized_test_var)
+        test_mean = self.Normalizer.inverse_normalization_transform(normalized_test_mean)
 
         V = test_mean[:, 0]
         grad_q = test_mean[:, 1:]  # gradient dV/dq.
         
         # transform gradient from internal coordinate back to cartesian coordinate. 
-        grad_x = self.coordinate_transformer.transform_internal_g_h_to_cartesian_g_h(test_x, grad_q, hessian_bool = False)
+        grad_x = self.coordinate_transformer.transform_internal_gradient_to_cartesian_gradient(test_x, grad_q)
 
         var_V = test_var[:, 0]
         var_grad_q = test_var[:, 1:]
@@ -757,12 +777,12 @@ class GPModelWithDerivativesWrapper():
         new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(new_train_x)
 
         # gradient of potential in internal coordinate
-        new_train_grad_q = self.coordinate_transformer.transform_cartesian_g_h_to_internal_g_h(new_train_x, new_train_grad_x, hessian_bool = False)
+        new_train_grad_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(new_train_x, new_train_grad_x)
         assert np.shape(new_train_grad_q)[1] == self.input_dim, "train_grad_q for internal coordiante has wrong dimension"
         new_train_targets = np.concatenate([ new_train_V[:,np.newaxis], new_train_grad_q ], axis = 1)
 
         # normalize the new_train_targets
-        normalized_new_train_targets = self.normalization_transform(new_train_targets)
+        normalized_new_train_targets = self.Normalizer.normalization_transform(new_train_targets)
 
         # For the case we have to fix certain dofs
         moving_new_train_inputs, moving_new_train_targets = self.FixingDofs.transform_training_data_to_free_moving_dofs(new_train_inputs, normalized_new_train_targets)
@@ -839,7 +859,7 @@ class GPModelWithDerivativesWrapper():
     
     def get_free_moving_internal_coordinate(self, beads_x):
         '''
-        get the free moving internal coordinates q.
+        transform from Cartesian coordinate x to the free moving internal coordinates q.
         '''
         beads_internal_coordinate = self.coordinate_transformer.get_internal_coordinate_q(beads_x)
         
