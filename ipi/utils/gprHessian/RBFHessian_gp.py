@@ -17,7 +17,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                  training_data_hessian_data_point_index: torch.Tensor, hessian_fixdofs: torch.Tensor,
                  gpr_SE_kernel_number : int,
                  kernel_outputscale: np.ndarray, kernel_lengthscale_ratio: np.ndarray,
-                 likelihood_pot_noise: np.ndarray, likelihood_force_noise: np.ndarray, likelihood_hessian_noise: np.ndarray):
+                 likelihood_pot_noise_var: np.ndarray, likelihood_force_noise_var: np.ndarray, likelihood_hessian_noise_var: np.ndarray):
         '''
         :param: gpr_SE_kernel_number: number of squared exponential kernel for GPR model.
         :param: kernel_outputscale: numpy array, shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
@@ -44,7 +44,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         assert len(train_targets) == target_len, "the length of target data is wrong."
         
         # set the likelihood function 
-        likelihood = self._set_likelihood_noise_prior(train_inputs, likelihood_pot_noise, likelihood_force_noise, likelihood_hessian_noise)
+        likelihood = self._set_likelihood_noise_prior(train_inputs, likelihood_pot_noise_var, likelihood_force_noise_var, likelihood_hessian_noise_var)
 
         super(GPModelWithHessians, self).__init__(train_inputs, train_targets, likelihood)
 
@@ -86,7 +86,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs (we only provides the ratio).
             # this is bad for cross validation, but for simply training model, it works fine.
             train_inputs_range = torch.max(train_inputs, dim= 0).values - torch.min(train_inputs , dim= 0).values 
-            length_scale = torch.from_numpy(kernel_lengthscale_ratio[i]) * train_inputs_range 
+            length_scale = kernel_lengthscale_ratio[i] * train_inputs_range 
             length_gamma_beta = torch.div(length_gamma_alpha, length_scale)
 
             output_scale = kernel_outputscale[i]
@@ -125,7 +125,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             self.covar_module = self.covar_module + self.covar_module_component_list[i]
 
     def _set_likelihood_noise_prior(self, train_inputs,
-                                    likelihood_pot_noise, likelihood_force_noise, likelihood_hessian_noise):
+                                    likelihood_pot_noise_var, likelihood_force_noise_var, likelihood_hessian_noise_var):
         '''
         set the prior and constraint for the likelihood noise.
         '''
@@ -137,13 +137,10 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         hessian_triu_size = int((nactive + 1) * nactive / 2)
 
         # First: check the shape of the potential noise and force noise 
-        assert likelihood_pot_noise.shape[0] == 1, "the shape of potential noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_pot_noise.shape[0], 1)
-        assert likelihood_force_noise.shape[0] == ard_num_dims, "the shape of the force noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_force_noise.shape[0], ard_num_dims)
-        assert likelihood_hessian_noise.shape[0] == hessian_triu_size, "the shape of hessian noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_hessian_noise.shape[0], hessian_triu_size)
+        assert likelihood_pot_noise_var.shape[0] == 1, "the shape of potential noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_pot_noise.shape[0], 1)
+        assert likelihood_force_noise_var.shape[0] == ard_num_dims, "the shape of the force noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_force_noise.shape[0], ard_num_dims)
+        assert likelihood_hessian_noise_var.shape[0] == hessian_triu_size, "the shape of hessian noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_hessian_noise.shape[0], hessian_triu_size)
 
-        likelihood_pot_noise_var = np.power(likelihood_pot_noise, 2)
-        likelihood_force_noise_var = np.power(likelihood_force_noise, 2)
-        likelihood_hessian_noise_var = np.power(likelihood_hessian_noise, 2)
 
         # pot noise prior and pot noise constraint
         pot_noise_mean = torch.from_numpy(likelihood_pot_noise_var)
@@ -341,6 +338,8 @@ def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(
     train_counts = 0 
     train_counts_output = 20
 
+    loss_value_list = []
+
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor 
         optimizer.zero_grad()   
@@ -355,6 +354,7 @@ def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(
         loss_func_change = np.abs(loss_value - old_loss_value)
         old_loss_value = loss_value 
 
+        loss_value_list.append(loss_value)
         # back propagation the loss function to compute the gradient of each parameter 
         loss.backward()
         

@@ -7,9 +7,9 @@ import torch
 import numpy as np 
 import gpytorch 
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
-from gprHessian.RBFHessian_gp import GPModelWithHessians
-from gprHessian.RBFHessian_utils import take_upper_triangular_part, transform_1d_train_targets_into_pots_grads_hessians
-import gprHessian.RBFHessian_gp
+from .gprHessian.RBFHessian_gp import GPModelWithHessians
+from .gprHessian.RBFHessian_utils import take_upper_triangular_part, transform_1d_train_targets_into_pots_grads_hessians
+import ipi.utils.gprHessian.RBFHessian_gp
 
 class TransformTrainingTarget(object):
     '''
@@ -134,6 +134,8 @@ class FixInternalDofs(object):
             self.free_moving_dofs = np.arange(self.input_dim)
             self.grads_fixed_dofs = np.array([])
         
+        self.free_moving_dofs_2d_index = np.meshgrid(self.free_moving_dofs, self.free_moving_dofs, indexing= 'ij')
+        
     def transform_training_inputs_to_free_moving_dofs(self, train_inputs: np.ndarray):
         '''
         delete fixdofs from training inputs.
@@ -148,11 +150,22 @@ class FixInternalDofs(object):
         '''
         moving_grads = grads[:, self.free_moving_dofs]
         if len(hessians) > 0:
-            moving_hessians = hessians[:, self.free_moving_dofs, self.free_moving_dofs]
+            index_2d = self.free_moving_dofs_2d_index
+            moving_hessians = hessians[:, index_2d[0], index_2d[1]]
         else:
             moving_hessians = hessians 
 
         return moving_grads, moving_hessians 
+
+    def transform_grad_and_hessian_noise_to_free_moving_dofs(self, grad_noise: np.ndarray, hessian_noise: np.ndarray):
+        '''
+        delete fixdofs from the gradient and hessian noise matrix
+        '''
+        grad_noise_moving_dof = grad_noise[self.free_moving_dofs]
+        index_2d = self.free_moving_dofs_2d_index
+        hessian_noise_moving_dof = hessian_noise[index_2d[0], index_2d[1]]
+        
+        return grad_noise_moving_dof, hessian_noise_moving_dof
     
     def transform_from_free_moving_dofs_to_full_dofs(self, test_moving_grads, test_moving_hessians):
         '''
@@ -169,9 +182,11 @@ class FixInternalDofs(object):
         if len(self.fixed_internal_dofs) != 0: 
             test_grads[:,self.fixed_internal_dofs]  = test_grads_fixed_dofs
 
+        test_data_with_hessian_num = test_moving_hessians.shape[0]
         # the prediction of hessian data in all dofs
-        test_hessians = np.zeros([test_data_num, self.input_dim, self.input_dim])
-        test_hessians[:, self.free_moving_dofs, self.free_moving_dofs] = test_moving_hessians 
+        test_hessians = np.zeros([test_data_with_hessian_num, self.input_dim, self.input_dim])
+        index_2d = self.free_moving_dofs_2d_index
+        test_hessians[:, index_2d[0], index_2d[1]] = test_moving_hessians 
 
         return test_grads, test_hessians 
 
@@ -183,7 +198,7 @@ class GPModelWithHessiansWrapper():
     I wrote addition codes (See utils/gprHessian) to extend the gpytorch packages, so we can predict Hessians.
     '''
     def __init__(self, train_x: np.ndarray , train_V: np.ndarray, train_grad_x: np.ndarray, 
-                 train_hessians_x: np.ndarray, training_data_hessian_data_point_index: np.ndarray,
+                 train_hessian_x: np.ndarray, training_data_hessian_data_point_index: np.ndarray,
                  natom: int, 
                  coordinate_transformer: non_redundant_coordinate_transformer,
                  gpr_SE_kernel_number: int, kernel_outputscale: np.ndarray, kernel_lengthscale_ratio: np.ndarray,
@@ -206,16 +221,19 @@ class GPModelWithHessiansWrapper():
         hessian_fixdofs = np.array([])
         assert np.shape(train_x)[1] == 3 * natom, "dim of coordinates for input data is not 3 * natom, this is wrong. train_x data shape: {} , 3 * natom: {}".format(np.reshape(train_x)[1], 3 * natom)
         assert np.shape(train_grad_x)[1] == 3 * natom, "dim of gradients for input data is not 3 * natom, this is wrong. train_grad shape:{}, 3 * natom: {}".format(np.shape(train_grad_x)[1], 3 * natom)
-        assert np.shape(train_hessians_x)[0] == M_H, "number of data points (M_H) with hessian information is not consistent with training_data_hessian_data_point_index. M_H from train_hessians: {}, M_H from hessian_data_point_index: {}".format(np.shape(train_hessians_x)[0], M_H)
+        assert np.shape(train_hessian_x)[0] == M_H, "number of data points (M_H) with hessian information is not consistent with training_data_hessian_data_point_index. M_H from train_hessians: {}, M_H from hessian_data_point_index: {}".format(np.shape(train_hessian_x)[0], M_H)
 
         self.natom = natom
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
         self.coordinate_transformer = coordinate_transformer
 
+        # symmetric the hessian
+        train_hessian_x_symmetrized = (np.transpose(train_hessian_x, (0, 2, 1)) + train_hessian_x) / 2
+
         # record the potential, gradient and hessians in Cartesian coordinate.
         self.train_V = np.copy(train_V)
         self.train_cartesian_gradient = np.copy(train_grad_x)
-        self.train_cartesian_hessian = np.copy(train_hessians_x)
+        self.train_cartesian_hessian = np.copy(train_hessian_x_symmetrized)
         self.training_data_hessian_data_point_index = np.copy(training_data_hessian_data_point_index)
         self.train_cartesian_input = np.copy(train_x)
 
@@ -231,7 +249,7 @@ class GPModelWithHessiansWrapper():
         if len(training_data_hessian_data_point_index) > 0:
             train_hessian_q = coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(train_x[training_data_hessian_data_point_index],
                                                                                                     train_grad_x[training_data_hessian_data_point_index],
-                                                                                                    train_hessians_x)
+                                                                                                    train_hessian_x_symmetrized)
         else:
             train_hessian_q = np.array([])
 
@@ -252,7 +270,7 @@ class GPModelWithHessiansWrapper():
         self.FixingDofs = FixInternalDofs(train_inputs, normalized_train_grad_q)
         moving_train_inputs = self.FixingDofs.transform_training_inputs_to_free_moving_dofs(train_inputs)
         moving_normalized_train_grad_q, moving_normalized_train_hessian_q = self.FixingDofs.transform_training_targets_to_free_moving_dofs(normalized_train_grad_q, normalized_train_hessians_q)
-        force_noise_var, hessian_noise_var = self.FixingDofs.transform_training_targets_to_free_moving_dofs(force_noise_var, hessian_noise_var)  # filter the fixed dofs for force and hessian noise.
+        force_noise_var, hessian_noise_var = self.FixingDofs.transform_grad_and_hessian_noise_to_free_moving_dofs(force_noise_var, hessian_noise_var)  # filter the fixed dofs for force and hessian noise.
 
         # transform pots, gradients and hessisans in to 1d data. After normalize the training data and exclude fixed dof in gradient and hessian data.
         free_moving_input_dims = len(self.FixingDofs.free_moving_dofs)
@@ -276,7 +294,7 @@ class GPModelWithHessiansWrapper():
                                              pot_noise_var, force_noise_var, hessian_noise_var)
         
         # train the gaussian process regression model.
-        gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
+        ipi.utils.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
         
 
     def transform_cartesian_noise_to_gpr_model_noise(self, noise_std):
@@ -293,7 +311,7 @@ class GPModelWithHessiansWrapper():
         singular_value_square_inverse = 1 / self.Bmatrix_singular_value_square  # S^{-2}. inverse and square of singular value of Wilson's B matrix.
 
         # compute the noise in internal coordinate.
-        pot_noise_var = np.power(pot_noise_std, 2)
+        pot_noise_var = np.array([np.power(pot_noise_std, 2)]) 
         force_noise_var = np.power(force_noise_std_cartesian, 2) * singular_value_square_inverse
         # take upper triangular part of hessian as hessian noise.
         hessian_noise_var = np.power(hessian_noise_std_cartesian, 2) * np.outer(singular_value_square_inverse, singular_value_square_inverse)  
@@ -301,7 +319,8 @@ class GPModelWithHessiansWrapper():
 
         return pot_noise_var, force_noise_var, hessian_noise_var 
 
-    def predict_latent_function(self, test_x: np.ndarray, test_hessian_data_point_index: np.ndarray, internal_coordinate_bool = False):
+    def predict_latent_function(self, test_x: np.ndarray, 
+                                test_hessian_data_point_index: np.ndarray, internal_coordinate_bool = False):
         '''
         compute the predicted potential V, gradients dV/dx and hessians d^2 V/dx^2 in Cartesian coordinate.
         Also compute the variance.
@@ -322,7 +341,7 @@ class GPModelWithHessiansWrapper():
         moving_test_q_tensor = torch.from_numpy(moving_test_q)
 
         # use Gaussian process regression model to make prediction
-        pots, moving_grads_q, moving_hessians_q, pots_var, moving_grads_q_var, moving_hessians_q_var = gprHessian.RBFHessian_gp.predict_latent_function_GPHessian(self.gpr_model, moving_test_q_tensor,
+        pots, moving_grads_q, moving_hessians_q, pots_var, moving_grads_q_var, moving_hessians_q_var = ipi.utils.gprHessian.RBFHessian_gp.predict_latent_function_GPHessian(self.gpr_model, moving_test_q_tensor,
                                                                                                                                                test_hessian_data_point_index)
         # back transform the mean value and variance from free moving dofs into full dofs 
         grads_q, hessians_q = self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(moving_grads_q, moving_hessians_q)
@@ -334,7 +353,7 @@ class GPModelWithHessiansWrapper():
 
         # transform the gradient and hessian from internal coordinate to Cartesian coordinate.
         grads_x = self.coordinate_transformer.transform_internal_gradient_to_cartesian_gradient(test_x, grads_q)
-        hessians_x = self.coordinate_transformer.transform_internal_hessian_to_cartesian_hessian(test_x, grads_q, hessians_q)
+        hessians_x = self.coordinate_transformer.transform_internal_hessian_to_cartesian_hessian(test_x[test_hessian_data_point_index], grads_q[test_hessian_data_point_index], hessians_q)
 
         # handle the variance of the gradient & hessians. 
         # the trace of covariance matirx of gradients. This characterize the uncertainty of the force.
@@ -368,10 +387,12 @@ class GPModelWithHessiansWrapper():
         new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(new_train_x)
         # transform the gradient & hessian into internal coordinate 
         new_train_grad_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(new_train_grad_x)
+        
         if len(new_train_hessian_x) > 0:
+            new_train_hessian_x_symmetrized = (np.transpose(new_train_hessian_x, (0, 2, 1)) + new_train_hessian_x) / 2
             new_train_hessian_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(new_train_x[new_hessian_data_point_index], 
                                                                                                           new_train_grad_x[new_hessian_data_point_index],
-                                                                                                          new_train_hessian_x)
+                                                                                                          new_train_hessian_x_symmetrized)
         else:
             new_train_hessian_q = np.array([])
         
@@ -379,7 +400,7 @@ class GPModelWithHessiansWrapper():
         self.train_cartesian_input = np.concatenate([ self.train_cartesian_input, new_train_x ], axis= 0)
         self.train_V = np.concatenate([self.train_V, new_train_V])
         self.train_cartesian_gradient = np.concatenate([self.train_cartesian_gradient, new_train_grad_x], axis= 0)
-        self.train_cartesian_hessian = np.concatenate([self.train_cartesian_hessian, new_train_hessian_x], axis= 0)
+        self.train_cartesian_hessian = np.concatenate([self.train_cartesian_hessian, new_train_hessian_x_symmetrized], axis= 0)
 
         training_data_num = np.shape(self.train_cartesian_input)[0]
         new_hessian_data_point_index_in_full_data_set = new_hessian_data_point_index + training_data_num
@@ -405,7 +426,7 @@ class GPModelWithHessiansWrapper():
         new_hessian_data_point_index_tensor = torch.from_numpy(new_hessian_data_point_index)
 
         # update the Gaussian Process Regression model with new data.
-        gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(self.gpr_model, new_train_inputs_tensor, 
+        ipi.utils.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(self.gpr_model, new_train_inputs_tensor, 
                                                                       new_train_targets_tensor, 
                                                                       new_hessian_data_point_index_tensor)
 

@@ -10,7 +10,7 @@ from typing import Callable, Dict, Iterable, Optional, Tuple, Union
 from gpytorch.priors import Prior
 from gpytorch.constraints import Interval, Positive
 
-from RBFHessian_utils import take_upper_triangular_part
+from .RBFHessian_utils import take_upper_triangular_part
 
 def postprocess_rbf(dist_mat):
     dist_mat_ = torch.clone(dist_mat)

@@ -258,7 +258,7 @@ def get_hessian(
 ):
     """
     Adapted from hesstool.py
-    Compute the physical hessian given a function to evaluate energy and forces (gm).
+    Compute hessian as finite difference of force. 
     The intermediate steps are written as a temporary files so the full hessian calculations is only ONE step.
 
     IN     rp_beads: bead object for ring polymer

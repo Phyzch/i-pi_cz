@@ -297,3 +297,24 @@ def bisect_dt_gpr(dt_right, dt_left, old_y, t, param, target_dr):
             dt_left = dt 
     
     return dt, new_y 
+
+def compute_frobenius_norm(input_matrix: np.array):
+    '''
+    compute the frobenius norm of the matrix.
+    '''
+    # make the matrix has 3 dimensions
+    if len(np.shape(input_matrix)) == 2:
+        matrix = input_matrix[np.newaxis, :, :]
+    elif len(np.shape(input_matrix)) == 3:
+        matrix = input_matrix
+    else:
+        raise "the shape of matrix for computing frobenius norm has to have 2 or 3 dimensions"
+    
+    matrix_transpose = np.transpose(matrix, (0, 2, 1))
+    frobenius_norm = np.sqrt(np.trace(np.matmul(matrix_transpose, matrix), axis1= 1, axis2= 2))
+
+    if len(np.shape(input_matrix)) == 2:
+        # for 2d matrix, we return its frobenius norm (scalar)
+        frobenius_norm = frobenius_norm[0]
+    
+    return frobenius_norm

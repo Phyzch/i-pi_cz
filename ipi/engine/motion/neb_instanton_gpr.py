@@ -31,6 +31,9 @@ from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
 import ipi.utils.nebinstool
+import ipi.utils.gpr_hessian_tools
+from ipi.utils.nebinstgprtool import compute_frobenius_norm
+
 from timeit import default_timer as timer
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
@@ -323,11 +326,6 @@ class MAPNEBGPRMover(Motion):
         train_grad = - np.copy(dstrip(self.forces.f))
         # count the # of ab-initio calculation we have done.
         self.ab_initio_bead_calculation_number = self.ab_initio_bead_calculation_number + self.beads.nbeads
-        
-        # store the initial training_data: potential V and forces f.
-        # train_V_to_store = train_V + self.optarrays["energy_shift"]
-        # train_f_to_store = - train_grad 
-
         return train_x, train_V, train_grad 
     
     def read_initial_training_data(self):
@@ -1400,6 +1398,11 @@ class RP_MAP(object):
         self.gpr_model = nebmover.gpr_model
         self.coordinate_transformer = nebmover.coordinate_transformer
 
+        # bind the gpr kernel condition
+        self.gpr_kernel_outputscale =  nebmover.optarrays["gpr_kernel_outputscale"]
+        self.gpr_kernel_lengthscale_ratio = nebmover.optarrays["gpr_kernel_lengthscale_ratio"]
+        self.gpr_noise_std = nebmover.optarrays["gpr_noise_std"] 
+
         # bind the error criterion of the gpr model
         self.gpr_relative_force_error_criterion = nebmover.optarrays["gpr_relative_force_error_criterion"]
         self.gpr_absolute_force_error_criterion = nebmover.optarrays["gpr_absolute_force_error_criterion"]
@@ -1451,13 +1454,6 @@ class RP_MAP(object):
         self.instanton_temp = 1 / self.imag_time_period  # temperature of instanton path.
         info("finish evolution of dynamics along Minimum action path, the period of motion is : {} " + str(self.imag_time_period) )
 
-        # for debug.
-        # print("list of time for dynamic evolution of each time step: " + str(t_list) )
-        # print("\n")
-        # print("list of distance along path for dynamics evolution of each time step: " + str(r_list) )
-        # print("\n")
-        # print("acceleration amplitude :  " + str(a_norm) )
-        # print("\n")
         print("potential of points (eV): " + str(pot_list) )
         print("\n")
         print("kinetic energy (eV): " + str( kinetic_energy_list ))
@@ -1645,15 +1641,10 @@ class RP_MAP(object):
         compute hessian of ring polymer
         '''
         if self.final_hessian_bool:
-            # compute final hessian.
-
-            # create bead and forces object for computing hessian.
-            hess_rp_beads = self.rp_beads.copy() 
-            hess_forces = self.rp_forces.copy(hess_rp_beads, self.dcell)
-
+            # compute final hessians
             self.rp_hessian = ipi.utils.nebinstool.get_hessian(
-                hess_rp_beads,
-                hess_forces,
+                self.rp_beads,
+                self.rp_forces,
                 self.rp_beads.q,
                 self.rp_beads.natoms,
                 self.rp_beads.nbeads,
@@ -1664,7 +1655,7 @@ class RP_MAP(object):
         '''
         Add training data to GPR model and optimize hyper-parameters to make sure the GPR model generate accurate force along LI-NEB path to have correct temperature
         This is achieved by cross-validation technique:
-        (1) Generate 100 data points along the LI-NEB path using cubic interpolation
+        (1) Generate 50 data points along the LI-NEB path using cubic interpolation
         (2) Randomly choose 10 data points from them as test data 
         (3) Use GPR model to predict the force, compute the force error
         (4) Add more training data into the training set until the force error is small on testing data: 
@@ -1696,7 +1687,7 @@ class RP_MAP(object):
         ab_initio_test_data_f_magnitude = np.linalg.norm(ab_initio_test_data_f, axis= 1)  # magnitude of the ab initio force
 
         # make predictions of forces using GPR model.
-        _, gpr_test_grad, _, _ =self.gpr_model.predict_latent_function(test_x)
+        _, gpr_test_grad, _, _ = self.gpr_model.predict_latent_function(test_x)
         gpr_test_f = - gpr_test_grad 
 
         test_f_diff = gpr_test_f - ab_initio_test_data_f 
@@ -1787,13 +1778,63 @@ class RP_MAP(object):
         self.interpolate_ring_polymer_beads(t_list, v_list, x_list)
 
         # compute hessian of ring polymers
-        # TODO: Need to figure out how to Gaussian Process Regression to predict the Hessian.
+        # Need to figure out how to Gaussian Process Regression to predict the Hessian.
         self.compute_ring_polymer_hessian()
+
+        # TODO: code to test the GPModelWithHessianWrapper
+        self.test_gpr_hessian_prediction()
     
- 
+    def test_gpr_hessian_prediction(self):
+        '''
+        test gaussian process regression model that predict hessian.
+        '''
+        # collect gradient, force & hessian data to initialize the gpr
+        cartesian_x = self.gpr_model.train_cartesian_inputs
+        pots = self.gpr_model.train_cartesian_targets[:,0]
+        gradients = self.gpr_model.train_cartesian_targets[:, 1:]
+        gpr_model_training_data_num = len(cartesian_x)
 
+        # choose half data point as hessian training data
+        nbeads = self.rp_beads.nbeads
+        natoms = self.rp_beads.natoms
+        hessian_data_point_index = np.arange(0, nbeads, 2)
+        # Previous shape: [3 * natoms, nbeads * 3 * natoms].
+        # change the shape of hessian to [nbeads, 3 * natoms, 3 * natoms]
+        hessians_full = np.transpose(np.reshape(self.rp_hessian, [3 * natoms, nbeads, 3 * natoms]), (1, 0, 2))
+        hessians = hessians_full[hessian_data_point_index]
+        cartesian_x_with_hessian = self.rp_beads.q
+        pots_with_hessian = self.rp_forces.pots - self.energy_shift
+        gradients_with_hessian = - dstrip(self.rp_forces.f).copy() 
 
+        cartesian_x = np.concatenate([cartesian_x, cartesian_x_with_hessian], axis= 0)
+        pots = np.concatenate([pots, pots_with_hessian])
+        gradients = np.concatenate([gradients, gradients_with_hessian], axis= 0)
+        hessian_data_point_index_full_array = hessian_data_point_index + gpr_model_training_data_num
 
+        self.gpr_hessian_model = ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(cartesian_x, pots, gradients,
+                                                                                      hessians, hessian_data_point_index_full_array,
+                                                                                      natoms, self.coordinate_transformer,
+                                                                                      self.gpr_model.gpr_SE_kernel_number,
+                                                                                      self.gpr_kernel_outputscale, self.gpr_kernel_lengthscale_ratio, 
+                                                                                      self.gpr_noise_std)
+        
+        # test the prediction of hessian. 
+        # We choose the rp_beads with hessian information but not in the GPR model 
+        # test_hessian_data_point_index = np.arange(1, nbeads, 2)
+        # training data case:
+        test_hessian_data_point_index = hessian_data_point_index
+        test_x = cartesian_x_with_hessian
+        ab_initio_test_hessians = hessians_full[test_hessian_data_point_index]
+
+        predicted_pots, predicted_grads, predicted_hessians, _, _, _ = self.gpr_hessian_model.predict_latent_function(test_x, 
+                                                                                                                      test_hessian_data_point_index)
+
+        hessian_diff = predicted_hessians - ab_initio_test_hessians 
+        ab_initio_frobenius_norm = compute_frobenius_norm(ab_initio_test_hessians)
+        hessian_diff_frobenius_norm = compute_frobenius_norm(hessian_diff)
+        hessian_diff_frobenius_norm_ratio = ab_initio_frobenius_norm / hessian_diff_frobenius_norm
+
+        print("the relative error in terms of frobenius norm for hessians are: " + str(hessian_diff_frobenius_norm_ratio))
 
     
 

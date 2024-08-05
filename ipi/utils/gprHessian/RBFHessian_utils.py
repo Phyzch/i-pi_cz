@@ -27,7 +27,7 @@ def transform_1d_train_targets_into_pots_grads_hessians(train_targets: torch.Ten
     triu_indices = torch.triu_indices(nactive, nactive)
     triu_1d_indices = triu_indices[0] * nactive + triu_indices[1]
 
-    upper_triangular_hessians = torch.zeros([*batch_shape, M_H, nactive * nactive])
+    upper_triangular_hessians = torch.zeros([*batch_shape, M_H, nactive * nactive], dtype = hessian_triu.dtype)
     upper_triangular_hessians[..., triu_1d_indices] = hessian_triu 
     upper_triangular_hessians = torch.reshape(upper_triangular_hessians, [*batch_shape, M_H, nactive, nactive])
 
