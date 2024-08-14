@@ -32,7 +32,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         M_H = len(training_data_hessian_data_point_index)
         M = train_inputs.shape[-2]
 
-        mvn = self.likelihood(train_prior_dist, M, M_H)  # probability distribution of trained_y 
+        mvn = self.likelihood(train_prior_dist, M, training_data_hessian_data_point_index)  # probability distribution of trained_y 
         self.lik_train_train_covar = mvn.lazy_covariance_matrix  # K(X,X) + sigma^2 I 
         self.train_mean = mvn.loc # mean value of prediction of GPR 
 
@@ -145,7 +145,8 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
         test_target_pots_index = torch.arange(start= M1, end= M1 + M2)
         test_target_grads_index = torch.arange(start= (M1 + M2) + M1 * d, end= (M1+ M2) * (d + 1))
-        test_target_hessian_index = torch.arange(start= (M1 + M2) * (d + 1) + MH_1 * hessian_triu_size, end= (M1 + M2) * (d + 1) + (MH_1 + MH_2) * hessian_triu_size)
+        test_target_hessian_index = torch.arange(start= (M1 + M2) * (d + 1) + MH_1 * hessian_triu_size, 
+                                                 end= (M1 + M2) * (d + 1) + (MH_1 + MH_2) * hessian_triu_size)
         test_target_index = torch.concat( (test_target_pots_index, test_target_grads_index, test_target_hessian_index), dim= -1 )
         
         test_mean = torch.index_select(joint_mean, dim= -1, index= test_target_index)

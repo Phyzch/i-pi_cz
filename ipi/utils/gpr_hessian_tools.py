@@ -157,15 +157,36 @@ class FixInternalDofs(object):
 
         return moving_grads, moving_hessians 
 
-    def transform_grad_and_hessian_noise_to_free_moving_dofs(self, grad_noise: np.ndarray, hessian_noise: np.ndarray):
+    def transform_noise_covar_factor_matrix_fixing_internal_dofs(self, noise_covar_factor):
         '''
-        delete fixdofs from the gradient and hessian noise matrix
+        delete rows corresponding to gradient and hessians of fixed dofs.
         '''
-        grad_noise_moving_dof = grad_noise[self.free_moving_dofs]
-        index_2d = self.free_moving_dofs_2d_index
-        hessian_noise_moving_dof = hessian_noise[index_2d[0], index_2d[1]]
+        input_dim = self.input_dim
+        hessian_triu_size = int((input_dim + 1) * input_dim / 2) 
+        if len(self.fixed_internal_dofs) != 0:
+            row_to_delete_grad = 1 + np.array(self.fixed_internal_dofs)
+
+            # find the upper triangle index that we need to delete 
+            upper_triangle_index_matrix = np.zeros([input_dim, input_dim])
+            for i in range(input_dim):
+                for j in range(i, input_dim):
+                    upper_triangle_index_matrix[i,j] = i * (input_dim - (1 + i) / 2) + j 
+                    upper_triangle_index_matrix[j,i] = upper_triangle_index_matrix[i,j]
+            
+            upper_triangle_index_matrix_free_moving = upper_triangle_index_matrix[self.free_moving_dofs_2d_index[0], self.free_moving_dofs_2d_index[1]]
+            upper_triangle_index_matrix_free_moving = take_upper_triangular_part(upper_triangle_index_matrix_free_moving)
+            upper_triangle_index_matrix_free_moving = np.vectorize(int)(upper_triangle_index_matrix_free_moving)
+            fixed_hessian_triu_index = np.delete(np.arange(hessian_triu_size), upper_triangle_index_matrix_free_moving)
+            row_to_delete_hessian_triu_index = fixed_hessian_triu_index + 1 + input_dim 
+
+            # delete rows that corresponds to gradient and hessian of fixed dofs.
+            row_to_delete = np.concatenate([row_to_delete_grad, row_to_delete_hessian_triu_index])
+            noise_covar_factor = np.delete(noise_covar_factor, row_to_delete, axis= 0)
+            return noise_covar_factor
+        else:
+            return noise_covar_factor
         
-        return grad_noise_moving_dof, hessian_noise_moving_dof
+        
     
     def transform_from_free_moving_dofs_to_full_dofs(self, test_moving_grads, test_moving_hessians):
         '''
@@ -259,8 +280,10 @@ class GPModelWithHessiansWrapper():
         self.train_hessian_q = train_hessian_q 
 
         # Transform the noise from Cartesian dofs into internal dofs.
-        pot_noise_var, force_noise_var, hessian_noise_var = self.transform_cartesian_noise_to_gpr_model_noise(noise_std)
-        
+        pot_noise_var, force_noise_var, hessian_noise_var, noise_covar_factor = self.set_noise_covar_factor_for_gpr_model(noise_std, train_hessian_q)
+        force_noise_rank = 3 * natom 
+        hessian_noise_rank = int((3 * natom) * (3 * natom + 1) / 2)
+
         # Normalize 
         self.Normalizer = NormalizeTrainingData(train_V)
         normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q = self.Normalizer.normalization_transform(train_V, train_grad_q, train_hessian_q)
@@ -270,7 +293,7 @@ class GPModelWithHessiansWrapper():
         self.FixingDofs = FixInternalDofs(train_inputs, normalized_train_grad_q)
         moving_train_inputs = self.FixingDofs.transform_training_inputs_to_free_moving_dofs(train_inputs)
         moving_normalized_train_grad_q, moving_normalized_train_hessian_q = self.FixingDofs.transform_training_targets_to_free_moving_dofs(normalized_train_grad_q, normalized_train_hessians_q)
-        force_noise_var, hessian_noise_var = self.FixingDofs.transform_grad_and_hessian_noise_to_free_moving_dofs(force_noise_var, hessian_noise_var)  # filter the fixed dofs for force and hessian noise.
+        noise_covar_factor = self.FixingDofs.transform_noise_covar_factor_matrix_fixing_internal_dofs(noise_covar_factor)
 
         # transform pots, gradients and hessisans in to 1d data. After normalize the training data and exclude fixed dof in gradient and hessian data.
         free_moving_input_dims = len(self.FixingDofs.free_moving_dofs)
@@ -283,6 +306,7 @@ class GPModelWithHessiansWrapper():
         hessian_data_point_index_tensor = torch.from_numpy(training_data_hessian_data_point_index)
         train_targets_tensor = torch.from_numpy(train_targets)
         hessian_fixdofs_tensor = torch.tensor([])
+        noise_covar_factor = torch.from_numpy(noise_covar_factor)
 
         # initialize the gaussian process regression model with input training data. 
         # GPModelWithHessians are Gaussian Process Regression model that capable of using hessian as training data and also predicting hessians.
@@ -291,33 +315,85 @@ class GPModelWithHessiansWrapper():
                                              hessian_data_point_index_tensor, hessian_fixdofs_tensor,
                                              gpr_SE_kernel_number,
                                              kernel_outputscale, kernel_lengthscale_ratio,
-                                             pot_noise_var, force_noise_var, hessian_noise_var)
+                                             pot_noise_var, force_noise_var, hessian_noise_var,
+                                             force_noise_rank, hessian_noise_rank, noise_covar_factor)
         
         # train the gaussian process regression model.
         ipi.utils.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
         
 
-    def transform_cartesian_noise_to_gpr_model_noise(self, noise_std):
+    def set_noise_covar_factor_for_gpr_model(self, noise_std, train_hessian_q):
         '''
-        transform the noise in Cartesian coordinate to noise in Gaussian Process Regression model.
+        Compute the covar factor for RBFHessian_gaussian_likelihood.
+        The covariance factor will transform the noise in Cartesian coordinate to noise in internal coordinate.
         This is critical to the successful training of GPR model, otherwise, the model will treat the noise incorrectly & training will fail.
         '''
         pot_noise_std = noise_std["pot_noise_prior"]
         force_noise_std_cartesian = noise_std["force_noise_prior"]
         hessian_noise_std_cartesian = noise_std["hessian_noise_prior"]
 
-        # force noise and hessian noise has to be scaled by the inverse of the singular value of Wilson's B matrix.
+        #TODO: Need to consider the covariance between gradient and hessian & also covariance of hessian itself.
+        #TODO: See J. Chem. Theory Comput. 2024, 20, 3766−3778  eq.(13). We need back transformation of noise matrix into internal coordinate. 
+        #TODO: The noise matrix transform like covariance matrix K, see eq.(17). To correctly treat this problem, 
+        #TODO: you either transform covariance matrix from internal coordinate into internal coordinate.
+        #TODO: Or transform potential, force, Hessian and noise matrix into internal coordinate.
+        # compute the noise_covar_factor 
         self.Bmatrix_singular_value_square = np.power(self.coordinate_transformer.ref_S, 2)
-        singular_value_square_inverse = 1 / self.Bmatrix_singular_value_square  # S^{-2}. inverse and square of singular value of Wilson's B matrix.
 
-        # compute the noise in internal coordinate.
-        pot_noise_var = np.array([np.power(pot_noise_std, 2)]) 
-        force_noise_var = np.power(force_noise_std_cartesian, 2) * singular_value_square_inverse
-        # take upper triangular part of hessian as hessian noise.
-        hessian_noise_var = np.power(hessian_noise_std_cartesian, 2) * np.outer(singular_value_square_inverse, singular_value_square_inverse)  
+        # covar_factor [2, 2] term.  inverse transpose of Wilson's B matrix
+        B = self.coordinate_transformer._compute_redundant_gradient_matrix_B(np.array([self.coordinate_transformer.ref_x]))[0] # \partial d / \partial x. shape: [n^2, 3n]
+        # \partial q/ \partial x. shape: [3n -6, 3n]
+        Bq = np.matmul(self.coordinate_transformer.ref_UT, B) # \partial q / \partial x. shape:[3n -6, 3n]
+        # \partial x / partial q. shape: [3n -6, 3n]
+        inverse_Bq_transpose = np.transpose(np.linalg.pinv(Bq, rcond = np.power(10.0, -8)), (1,0))
 
+        q_size = Bq.shape[0]
+        x_size = Bq.shape[1]
+        hessian_q_triu_size = int((q_size * (q_size + 1)) / 2)
+        hessian_x_triu_size = int((x_size * (x_size + 1)) / 2) 
 
-        return pot_noise_var, force_noise_var, hessian_noise_var 
+        # variance of pot noise, force noise and hessian noise in Cartesian coordinate.
+        pot_noise_var = np.array([np.power(pot_noise_std, 2)])
+        force_noise_var = np.ones([x_size]) * np.power(force_noise_std_cartesian, 2)
+        hessian_noise_var = np.ones([x_size, x_size]) * np.power(hessian_noise_std_cartesian, 2)
+
+        # covar_factor [3, 2] term.
+        hessian_x_qq = self.coordinate_transformer.compute_ref_x_hessian_q()  # d^2 x / dq^2. shape:[3n, 3n-6, 3n-6]
+        hessian_x_qq_up_triangle = np.transpose(take_upper_triangular_part(hessian_x_qq), (1,0))  # shape: [(3n-6)(3n-5) / 2, 3n]
+        
+        # covar_factor [3,3] term.
+        inverse_Bq_transpose_tensor = np.transpose(np.tensordot(inverse_Bq_transpose,inverse_Bq_transpose, axes= 0), (0, 2, 1, 3))
+        inverse_Bq_transpose_tensor_diag = np.zeros(inverse_Bq_transpose_tensor.shape)
+        inverse_Bq_transpose_tensor_diag[..., np.arange(x_size), np.arange(x_size)] = np.diagonal(inverse_Bq_transpose_tensor, axis1= 2, axis2= 3)
+        covar_33 = inverse_Bq_transpose_tensor + np.transpose(inverse_Bq_transpose_tensor, (0,1, 3, 2)) - inverse_Bq_transpose_tensor_diag
+        # take upper triangular part
+        covar_33 = take_upper_triangular_part(covar_33)
+        covar_33 = np.transpose(take_upper_triangular_part(np.transpose(covar_33, (2, 0, 1))), (1, 0)) 
+
+        row_size = 1 + q_size + hessian_q_triu_size
+        col_size = 1 + x_size + hessian_x_triu_size 
+
+        # transformation matrix for covariance matrix of noise in internal coordinate (q) and Cartesian coordinate (x)
+        noise_covar_factor = np.zeros([row_size, col_size])
+        # potential part
+        noise_covar_factor[0, 0] = 1 
+        # grad part
+        grad_index_2d = np.meshgrid(1 + np.arange(q_size), 1 + np.arange(x_size) , indexing= 'ij')
+        noise_covar_factor[grad_index_2d[0], grad_index_2d[1]] = inverse_Bq_transpose 
+
+        # grad - hessian covariance part
+        grad_hessian_covar_index_2d = np.meshgrid(1 + q_size + np.arange(hessian_q_triu_size), 1 + np.arange(x_size), indexing= 'ij')
+        noise_covar_factor[grad_hessian_covar_index_2d[0], grad_hessian_covar_index_2d[1]] = hessian_x_qq_up_triangle
+
+        # hessian covariance part
+        hessian_covar_index_2d = np.meshgrid(1 + q_size + np.arange(hessian_q_triu_size), 1 + x_size + np.arange(hessian_x_triu_size), indexing= 'ij')
+        noise_covar_factor[hessian_covar_index_2d[0], hessian_covar_index_2d[1]] = covar_33 
+
+        return pot_noise_var, force_noise_var, hessian_noise_var, noise_covar_factor
+        
+
+        
+        
 
     def predict_latent_function(self, test_x: np.ndarray, 
                                 test_hessian_data_point_index: np.ndarray, internal_coordinate_bool = False):

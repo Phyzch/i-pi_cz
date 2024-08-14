@@ -1819,23 +1819,54 @@ class RP_MAP(object):
                                                                                       self.gpr_noise_std)
         
         # test the prediction of hessian. 
-        # We choose the rp_beads with hessian information but not in the GPR model 
-        # test_hessian_data_point_index = np.arange(1, nbeads, 2)
+
         # training data case:
-        test_hessian_data_point_index = hessian_data_point_index
+        train_hessian_data_point_index = hessian_data_point_index
         test_x = cartesian_x_with_hessian
+        ab_initio_train_hessians = hessians_full[train_hessian_data_point_index]
+
+        ab_initio_train_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(test_x[train_hessian_data_point_index],
+                                                                                                                 gradients_with_hessian[train_hessian_data_point_index],
+                                                                                                                 ab_initio_train_hessians)
+
+        predicted_pots, predicted_train_grads_q, predicted_train_hessian_q, _, _, _ = self.gpr_hessian_model.predict_latent_function(test_x, 
+                                                                                                                      train_hessian_data_point_index,
+                                                                                                                      internal_coordinate_bool= True)
+
+        # hessian_diff = predicted_hessians - ab_initio_test_hessians 
+        # ab_initio_frobenius_norm = compute_frobenius_norm(ab_initio_test_hessians)
+        # hessian_diff_frobenius_norm = compute_frobenius_norm(hessian_diff)
+        # hessian_diff_frobenius_norm_ratio = ab_initio_frobenius_norm / hessian_diff_frobenius_norm
+
+        # print("the relative error in terms of frobenius norm for hessians are: " + str(hessian_diff_frobenius_norm_ratio))
+
+        # test data case
+        test_hessian_data_point_index = np.arange(1, nbeads, 2)
         ab_initio_test_hessians = hessians_full[test_hessian_data_point_index]
 
-        predicted_pots, predicted_grads, predicted_hessians, _, _, _ = self.gpr_hessian_model.predict_latent_function(test_x, 
-                                                                                                                      test_hessian_data_point_index)
+        ab_initio_test_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(test_x[test_hessian_data_point_index],
+                                                                                                                gradients_with_hessian[test_hessian_data_point_index],
+                                                                                                                ab_initio_test_hessians)
 
-        hessian_diff = predicted_hessians - ab_initio_test_hessians 
-        ab_initio_frobenius_norm = compute_frobenius_norm(ab_initio_test_hessians)
-        hessian_diff_frobenius_norm = compute_frobenius_norm(hessian_diff)
-        hessian_diff_frobenius_norm_ratio = ab_initio_frobenius_norm / hessian_diff_frobenius_norm
+        predicted_test_pots, predicted_test_grads_q, predicted_test_hessian_q, _, _, _ = self.gpr_hessian_model.predict_latent_function(test_x, 
+                                                                                                                               test_hessian_data_point_index,
+                                                                                                                               internal_coordinate_bool= True)
+        # for debug
+        free_moving_dofs = np.array([0,3,4,7])
+        free_moving_dofs_2d = np.meshgrid(free_moving_dofs, free_moving_dofs, indexing= 'ij')
+        
+        selected_ab_initio_train_hessian_q = ab_initio_train_hessians_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
+        selected_ab_initio_test_hessian_q = ab_initio_test_hessians_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
+        selected_predicted_train_hessian_q = predicted_train_hessian_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
+        selected_predicted_test_hessian_q = predicted_test_hessian_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
 
-        print("the relative error in terms of frobenius norm for hessians are: " + str(hessian_diff_frobenius_norm_ratio))
+        selected_train_hessian_error = (selected_predicted_train_hessian_q - selected_ab_initio_train_hessian_q) / selected_ab_initio_train_hessian_q
+        selected_train_hessian_error_mean = np.mean(selected_train_hessian_error, axis= 0)
 
+        selected_test_hessian_error = (selected_predicted_test_hessian_q - selected_ab_initio_test_hessian_q) / selected_ab_initio_test_hessian_q
+        selected_test_hessian_error_mean = np.mean(selected_test_hessian_error, axis= 0)
+
+        pass
     
 
 

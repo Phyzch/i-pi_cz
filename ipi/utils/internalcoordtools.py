@@ -357,3 +357,39 @@ class non_redundant_coordinate_transformer():
         H_q = np.matmul(np.matmul(inverse_Bq_T, H_x_part1), inverse_Bq)
 
         return H_q
+    
+    def compute_ref_q_hessian_x(self):
+        '''
+        compute the hessian of internal coordinate q for the reference point. 
+        d^2 q/ dx^2.
+        '''
+        # shape: [n^2, 3n, 3n]
+        hessian_d_xx = self._compute_hessian_d(np.array([self.ref_x]))[0]
+        # shape: [3n, 3n, 3n-6]
+        hessian_q_xx = np.matmul(self.ref_UT[np.newaxis, np.newaxis, :, :], np.transpose(hessian_d_xx, (1,2,0))[..., np.newaxis]).squeeze(-1)
+        # shape: [3n-6, 3n, 3n]
+        hessian_q_xx = np.transpose(hessian_q_xx, (2,0,1))
+        return hessian_q_xx 
+    
+    def compute_ref_x_hessian_q(self):
+        '''
+        compute the hessian of Cartesian coordinate x for the reference point with respect to internal coordinate q.
+        d^2 x/ dq^2
+        '''
+        # d^2 q/ dx^2. shape: [3n-6, 3n, 3n] 
+        hessian_q_xx = self.compute_ref_q_hessian_x()
+        
+        B = self._compute_redundant_gradient_matrix_B(np.array([self.ref_x]))[0] # \partial d / \partial x. shape: [n^2, 3n]
+        
+        # \partial q/ \partial x. shape: [3n -6, 3n]
+        Bq = np.matmul(self.ref_UT, B) # \partial q / \partial x. shape:[3n -6, 3n]
+        # \partial x / partial q. shape: [3n, 3n-6]
+        inverse_Bq = np.linalg.pinv(Bq, rcond = np.power(10.0, -8))
+
+        # now compute d^2 x/ dq^2 = (-1) * (dx /dq) (d^2 q/ dx^2) * (dx/dq) * (dx/dq). shape:[3n-6, 3n-6, 3n-6]. The first index is the index of x in numerator.
+        hessian_q_qq = (-1) * np.matmul(np.transpose(np.matmul(hessian_q_xx, inverse_Bq), (0,2,1)), inverse_Bq)
+        # shape: [3n-6, 3n-6, 3n]
+        hessian_x_qq = np.matmul(inverse_Bq, np.transpose(hessian_q_qq, (1, 2, 0))[..., np.newaxis]).squeeze(-1)
+        hessian_x_qq = np.transpose(hessian_x_qq, (2, 0, 1))
+
+        return hessian_x_qq
