@@ -67,8 +67,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         
         if not has_covar_factor:
             # The case that the noise of potential, force & hessian are independent. 
-            grad_noise_size = ndof 
-            hessian_noise_size = hessian_triu_size 
+            pass
         else:
             # the case that the covariance matrix of the noise of force & hessian is the product of covariance factor. 
             if grad_covar_factor_rank == 0 or hessian_covar_factor_rank == 0:
@@ -76,8 +75,6 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
             self.grad_covar_factor_rank = grad_covar_factor_rank
             self.hessian_covar_factor_rank = hessian_covar_factor_rank
             self.rank = 1 + grad_covar_factor_rank + hessian_covar_factor_rank  # total rank for noise matrix of pot + grad + hessian. 
-            grad_noise_size = grad_covar_factor_rank
-            hessian_noise_size = hessian_covar_factor_rank 
 
             # check the shape of covar_factor_matrix
             self.noise_covar_factor = noise_covar_factor
@@ -99,7 +96,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         # register force noise, the constraint for the force noise & the prior for the force noise 
         # following the convention in gpytorch, here force_noises are variances of noise 
         self.register_parameter(
-            name= "raw_force_noises", parameter= torch.nn.Parameter(torch.zeros(*batch_shape, grad_noise_size))
+            name= "raw_force_noises", parameter= torch.nn.Parameter(torch.zeros(*batch_shape, 1))
         )
         self.register_constraint("raw_force_noises", force_noise_constraint)
         if force_noise_prior is not None:
@@ -108,7 +105,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         # register hessian noises, the constraint for the hessian noise and the prior for the hessian noise 
         # following the convention in gpytorch, here hessian_noises are variances of noise 
         self.register_parameter(
-            name= "raw_hessian_noises", parameter= torch.nn.Parameter(torch.zeros(*batch_shape, hessian_noise_size))
+            name= "raw_hessian_noises", parameter= torch.nn.Parameter(torch.zeros(*batch_shape, 1))
         )
         self.register_constraint("raw_hessian_noises", hessian_noise_constraint)
         if hessian_noise_prior is not None:
@@ -157,8 +154,8 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         if not self.has_covar_factor:
             # The noise matrix is diagonal.
             pot_noises_var = self.pot_noises.repeat([ *([1] * n_batch_dim), M])  # shape: [M]
-            force_noises_var = self.force_noises.repeat([ *([1] * n_batch_dim), M])  # shape: [M * d]
-            hessian_noises_var = self.hessian_noises.repeat([ *([1] * n_batch_dim), M_H])  # shape: [M_H * hessian_triu_size]
+            force_noises_var = self.force_noises.repeat([ *([1] * n_batch_dim), M * self.ndof])  # shape: [M * d]
+            hessian_noises_var = self.hessian_noises.repeat([ *([1] * n_batch_dim), M_H * self.hessian_triu_size])  # shape: [M_H * hessian_triu_size]
             noises_var = torch.concat( (pot_noises_var, force_noises_var, hessian_noises_var), dim= -1)
             matrix_size = M + M * self.ndof + M_H * self.hessian_triu_size 
             noise_covar_matrix = torch.zeros([matrix_size, matrix_size])
@@ -167,8 +164,8 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         else:
             # Covariance matrix of the noise : covar_factor * Diag(pot_noise_var, force_noise_var, hessian_noise_var) * covar_factor
             pot_noises_std = torch.sqrt(self.pot_noises).type(self.noise_covar_factor.dtype)
-            force_noises_std = torch.sqrt(self.force_noises).type(self.noise_covar_factor.dtype)
-            hessian_noises_std = torch.sqrt(self.hessian_noises).type(self.noise_covar_factor.dtype)
+            force_noises_std = torch.sqrt(self.force_noises).repeat([self.grad_covar_factor_rank]).type(self.noise_covar_factor.dtype)
+            hessian_noises_std = torch.sqrt(self.hessian_noises).repeat([self.hessian_covar_factor_rank]).type(self.noise_covar_factor.dtype)
 
             matrix_size = M + M * self.ndof + M_H * self.hessian_triu_size 
             covar_factor_rank_size = M + M * self.grad_covar_factor_rank + M_H * self.hessian_covar_factor_rank
@@ -193,7 +190,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                 grad_column_index = np.arange(0, self.grad_covar_factor_rank) + (M + data_point_index * self.grad_covar_factor_rank)                
 
                 if data_point_index in hessian_data_point_index_array:
-                    hessian_data_point_index = hessian_data_point_index + 1
+                    hessian_data_point_index = int(torch.argwhere(data_point_index == hessian_data_point_index_array)[0][0])
 
                     hessian_row_index = np.arange(0, self.hessian_triu_size) + (M * (self.ndof + 1) + hessian_data_point_index * self.hessian_triu_size)
                     row_index = np.concatenate([ pot_row_index, grad_row_index, hessian_row_index])

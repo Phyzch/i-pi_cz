@@ -2,6 +2,7 @@ from .RBFHessianKernel import RBFKernelHessian
 from .RBFHessianMean import ConstantMeanHessian 
 from .RBFHessian_prediction_strategy import RBFHessianPredictionStrategy
 from .RBFHessian_gaussian_likelihood import RBFHessianGaussianLikelihood
+from .RBFHessian_marginal_log_likelihood import CustomMarginalLogLikelihood
 from .RBFHessian_utils import transform_1d_train_targets_into_pots_grads_hessians
 import torch 
 import gpytorch 
@@ -140,8 +141,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
         # First: check the shape of the potential noise and force noise 
         assert likelihood_pot_noise_var.shape[0] == 1, "the shape of potential noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_pot_noise_var.shape[0], 1)
-        assert likelihood_force_noise_var.shape[0] == likelihood_force_noise_rank, "the shape of the force noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_force_noise_var.shape[0], ard_num_dims)
-        assert likelihood_hessian_noise_var.shape[0] == likelihood_hessian_noise_rank, "the shape of hessian noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_hessian_noise_var.shape[0], hessian_triu_size)
+        assert likelihood_force_noise_var.shape[0] == 1, "the shape of the force noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_force_noise_var.shape[0], 1)
+        assert likelihood_hessian_noise_var.shape[0] == 1, "the shape of hessian noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_hessian_noise_var.shape[0], 1)
 
         assert noise_covar_factor.shape[0] == 1 + ard_num_dims + hessian_triu_size, "the row size of noise_covar_factor is wrong."
         assert noise_covar_factor.shape[1] == 1 + likelihood_force_noise_rank + likelihood_hessian_noise_rank, "the column size of noise_covar_factor is wrong."
@@ -315,7 +316,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             return full_output.__class__(predictive_mean, predictive_covar)
         
 
-def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(10.0, -3), output_training_info = False):
+def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(10.0, -4), output_training_info = False):
     '''
     the function that train the GPR model.
     :param: model: GPR model with Hessian information.
@@ -342,7 +343,8 @@ def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(
 
     # define loss function for GPs. -- we choose the marginal log likelihood
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    mll = CustomMarginalLogLikelihood(likelihood, model)
 
      # initialize loss_func_change and old_loss to enable while loop
     loss_func_change = 1000
@@ -352,6 +354,7 @@ def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(
     train_counts_output = 20
 
     loss_value_list = []
+    loss_prior_list = []
 
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor 
@@ -360,8 +363,11 @@ def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(
         output = model(train_inputs)
         # calculate the loss function. here the returned loss is a torch.tensor.
         loss = - mll(output, train_targets, M, model.training_data_hessian_data_point_index)
-
         loss_value = loss.item() 
+
+        loss_prior = torch.tensor(0.0)
+        loss_prior = - mll._add_other_terms(loss_prior, []) / M
+        loss_prior_list.append(loss_prior.item())
 
         # calculate the change of loss function to decide whether we will stop the loop.
         loss_func_change = np.abs(loss_value - old_loss_value)

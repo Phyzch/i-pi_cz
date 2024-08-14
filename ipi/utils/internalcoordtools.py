@@ -389,7 +389,7 @@ class non_redundant_coordinate_transformer():
         # now compute d^2 x/ dq^2 = (-1) * (dx /dq) (d^2 q/ dx^2) * (dx/dq) * (dx/dq). shape:[3n-6, 3n-6, 3n-6]. The first index is the index of x in numerator.
         hessian_q_qq = (-1) * np.matmul(np.transpose(np.matmul(hessian_q_xx, inverse_Bq), (0,2,1)), inverse_Bq)
         # shape: [3n-6, 3n-6, 3n]
-        hessian_x_qq = np.matmul(inverse_Bq, np.transpose(hessian_q_qq, (1, 2, 0))[..., np.newaxis]).squeeze(-1)
+        hessian_x_qq = np.matmul(np.transpose(hessian_q_qq, (1, 2, 0)), np.transpose(inverse_Bq, (1, 0)))
         hessian_x_qq = np.transpose(hessian_x_qq, (2, 0, 1))
 
         return hessian_x_qq

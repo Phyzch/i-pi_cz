@@ -1794,10 +1794,12 @@ class RP_MAP(object):
         gradients = self.gpr_model.train_cartesian_targets[:, 1:]
         gpr_model_training_data_num = len(cartesian_x)
 
+        #TODO: Add more pot & gradient data point.
+
         # choose half data point as hessian training data
         nbeads = self.rp_beads.nbeads
         natoms = self.rp_beads.natoms
-        hessian_data_point_index = np.arange(0, nbeads, 2)
+        hessian_data_point_index = np.sort(np.concatenate([np.arange(0, nbeads, 3), np.arange(1, nbeads, 3)]))
         # Previous shape: [3 * natoms, nbeads * 3 * natoms].
         # change the shape of hessian to [nbeads, 3 * natoms, 3 * natoms]
         hessians_full = np.transpose(np.reshape(self.rp_hessian, [3 * natoms, nbeads, 3 * natoms]), (1, 0, 2))
@@ -1841,7 +1843,7 @@ class RP_MAP(object):
         # print("the relative error in terms of frobenius norm for hessians are: " + str(hessian_diff_frobenius_norm_ratio))
 
         # test data case
-        test_hessian_data_point_index = np.arange(1, nbeads, 2)
+        test_hessian_data_point_index = np.delete(np.arange(0, nbeads), train_hessian_data_point_index)
         ab_initio_test_hessians = hessians_full[test_hessian_data_point_index]
 
         ab_initio_test_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(test_x[test_hessian_data_point_index],
@@ -1852,7 +1854,7 @@ class RP_MAP(object):
                                                                                                                                test_hessian_data_point_index,
                                                                                                                                internal_coordinate_bool= True)
         # for debug
-        free_moving_dofs = np.array([0,3,4,7])
+        free_moving_dofs = self.gpr_model.FixingDofs.free_moving_dofs
         free_moving_dofs_2d = np.meshgrid(free_moving_dofs, free_moving_dofs, indexing= 'ij')
         
         selected_ab_initio_train_hessian_q = ab_initio_train_hessians_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
@@ -1866,7 +1868,20 @@ class RP_MAP(object):
         selected_test_hessian_error = (selected_predicted_test_hessian_q - selected_ab_initio_test_hessian_q) / selected_ab_initio_test_hessian_q
         selected_test_hessian_error_mean = np.mean(selected_test_hessian_error, axis= 0)
 
-        pass
-    
+        print("training case: [0,0] ab_initio: " + str(selected_ab_initio_train_hessian_q[:, 0, 0]))
+        print("training case, [0,0] predicted" + str(selected_predicted_train_hessian_q[:, 0, 0]))
+        print("training case: [3,3] ab_initio: " + str(selected_ab_initio_train_hessian_q[:, 3, 3]))
+        print("training case, [3,3] predicted" + str(selected_predicted_train_hessian_q[:, 3, 3]))
 
+        print("\n")
+        print("\n")
+        print("\n")
+
+        print("testing case: [0,0] ab_initio: " + str(selected_ab_initio_test_hessian_q[:,0, 0]))
+        print("testing case: [0,0] prediction: " + str(selected_predicted_test_hessian_q[:,0, 0]))
+        print("testing case: [3,3] ab_initio: " + str(selected_ab_initio_test_hessian_q[:,3, 3]))
+        print("testing case: [3,3] prediction: " + str(selected_predicted_test_hessian_q[:,3, 3]))
+
+        pass
+        
 

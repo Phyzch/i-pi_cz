@@ -280,7 +280,7 @@ class GPModelWithHessiansWrapper():
         self.train_hessian_q = train_hessian_q 
 
         # Transform the noise from Cartesian dofs into internal dofs.
-        pot_noise_var, force_noise_var, hessian_noise_var, noise_covar_factor = self.set_noise_covar_factor_for_gpr_model(noise_std, train_hessian_q)
+        pot_noise_var, force_noise_var, hessian_noise_var, noise_covar_factor = self.set_noise_covar_factor_for_gpr_model(noise_std)
         force_noise_rank = 3 * natom 
         hessian_noise_rank = int((3 * natom) * (3 * natom + 1) / 2)
 
@@ -299,8 +299,7 @@ class GPModelWithHessiansWrapper():
         free_moving_input_dims = len(self.FixingDofs.free_moving_dofs)
         self.TargetDataTransformer = TransformTrainingTarget(free_moving_input_dims, hessian_fixdofs)
         train_targets = self.TargetDataTransformer.transform_pots_grad_hessian_to_1d_data(normalized_train_V, moving_normalized_train_grad_q, moving_normalized_train_hessian_q)
-        hessian_noise_var = take_upper_triangular_part(hessian_noise_var)  # take upper triangular part of the hessian noise
-
+        
         # Transform the numpy array to tensor 
         moving_train_inputs_tensor = torch.from_numpy(moving_train_inputs)
         hessian_data_point_index_tensor = torch.from_numpy(training_data_hessian_data_point_index)
@@ -322,7 +321,7 @@ class GPModelWithHessiansWrapper():
         ipi.utils.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
         
 
-    def set_noise_covar_factor_for_gpr_model(self, noise_std, train_hessian_q):
+    def set_noise_covar_factor_for_gpr_model(self, noise_std):
         '''
         Compute the covar factor for RBFHessian_gaussian_likelihood.
         The covariance factor will transform the noise in Cartesian coordinate to noise in internal coordinate.
@@ -332,11 +331,11 @@ class GPModelWithHessiansWrapper():
         force_noise_std_cartesian = noise_std["force_noise_prior"]
         hessian_noise_std_cartesian = noise_std["hessian_noise_prior"]
 
-        #TODO: Need to consider the covariance between gradient and hessian & also covariance of hessian itself.
-        #TODO: See J. Chem. Theory Comput. 2024, 20, 3766−3778  eq.(13). We need back transformation of noise matrix into internal coordinate. 
-        #TODO: The noise matrix transform like covariance matrix K, see eq.(17). To correctly treat this problem, 
-        #TODO: you either transform covariance matrix from internal coordinate into internal coordinate.
-        #TODO: Or transform potential, force, Hessian and noise matrix into internal coordinate.
+        # Need to consider the covariance between gradient and hessian & also covariance of hessian itself.
+        # See J. Chem. Theory Comput. 2024, 20, 3766−3778  eq.(13). We need back transformation of noise matrix into internal coordinate. 
+        # The noise matrix transform like covariance matrix K, see eq.(17). To correctly treat this problem, 
+        # you either transform covariance matrix from internal coordinate into internal coordinate.
+        # Or transform potential, force, Hessian and noise matrix into internal coordinate.
         # compute the noise_covar_factor 
         self.Bmatrix_singular_value_square = np.power(self.coordinate_transformer.ref_S, 2)
 
@@ -354,8 +353,8 @@ class GPModelWithHessiansWrapper():
 
         # variance of pot noise, force noise and hessian noise in Cartesian coordinate.
         pot_noise_var = np.array([np.power(pot_noise_std, 2)])
-        force_noise_var = np.ones([x_size]) * np.power(force_noise_std_cartesian, 2)
-        hessian_noise_var = np.ones([x_size, x_size]) * np.power(hessian_noise_std_cartesian, 2)
+        force_noise_var = np.ones([1]) * np.power(force_noise_std_cartesian, 2)
+        hessian_noise_var = np.ones([1]) * np.power(hessian_noise_std_cartesian, 2)
 
         # covar_factor [3, 2] term.
         hessian_x_qq = self.coordinate_transformer.compute_ref_x_hessian_q()  # d^2 x / dq^2. shape:[3n, 3n-6, 3n-6]
@@ -365,7 +364,7 @@ class GPModelWithHessiansWrapper():
         inverse_Bq_transpose_tensor = np.transpose(np.tensordot(inverse_Bq_transpose,inverse_Bq_transpose, axes= 0), (0, 2, 1, 3))
         inverse_Bq_transpose_tensor_diag = np.zeros(inverse_Bq_transpose_tensor.shape)
         inverse_Bq_transpose_tensor_diag[..., np.arange(x_size), np.arange(x_size)] = np.diagonal(inverse_Bq_transpose_tensor, axis1= 2, axis2= 3)
-        covar_33 = inverse_Bq_transpose_tensor + np.transpose(inverse_Bq_transpose_tensor, (0,1, 3, 2)) - inverse_Bq_transpose_tensor_diag
+        covar_33 = inverse_Bq_transpose_tensor + np.transpose(inverse_Bq_transpose_tensor, (0, 1, 3, 2)) - inverse_Bq_transpose_tensor_diag
         # take upper triangular part
         covar_33 = take_upper_triangular_part(covar_33)
         covar_33 = np.transpose(take_upper_triangular_part(np.transpose(covar_33, (2, 0, 1))), (1, 0)) 
