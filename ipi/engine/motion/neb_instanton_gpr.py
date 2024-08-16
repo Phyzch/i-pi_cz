@@ -261,8 +261,9 @@ class MAPNEBGPRMover(Motion):
         if self.coordinate_transformer == None:
             # initialize Gaussian Process Regression(GPR) model and coordiante transformer
             self.initialialize_GPR_model()
-            # check the training result on the test data which is unseen by GPR.
-            self.check_initial_training_result()
+            if not self.options["stage"] ==  "test_gpr_hessian":
+                # check the training result on the test data which is unseen by GPR.
+                self.check_initial_training_result()
 
             # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
             # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
@@ -309,9 +310,14 @@ class MAPNEBGPRMover(Motion):
             # therefore, we set ["stage"] == "converged" and exit at next step.
             self.options["stage"] = "converged"
 
+        elif self.options["stage"] == "test_gpr_hessian":
+            # test predicting hessian using gaussian process regression.
+            self.test_gpr_hessian()
+
         else:
             raise("unrecognized stage parameter. The stage has to be neb or instanton or converged")
 
+        
 
 
     def generate_initial_training_data(self):
@@ -959,6 +965,123 @@ class MAPNEBGPRMover(Motion):
                 self.options["prefix"] + "_FINAL",
                 self.optarrays["instanton_hessian"],
                 self.output_maker)
+
+# ------------------- code below used to test the ability that gaussian process regression (GPR) predicts hessian information ----------
+    def test_gpr_hessian(self):
+        '''
+        test prediction of hessian using gaussian process regression
+        '''
+        train_data_number = 25
+        test_data_number = 5 
+        train_data_with_hessian_number = 5 
+        test_data_with_hessian_number = test_data_number
+
+        total_data_number = int(train_data_number + test_data_number) 
+        total_data_with_hessian_number = int(train_data_with_hessian_number + test_data_with_hessian_number)
+        
+        natoms = self.beads.natoms
+        # beads for computing potential and force for all data points
+        self.beads1 = Beads(natoms, total_data_number)
+        self.forces1 = self.forces.copy(self.beads1, self.cell)
+        
+        # beads for computing hessian for selected data point.
+        self.beads2 = Beads(natoms, total_data_with_hessian_number)
+        self.forces2 = self.forces.copy(self.beads2, self.cell)
+
+        # create cartesian coordinate of training data and test data 
+        center_coordinate = self.beads.q[0]
+        sample_distance = 0.02  # distance is 0.1 a.u.
+        data_coordinate_shape = np.concatenate([ [total_data_number], np.array(center_coordinate.shape) ])
+        data_coordinate_displacement = np.random.normal(0, scale= sample_distance, size= data_coordinate_shape)
+        data_coordinate = center_coordinate[np.newaxis, ...] + data_coordinate_displacement
+        
+        train_data_coordinate = data_coordinate[:train_data_number]
+        test_data_coordinate = data_coordinate[train_data_number:]
+
+        train_data_with_hessian_coordinate = train_data_coordinate[:train_data_with_hessian_number]
+        test_data_with_hessian_coordinate = test_data_coordinate 
+
+        # assign coordinate to beads.q 
+        self.beads1.q = data_coordinate 
+        self.beads2.q = np.concatenate([ train_data_with_hessian_coordinate, test_data_with_hessian_coordinate ])
+
+        # compute potential and force 
+        train_pots = self.forces1.pots[:train_data_number]
+        train_gradients = - np.copy(dstrip(self.forces1.f))[:train_data_number]
+
+        test_pots = self.forces1.pots[train_data_number:]
+        test_gradients = - np.copy(dstrip(self.forces1.f))[train_data_number:]
+
+        hessians = ipi.utils.nebinstool.get_hessian(self.beads2,
+                                                    self.forces2,
+                                                    self.beads2.q,
+                                                    self.beads2.natoms,
+                                                    self.beads2.nbeads,
+                                                    self.fixatoms)
+        
+        hessians = np.transpose(np.reshape(hessians, [3 * natoms, self.beads2.nbeads, 3 * natoms]), (1,0,2))
+
+        train_ab_initio_hessians = hessians[:train_data_with_hessian_number]
+        test_ab_initio_hessians = hessians[train_data_with_hessian_number:]
+
+        train_hessian_data_point_index_array = np.arange(train_data_with_hessian_number)
+
+        #TODO: store coordinate pots, gradients, hessian_index, hessian_data. 
+
+        # create Gaussian Process regression model that can predict hessians
+        self.gpr_hessian_model = ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(train_data_coordinate, train_pots, train_gradients,
+                                                                                        train_ab_initio_hessians, train_hessian_data_point_index_array,
+                                                                                        self.beads.natoms, self.coordinate_transformer,
+                                                                                        self.options["gpr_SE_kernel_number"],
+                                                                                        self.optarrays["gpr_kernel_outputscale"],
+                                                                                        self.optarrays["gpr_kernel_lengthscale_ratio"],
+                                                                                        self.optarrays["gpr_noise_std"]
+                                                                                        )
+        
+        # test the prediction of hessians:
+        internal_coordinate_bool = True
+        # training data 
+        predicted_train_pots, predicted_train_grads_to_show, predicted_train_hessians_to_show, _, _, _ = self.gpr_hessian_model.predict_latent_function(train_data_with_hessian_coordinate,
+                                                                                                                                        train_hessian_data_point_index_array,
+                                                                                                                                        internal_coordinate_bool= internal_coordinate_bool)
+        
+        # test data 
+        test_hessian_data_point_index_array = np.arange(test_data_with_hessian_number)
+
+        predicted_test_pots, predicted_test_grads_to_show, predicted_test_hessians_to_show, _, _, _ = self.gpr_hessian_model.predict_latent_function(test_data_with_hessian_coordinate,
+                                                                                                                                     test_hessian_data_point_index_array,
+                                                                                                                                     internal_coordinate_bool= internal_coordinate_bool)
+
+        if internal_coordinate_bool == True:
+            train_ab_initio_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(train_data_with_hessian_coordinate,
+                                                                                                                   train_gradients[:train_data_with_hessian_number],
+                                                                                                                   train_ab_initio_hessians)
+        
+            test_ab_initio_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(test_data_with_hessian_coordinate,
+                                                                                                                  test_gradients[:test_data_with_hessian_number],
+                                                                                                                  test_ab_initio_hessians)
+
+            train_ab_initio_hessians_to_show = train_ab_initio_hessians_q
+            test_ab_initio_hessians_to_show = test_ab_initio_hessians_q
+        else:
+            train_ab_initio_hessians_to_show = train_ab_initio_hessians
+            test_ab_initio_hessians_to_show = test_ab_initio_hessians
+
+
+        # test the prediction error. 
+        train_index_array = [0, 2, 4]
+        for train_index in train_index_array:
+            print("training case : " + str(train_index) + " ab initio: " + str(train_ab_initio_hessians_to_show[train_index]))
+            print("training case : " + str(train_index) + " predicted: " + str(predicted_train_hessians_to_show[train_index]))
+        
+        test_index_array = [0, 2, 4]
+        for test_index in test_index_array:
+            print("test case: " + str(test_index) + " ab initio: " + str(test_ab_initio_hessians_to_show[test_index]))
+            print("test case: " + str(test_index) + " predicted: " + str(predicted_test_hessians_to_show[test_index]))
+        
+        pass 
+        
+        
 
 class LINEBGradientMapper(object):
     """Creation of the Line Integral function that will be minimized.
@@ -1794,7 +1917,6 @@ class RP_MAP(object):
         gradients = self.gpr_model.train_cartesian_targets[:, 1:]
         gpr_model_training_data_num = len(cartesian_x)
 
-        #TODO: Add more pot & gradient data point.
 
         # choose half data point as hessian training data
         nbeads = self.rp_beads.nbeads
@@ -1812,6 +1934,7 @@ class RP_MAP(object):
         pots = np.concatenate([pots, pots_with_hessian])
         gradients = np.concatenate([gradients, gradients_with_hessian], axis= 0)
         hessian_data_point_index_full_array = hessian_data_point_index + gpr_model_training_data_num
+
 
         self.gpr_hessian_model = ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(cartesian_x, pots, gradients,
                                                                                       hessians, hessian_data_point_index_full_array,

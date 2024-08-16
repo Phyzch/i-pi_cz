@@ -19,7 +19,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                  gpr_SE_kernel_number : int,
                  kernel_outputscale: np.ndarray, kernel_lengthscale_ratio: np.ndarray,
                  likelihood_pot_noise_var: np.ndarray, likelihood_force_noise_var: np.ndarray, likelihood_hessian_noise_var: np.ndarray,
-                 likelihood_force_noise_rank: int, likelihood_hessian_noise_rank: int, noise_covar_factor: torch.Tensor):
+                 likelihood_force_noise_rank: int, likelihood_hessian_noise_rank: int, 
+                 noise_covar_factor_pot_grad_array: torch.Tensor, noise_covar_factor_with_hessian_array: torch.Tensor):
         '''
         :param: gpr_SE_kernel_number: number of squared exponential kernel for GPR model.
         :param: kernel_outputscale: numpy array, shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
@@ -47,7 +48,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         
         # set the likelihood function 
         likelihood = self._set_likelihood_noise_prior(train_inputs, likelihood_pot_noise_var, likelihood_force_noise_var, likelihood_hessian_noise_var,
-                                                      likelihood_force_noise_rank, likelihood_hessian_noise_rank, noise_covar_factor)
+                                                      likelihood_force_noise_rank, likelihood_hessian_noise_rank, 
+                                                      noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array)
 
         super(GPModelWithHessians, self).__init__(train_inputs, train_targets, likelihood)
 
@@ -128,7 +130,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
     def _set_likelihood_noise_prior(self, train_inputs,
                                     likelihood_pot_noise_var, likelihood_force_noise_var, likelihood_hessian_noise_var,
-                                    likelihood_force_noise_rank, likelihood_hessian_noise_rank, noise_covar_factor):
+                                    likelihood_force_noise_rank, likelihood_hessian_noise_rank, 
+                                    noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array):
         '''
         set the prior and constraint for the likelihood noise.
         '''
@@ -143,13 +146,16 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         assert likelihood_pot_noise_var.shape[0] == 1, "the shape of potential noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_pot_noise_var.shape[0], 1)
         assert likelihood_force_noise_var.shape[0] == 1, "the shape of the force noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_force_noise_var.shape[0], 1)
         assert likelihood_hessian_noise_var.shape[0] == 1, "the shape of hessian noise in GPR model is wrong. The current shape is {}, the right shape is {}".format(likelihood_hessian_noise_var.shape[0], 1)
-
-        assert noise_covar_factor.shape[0] == 1 + ard_num_dims + hessian_triu_size, "the row size of noise_covar_factor is wrong."
-        assert noise_covar_factor.shape[1] == 1 + likelihood_force_noise_rank + likelihood_hessian_noise_rank, "the column size of noise_covar_factor is wrong."
+        
+        if len(noise_covar_factor_with_hessian_array) != 0:
+            assert noise_covar_factor_with_hessian_array[0].shape[0] == 1 + ard_num_dims + hessian_triu_size, "the row size of noise_covar_factor is wrong."
+            assert noise_covar_factor_with_hessian_array[0].shape[1] == 1 + likelihood_force_noise_rank + likelihood_hessian_noise_rank, "the column size of noise_covar_factor is wrong."
+        if len(noise_covar_factor_pot_grad_array) != 0:
+            assert noise_covar_factor_pot_grad_array[0].shape[0] == 1 + ard_num_dims, "the row size of noise_covar_factor is wrong."
+            assert noise_covar_factor_pot_grad_array[0].shape[1] == 1 + likelihood_force_noise_rank, "the column size of noise_covar_factor is wrong."
 
         self.likelihood_force_noise_rank = likelihood_force_noise_rank
         self.likelihood_hessian_noise_rank = likelihood_hessian_noise_rank
-        self.noise_covar_factor = noise_covar_factor
         
         # pot noise prior and pot noise constraint
         pot_noise_mean = torch.from_numpy(likelihood_pot_noise_var)
@@ -184,7 +190,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                                                   force_noise_prior, force_noise_constraint,
                                                   hessian_noise_prior, hessian_noise_constraint, 
                                                   has_covar_factor= True,
-                                                  noise_covar_factor= noise_covar_factor,
+                                                  noise_covar_factor_pot_grad_array= noise_covar_factor_pot_grad_array,
+                                                  noise_covar_factor_with_hessian_array= noise_covar_factor_with_hessian_array,
                                                   grad_covar_factor_rank= likelihood_force_noise_rank,
                                                   hessian_covar_factor_rank= likelihood_hessian_noise_rank
                                                   )
