@@ -187,8 +187,8 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         if not self.has_covar_factor:
             # The noise matrix is diagonal.
             pot_noises_var = self.pot_noises.repeat([ *([1] * n_batch_dim), M])  # shape: [M]
-            force_noises_var = self.force_noises.repeat([ *([1] * n_batch_dim), M * self.ndof])  # shape: [M * d]
-            hessian_noises_var = self.hessian_noises.repeat([ *([1] * n_batch_dim), M_H * self.hessian_triu_size])  # shape: [M_H * hessian_triu_size]
+            force_noises_var = self.force_noises.repeat([ *([1] * n_batch_dim), M * self.ndof ])  # shape: [M * d]
+            hessian_noises_var = self.hessian_noises.repeat([ *([1] * n_batch_dim), M_H * self.hessian_triu_size ])  # shape: [M_H * hessian_triu_size]
             noises_var = torch.concat( (pot_noises_var, force_noises_var, hessian_noises_var), dim= -1)
             matrix_size = M + M * self.ndof + M_H * self.hessian_triu_size 
             noise_covar_matrix = torch.zeros([matrix_size, matrix_size])

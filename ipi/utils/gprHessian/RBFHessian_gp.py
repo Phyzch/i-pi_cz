@@ -1,5 +1,5 @@
 from .RBFHessianKernel import RBFKernelHessian 
-from .RBFHessianMean import ConstantMeanHessian 
+from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian 
 from .RBFHessian_prediction_strategy import RBFHessianPredictionStrategy
 from .RBFHessian_gaussian_likelihood import RBFHessianGaussianLikelihood
 from .RBFHessian_marginal_log_likelihood import CustomMarginalLogLikelihood
@@ -22,7 +22,12 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                  likelihood_force_noise_rank: int, likelihood_hessian_noise_rank: int, 
                  noise_covar_factor_pot_grad_array: torch.Tensor, noise_covar_factor_with_hessian_array: torch.Tensor,
                  kernel_lengthscale_initio_value: np.ndarray= np.array([]),
-                 kernel_outputscale_initio_value: np.ndarray= np.array([])):
+                 kernel_outputscale_initio_value: np.ndarray= np.array([]),
+                 constant_mean_bool= True,
+                 ref_mean_coordinate: torch.Tensor= torch.Tensor([]),
+                 ref_mean_pot: torch.Tensor= torch.Tensor([]),
+                 ref_mean_grad: torch.Tensor= torch.Tensor([]),
+                 ref_mean_hessian: torch.Tensor= torch.Tensor([])):
         '''
         :param: gpr_SE_kernel_number: number of squared exponential kernel for GPR model.
         :param: kernel_outputscale: numpy array, shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
@@ -58,7 +63,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         super(GPModelWithHessians, self).__init__(train_inputs, train_targets, likelihood)
 
         # constraint for mean:
-        self._set_mean_function(train_inputs, train_targets)
+        self._set_mean_function(train_inputs, train_targets, 
+                                constant_mean_bool, 
+                                ref_mean_coordinate, ref_mean_pot, ref_mean_grad, ref_mean_hessian)
 
         # set the covariance function (kernel) for Gaussian Process regression.
         self._set_gpr_kernel(train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio, 
@@ -66,14 +73,28 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
 
 
-    def _set_mean_function(self, train_inputs, train_targets):
+    def _set_mean_function(self, train_inputs, train_targets, 
+                           constant_mean_bool, 
+                           ref_mean_coordinate, ref_mean_pot, ref_mean_grad, ref_mean_hessian):
         '''
         set the mean function for the Gaussian Process Regression.
+        
         '''
         data_num = train_inputs.shape[-2]
-        mean_constant_estimate = torch.mean(train_targets[..., :data_num], dim= -1)
-        self.mean_module = ConstantMeanHessian()
-        self.mean_module.constant = mean_constant_estimate  # set the constant (size 1) as mean value of prior 
+        
+        if constant_mean_bool:
+            mean_constant_estimate = torch.mean(train_targets[..., :data_num], dim= -1)
+            self.mean_module = ConstantMeanHessian()
+            self.mean_module.constant = mean_constant_estimate  # set the constant (size 1) as mean value of prior 
+        else:
+            assert ref_mean_pot.shape[0] == 1
+            assert ref_mean_grad.shape[0] == self.ard_num_dims 
+            assert ref_mean_hessian.shape[0] == self.hessian_triu_size
+            self.ref_mean_coordinate = ref_mean_coordinate
+
+            self.mean_module = MeanWithPotGradHessian(grad_size= self.ard_num_dims, hessian_size= self.hessian_triu_size)
+            
+            self.mean_module.set_mean_value(func= ref_mean_pot, grad= ref_mean_grad, hessian= ref_mean_hessian)
 
     def _set_gpr_kernel(self, train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio, 
                         kernel_lengthscale_initio_value, kernel_outputscale_initio_value):
@@ -107,7 +128,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             outputscale_prior = gpytorch.priors.GammaPrior(output_gamma_alpha, output_gamma_alpha / output_scale) 
 
             # add lengthscale constraint
-            length_scale_ratio_cutoff = 0.3 
+            length_scale_ratio_cutoff = 0.1 
             length_scale_cutoff = length_scale_ratio_cutoff * train_inputs_range 
             lengthscale_constraint = gpytorch.constraints.GreaterThan(length_scale_cutoff) 
 
@@ -123,8 +144,11 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             if len(kernel_lengthscale_initio_value) == 0:
                 covar_module.base_kernel.lengthscale = lengthscale_prior.mean 
             else:
-                assert len(kernel_lengthscale_initio_value[i]) == len(covar_module.base_kernel.lengthscale[0]) 
-                covar_module.base_kernel.lengthscale[0] = torch.tensor(kernel_lengthscale_initio_value[i])
+                if len(kernel_lengthscale_initio_value[i]) == len(covar_module.base_kernel.lengthscale[0]): 
+                    covar_module.base_kernel.lengthscale[0] = torch.tensor(kernel_lengthscale_initio_value[i])
+                else:
+                    covar_module.base_kernel.lengthscale = lengthscale_prior.mean
+
             if len(kernel_outputscale_initio_value) == 0:
                 covar_module.outputscale = outputscale_prior.mean 
             else:
@@ -464,7 +488,7 @@ def predict_latent_function_GPHessian(model: GPModelWithHessians, test_inputs: t
         return pots, grads, hessians, pots_var, grads_var, hessians_var
 
 def update_model_with_new_data_GPHessian(model: GPModelWithHessians, new_train_inputs: torch.Tensor, new_train_targets: torch.Tensor, new_train_data_hessian_data_point_index: torch.Tensor,
-                                         new_noise_covar_factor_pot_grad_array: torch.Tensor, new_noise_covar_factor_with_hessian_array: torch.Tensor):
+                                         new_noise_covar_factor_pot_grad_array: torch.Tensor, new_noise_covar_factor_with_hessian_array: torch.Tensor, retrain_bool= True):
     '''
     Add new training input data and training target data.
     '''
@@ -512,4 +536,5 @@ def update_model_with_new_data_GPHessian(model: GPModelWithHessians, new_train_i
     model.likelihood.update_noise_covar_factor_array(new_noise_covar_factor_pot_grad_array, new_noise_covar_factor_with_hessian_array)
     
     # re-train the model to update the hyper parameter
-    train_gpr_model(model)
+    if retrain_bool:
+        train_gpr_model(model)
