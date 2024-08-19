@@ -18,23 +18,27 @@ def transform_1d_train_targets_into_pots_grads_hessians(train_targets: torch.Ten
 
     pot_data = train_targets[..., :M] 
     force_data = train_targets[..., M: M * (ndofs + 1)]
-    hessian_data = train_targets[..., M * (ndofs + 1): M * (ndofs + 1) + hessian_triu_size * M_H]
 
     pots = pot_data 
     forces = force_data.reshape([*batch_shape, M, ndofs])
-    hessian_triu = hessian_data.reshape([*batch_shape, M_H, hessian_triu_size ])
-    
-    triu_indices = torch.triu_indices(nactive, nactive)
-    triu_1d_indices = triu_indices[0] * nactive + triu_indices[1]
 
-    upper_triangular_hessians = torch.zeros([*batch_shape, M_H, nactive * nactive], dtype = hessian_triu.dtype)
-    upper_triangular_hessians[..., triu_1d_indices] = hessian_triu 
-    upper_triangular_hessians = torch.reshape(upper_triangular_hessians, [*batch_shape, M_H, nactive, nactive])
+    if M_H > 0:
+        hessian_data = train_targets[..., M * (ndofs + 1): M * (ndofs + 1) + hessian_triu_size * M_H]
+        hessian_triu = hessian_data.reshape([*batch_shape, M_H, hessian_triu_size ])
+        
+        triu_indices = torch.triu_indices(nactive, nactive)
+        triu_1d_indices = triu_indices[0] * nactive + triu_indices[1]
 
-    hessians = upper_triangular_hessians.clone() 
-    for i in range(M_H):
-        upper_triangular_hessian_slice = upper_triangular_hessians[i]
-        hessians[i] = upper_triangular_hessian_slice + upper_triangular_hessian_slice.t() - torch.diag(upper_triangular_hessian_slice.diag())
+        upper_triangular_hessians = torch.zeros([*batch_shape, M_H, nactive * nactive], dtype = hessian_triu.dtype)
+        upper_triangular_hessians[..., triu_1d_indices] = hessian_triu 
+        upper_triangular_hessians = torch.reshape(upper_triangular_hessians, [*batch_shape, M_H, nactive, nactive])
+
+        hessians = upper_triangular_hessians.clone() 
+        for i in range(M_H):
+            upper_triangular_hessian_slice = upper_triangular_hessians[i]
+            hessians[i] = upper_triangular_hessian_slice + upper_triangular_hessian_slice.t() - torch.diag(upper_triangular_hessian_slice.diag())
+    else:
+        hessians = torch.Tensor([])
 
     
     return pots, forces, hessians 

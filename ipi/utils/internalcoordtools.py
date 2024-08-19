@@ -371,7 +371,7 @@ class non_redundant_coordinate_transformer():
         hessian_q_xx = np.transpose(hessian_q_xx, (2,0,1))
         return hessian_q_xx 
     
-    def compute_ref_x_hessian_q(self, x):
+    def compute_x_hessian_q(self, x):
         '''
         compute the hessian of Cartesian coordinate x for the reference point with respect to internal coordinate q.
         d^2 x/ dq^2

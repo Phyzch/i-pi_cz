@@ -20,7 +20,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                  kernel_outputscale: np.ndarray, kernel_lengthscale_ratio: np.ndarray,
                  likelihood_pot_noise_var: np.ndarray, likelihood_force_noise_var: np.ndarray, likelihood_hessian_noise_var: np.ndarray,
                  likelihood_force_noise_rank: int, likelihood_hessian_noise_rank: int, 
-                 noise_covar_factor_pot_grad_array: torch.Tensor, noise_covar_factor_with_hessian_array: torch.Tensor):
+                 noise_covar_factor_pot_grad_array: torch.Tensor, noise_covar_factor_with_hessian_array: torch.Tensor,
+                 kernel_lengthscale_initio_value: np.ndarray= np.array([]),
+                 kernel_outputscale_initio_value: np.ndarray= np.array([])):
         '''
         :param: gpr_SE_kernel_number: number of squared exponential kernel for GPR model.
         :param: kernel_outputscale: numpy array, shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
@@ -28,6 +30,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         :param: likelihood_pot_noise: numpy array. shape: [1]. Estimation of the variance of the potential noise.
         :param: likelihood_force_noise: numpy array. shape: [ard_num_dims]: Estimation of the variance of the force noise.
         :param: likelihood_hessian_noise: numpy array. shape: [hessian_triu_size]. Estimation of the variance of the hessian noise. 
+        :param: kernel_lengthscale_initio_value: 2d numpy array.
+        :param: kernel_outputscale_initio_value: 1d numpy array.
         '''
         # the data point index that contains the hessian information.
         self.training_data_hessian_data_point_index = training_data_hessian_data_point_index
@@ -57,7 +61,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self._set_mean_function(train_inputs, train_targets)
 
         # set the covariance function (kernel) for Gaussian Process regression.
-        self._set_gpr_kernel(train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio)
+        self._set_gpr_kernel(train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio, 
+                             kernel_lengthscale_initio_value, kernel_outputscale_initio_value)
 
 
 
@@ -70,9 +75,10 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self.mean_module = ConstantMeanHessian()
         self.mean_module.constant = mean_constant_estimate  # set the constant (size 1) as mean value of prior 
 
-    def _set_gpr_kernel(self, train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio):
+    def _set_gpr_kernel(self, train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio, 
+                        kernel_lengthscale_initio_value, kernel_outputscale_initio_value):
         '''
-        set the kernel for the Gaussian Process Regression 
+        set the kernel for the Gaussian Process Regression. 
         '''
         self.gpr_SE_kernel_number = gpr_SE_kernel_number 
 
@@ -101,7 +107,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             outputscale_prior = gpytorch.priors.GammaPrior(output_gamma_alpha, output_gamma_alpha / output_scale) 
 
             # add lengthscale constraint
-            length_scale_ratio_cutoff = 0.1 
+            length_scale_ratio_cutoff = 0.3 
             length_scale_cutoff = length_scale_ratio_cutoff * train_inputs_range 
             lengthscale_constraint = gpytorch.constraints.GreaterThan(length_scale_cutoff) 
 
@@ -113,9 +119,16 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             
             covar_module = gpytorch.kernels.ScaleKernel(base_kernel, outputscale_prior = outputscale_prior)
 
-            # Initialize lengthscale and output scale to the mean of priors
-            covar_module.base_kernel.lengthscale = lengthscale_prior.mean 
-            covar_module.outputscale = outputscale_prior.mean 
+            # Initialize lengthscale and output scale to the mean of priors. Or use the value specified by users.
+            if len(kernel_lengthscale_initio_value) == 0:
+                covar_module.base_kernel.lengthscale = lengthscale_prior.mean 
+            else:
+                assert len(kernel_lengthscale_initio_value[i]) == len(covar_module.base_kernel.lengthscale[0]) 
+                covar_module.base_kernel.lengthscale[0] = torch.tensor(kernel_lengthscale_initio_value[i])
+            if len(kernel_outputscale_initio_value) == 0:
+                covar_module.outputscale = outputscale_prior.mean 
+            else:
+                covar_module.outputscale = torch.tensor(kernel_outputscale_initio_value[i])
 
             base_kernel_component_list.append(base_kernel)
             covar_module_component_list.append(covar_module)
@@ -305,7 +318,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
             # Get the joint distribution for training / test data 
             inputs_hessian_data_point_index_in_full_input = inputs_hessian_data_point_index + train_inputs[0].shape[-2]
-            full_inputs_hessian_data_point_index = torch.cat((self.training_data_hessian_data_point_index, inputs_hessian_data_point_index_in_full_input))
+            full_inputs_hessian_data_point_index = torch.cat((self.training_data_hessian_data_point_index, inputs_hessian_data_point_index_in_full_input)).to(torch.int32)
 
             full_output = gpytorch.module.Module.__call__(self, *full_inputs, inputs_hessian_data_point_index= full_inputs_hessian_data_point_index)
             if settings.debug().on():
@@ -450,7 +463,8 @@ def predict_latent_function_GPHessian(model: GPModelWithHessians, test_inputs: t
 
         return pots, grads, hessians, pots_var, grads_var, hessians_var
 
-def update_model_with_new_data_GPHessian(model: GPModelWithHessians, new_train_inputs: torch.Tensor, new_train_targets: torch.Tensor, new_train_data_hessian_data_point_index: torch.Tensor):
+def update_model_with_new_data_GPHessian(model: GPModelWithHessians, new_train_inputs: torch.Tensor, new_train_targets: torch.Tensor, new_train_data_hessian_data_point_index: torch.Tensor,
+                                         new_noise_covar_factor_pot_grad_array: torch.Tensor, new_noise_covar_factor_with_hessian_array: torch.Tensor):
     '''
     Add new training input data and training target data.
     '''
@@ -473,7 +487,7 @@ def update_model_with_new_data_GPHessian(model: GPModelWithHessians, new_train_i
 
     # new hessian data point index
     new_train_data_hessian_data_point_index_in_full_data = new_train_data_hessian_data_point_index + train_data_num 
-    full_train_data_hessian_data_point_index = torch.concat((train_data_hessian_data_point_index, new_train_data_hessian_data_point_index_in_full_data), dim= 0)
+    full_train_data_hessian_data_point_index = torch.concat((train_data_hessian_data_point_index, new_train_data_hessian_data_point_index_in_full_data), dim= 0).to(torch.int32)
     model.training_data_hessian_data_point_index = full_train_data_hessian_data_point_index
 
     # new training inputs
@@ -494,5 +508,8 @@ def update_model_with_new_data_GPHessian(model: GPModelWithHessians, new_train_i
 
     model.set_train_data(full_train_inputs, full_train_targets, strict= False)
 
+    # update the noise_covar_factor_array (transform noise from Cartesian coordinate into internal coordinate) of model.likelihood
+    model.likelihood.update_noise_covar_factor_array(new_noise_covar_factor_pot_grad_array, new_noise_covar_factor_with_hessian_array)
+    
     # re-train the model to update the hyper parameter
     train_gpr_model(model)

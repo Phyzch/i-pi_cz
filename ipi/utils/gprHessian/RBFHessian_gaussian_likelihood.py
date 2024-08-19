@@ -147,6 +147,28 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
     def hessian_noises(self, value: Union[float, Tensor]) -> None:
         self.initialize(raw_hessian_noises= self.raw_hessian_noises_constraint.inverse_transform(value))
     
+    def update_noise_covar_factor_array(self,
+                                        new_noise_covar_factor_pot_grad_array: torch.Tensor,
+                                        new_noise_covar_factor_with_hessian_array: torch.Tensor):
+        '''
+        update the noise_covar_factor, which transform the noise from Cartesian coordinate into internal coordinate
+        '''
+        if len(new_noise_covar_factor_pot_grad_array) != 0:
+                row_size = new_noise_covar_factor_pot_grad_array[0].shape[0]
+                column_size = new_noise_covar_factor_pot_grad_array[0].shape[1]
+                assert row_size == 1 + self.ndof, "the number of rows for covar_factor_pot_grad should fit the size of gradient & hessian in gpr model"
+                assert column_size == 1 + self.grad_covar_factor_rank, "the number of columns for covar_factor_pot_grad should fit the rank of gradient & hessian."
+
+        if len(new_noise_covar_factor_with_hessian_array) != 0:
+                row_size = new_noise_covar_factor_with_hessian_array[0].shape[0]
+                column_size = new_noise_covar_factor_with_hessian_array[0].shape[1]
+                assert row_size == 1 + self.ndof + self.hessian_triu_size,  "the number of rows for covar_factor_with_hessian should fit the size of gradient & hessian in gpr model"
+                assert column_size == 1 + self.grad_covar_factor_rank + self.hessian_covar_factor_rank, "the number of columns for covar_factor_with_hessian should fit the rank of gradient & hessian."
+
+        self.noise_covar_factor_pot_grad_array = torch.concat([self.noise_covar_factor_pot_grad_array, new_noise_covar_factor_pot_grad_array])
+        self.noise_covar_factor_with_hessian_array = torch.concat([self.noise_covar_factor_with_hessian_array, new_noise_covar_factor_with_hessian_array])
+
+
     def _shaped_noise_covar(
             self,
             M: int, hessian_data_point_index_array: torch.Tensor, 
