@@ -709,4 +709,29 @@ class GPModelWithHessiansWrapper():
         return free_moving_beads_internal_coordinate
 
         
+    # ------ output information -------
+    def check_gpr_lengthscale(self):
+        free_moving_dofs = self.FixingDofs.free_moving_dofs
+        input_range = np.max(self.train_inputs, axis= 0) - np.min(self.train_inputs, axis= 0)
+        input_range = input_range[free_moving_dofs]
 
+        gpr_kernel_number = self.gpr_SE_kernel_number
+
+        gpr_hessian_kernel_outputscale = []
+        for i in range(gpr_kernel_number):
+            output_scale = np.copy(self.gpr_model.covar_module_component_list[i].outputscale.detach().numpy())
+            gpr_hessian_kernel_outputscale.append(output_scale)
+        gpr_hessian_kernel_outputscale = np.array(gpr_hessian_kernel_outputscale)
+        
+        gpr_hessian_lengthscale_ratio_list = []
+        gpr_hessian_lengthscale_list = []
+        for i in range(gpr_kernel_number):
+            fitted_lengthscale = self.gpr_model.base_kernel_component_list[i].lengthscale 
+            fitted_lengthscale = fitted_lengthscale.detach().numpy()[0]
+            gpr_hessian_lengthscale_ratio = fitted_lengthscale / input_range
+            gpr_hessian_lengthscale_ratio_list.append(gpr_hessian_lengthscale_ratio)
+            gpr_hessian_lengthscale_list.append(fitted_lengthscale)
+        gpr_hessian_lengthscale_ratio_list = np.array(gpr_hessian_lengthscale_ratio_list)
+        gpr_hessian_lengthscale_list = np.array(gpr_hessian_lengthscale_list)
+
+        return gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list
