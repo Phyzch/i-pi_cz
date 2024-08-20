@@ -1,5 +1,5 @@
 from .RBFHessianKernel import RBFKernelHessian 
-from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian 
+from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian
 from .RBFHessian_prediction_strategy import RBFHessianPredictionStrategy
 from .RBFHessian_gaussian_likelihood import RBFHessianGaussianLikelihood
 from .RBFHessian_marginal_log_likelihood import CustomMarginalLogLikelihood
@@ -92,10 +92,10 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             assert ref_mean_hessian.shape[0] == self.hessian_triu_size
             self.ref_mean_coordinate = ref_mean_coordinate
 
-            self.mean_module = MeanWithPotGradHessian(grad_size= self.ard_num_dims, hessian_size= self.hessian_triu_size)
+            self.mean_module = MeanWithPotGradHessian(ref_mean_coordinate, ref_mean_pot, ref_mean_grad, ref_mean_hessian,
+                grad_size= self.ard_num_dims, hessian_size= self.hessian_triu_size)
+ 
             
-            self.mean_module.set_mean_value(func= ref_mean_pot, grad= ref_mean_grad, hessian= ref_mean_hessian)
-
     def _set_gpr_kernel(self, train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio, 
                         kernel_lengthscale_initio_value, kernel_outputscale_initio_value):
         '''
@@ -244,9 +244,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         '''
         return the distribution of the training targets
         ''' 
-        M_H = len(inputs_hessian_data_point_index)
         nactive = self.ard_num_dims - len(self.hessian_fixdofs)
-        mean_x = self.mean_module(x, M_H= M_H, nactive= nactive)
+        mean_x = self.mean_module(x, hessian_data_point_index= inputs_hessian_data_point_index, nactive= nactive)
         with settings.lazily_evaluate_kernels(False):
             covar_x = self.covar_module(x, x, hessian_data_point_index_1= inputs_hessian_data_point_index, hessian_data_point_index_2 = inputs_hessian_data_point_index)
         

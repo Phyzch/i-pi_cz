@@ -7,9 +7,10 @@ import torch
 import numpy as np 
 import gpytorch 
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
-from .gprHessian.RBFHessian_gp import GPModelWithHessians
+from .gprHessian.RBFHessian_gp import GPModelWithHessians, train_gpr_model
 from .gprHessian.RBFHessian_utils import take_upper_triangular_part, transform_1d_train_targets_into_pots_grads_hessians
 import ipi.utils.gprHessian.RBFHessian_gp
+
 
 class TransformTrainingTarget(object):
     '''
@@ -690,6 +691,12 @@ class GPModelWithHessiansWrapper():
                                                                       new_noise_covar_factor_with_hessian_array,
                                                                       retrain_bool= retrain_bool)
 
+    
+    def train_model(self, output_training_info= False):
+        '''
+        function that trains the model
+        '''
+        train_gpr_model(self.gpr_model, output_training_info= output_training_info)
 
     def get_free_moving_internal_coordinate(self, beads_x):
         '''

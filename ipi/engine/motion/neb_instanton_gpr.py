@@ -1939,7 +1939,7 @@ class RP_MAP(object):
         pots_with_hessian = self.rp_forces.pots - self.energy_shift
         gradients_with_hessian = - dstrip(self.rp_forces.f).copy() 
 
-        train_hessian_data_point_index_array = np.array([0, 3, 5 , 7, 10, 12, 15, 17, 19])
+        train_hessian_data_point_index_array = np.array([0, 10, 19])
         test_hessian_data_point_index_array = np.delete(np.arange(0, nbeads), train_hessian_data_point_index_array)
 
         # Previous shape: [3 * natoms, nbeads * 3 * natoms].
@@ -1980,12 +1980,13 @@ class RP_MAP(object):
 
         gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.check_gpr_lengthscale()
         for hessian_data_point_index in train_hessian_data_point_index_array:
+            retrain_bool = True
             new_train_x = np.array([cartesian_x_with_hessian[hessian_data_point_index]])
             new_train_V = np.array([pots_with_hessian[hessian_data_point_index]])
             new_train_grad_x = np.array([gradients_with_hessian[hessian_data_point_index]])
             new_train_hessian = np.array([hessians_full[hessian_data_point_index]])
             new_hessian_data_point_index = np.array([0])
-            self.gpr_hessian_model.update_model_with_new_data(new_train_x, new_train_V, new_train_grad_x, new_train_hessian, new_hessian_data_point_index, retrain_bool= True)
+            self.gpr_hessian_model.update_model_with_new_data(new_train_x, new_train_V, new_train_grad_x, new_train_hessian, new_hessian_data_point_index, retrain_bool= retrain_bool)
 
             gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.check_gpr_lengthscale()
             pass
