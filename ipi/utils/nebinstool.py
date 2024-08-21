@@ -10,7 +10,7 @@ from ipi.utils import units
 import ipi.utils.mathtools as mt
 import os 
 from ipi.utils.depend import dstrip
-
+import ipi 
 
 def print_neb_instanton_geo(
     prefix, step, nbeads, natoms, names, q, pots, cell, shift, output_maker
@@ -306,6 +306,11 @@ def get_hessian(
                 continue
 
     # Start calculation:
+    if type(x0) == ipi.utils.depend.depend_array:
+        x0_copy = np.copy(dstrip(x0))
+    elif type(x0) == np.ndarray:
+        x0_copy = np.copy(x0)
+    
     for j in range(i0 + 1, ii):
         if j in fixdofs:
             continue
@@ -315,16 +320,16 @@ def get_hessian(
                 " @get_hessian: Computing hessian: %d of %d" % (ndone + 1, ncalc),
                 verbosity.low,
             )
-            x = x0.copy()
+            x = x0_copy.copy()
 
             # PLUS
-            x[:, j] = x0[:, j] + d
-            rp_beads.q = x  # update bead location.
+            x[:, j] = x0_copy[:, j] + d
+            rp_beads.q[:] = x  # update bead location.
             g1 = -rp_forces.f  # gradient = - force.
 
             # Minus
-            x[:, j] = x0[:, j] - d
-            rp_beads.q = x 
+            x[:, j] = x0_copy[:, j] - d
+            rp_beads.q[:] = x 
             g2 = -rp_forces.f # gradient = - force.
 
             # COMBINE

@@ -233,6 +233,10 @@ class MAPNEBGPRMover(Motion):
         """
         print(" @NEB Outerloop STEP %d, stage: %s" % (step, self.options["stage"]))
         
+        if self.options["stage"] == "test_gpr_hessian":
+            # test predicting hessian using gaussian process regression.
+            self.test_gpr_hessian()
+
         if step == 0:
             # print initial geometry and energy of neb path.
             ipi.utils.nebinstool.print_neb_instanton_geo(
@@ -309,10 +313,6 @@ class MAPNEBGPRMover(Motion):
             # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
             # therefore, we set ["stage"] == "converged" and exit at next step.
             self.options["stage"] = "converged"
-
-        elif self.options["stage"] == "test_gpr_hessian":
-            # test predicting hessian using gaussian process regression.
-            self.test_gpr_hessian()
 
         else:
             raise("unrecognized stage parameter. The stage has to be neb or instanton or converged")
@@ -987,6 +987,24 @@ class MAPNEBGPRMover(Motion):
         # beads for computing hessian for selected data point.
         beads2 = Beads(natoms, total_data_with_hessian_number)
         forces2 = self.forces.copy(beads2, self.cell)
+
+        # beads for computing hessian for center data point
+        beads3 = Beads(natoms, 1)
+        forces3 = self.forces.copy(beads3, self.cell)
+        beads3.q = self.beads.q[0] 
+
+        hessians_gs = ipi.utils.nebinstool.get_hessian(beads3, forces3, beads3.q, beads3.natoms, beads3.nbeads, self.fixatoms)
+        hessians_gs = np.transpose(np.reshape(hessians_gs, [3 * natoms, beads3.nbeads, 3 * natoms]), (1,0,2))
+        hessians_gs = hessians_gs[0]
+        hessians_gs_symmetrized = (hessians_gs + np.transpose(hessians_gs, (1,0)) )/ 2
+        m3 = self.beads.m3[0]
+        m = 1/ np.sqrt(m3)
+        mm = np.outer(m, m)
+        hm = np.multiply(hessians_gs_symmetrized, mm)
+        eigenvalues, eigenvectors = np.linalg.eig(hm)
+        freq = np.sqrt(np.absolute(eigenvalues))/ (2 * np.pi * 3e10 * 2.4188843e-17) 
+
+        pass 
 
         # create cartesian coordinate of training data and test data 
         center_coordinate = self.beads.q[0]
