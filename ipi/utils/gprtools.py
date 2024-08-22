@@ -625,6 +625,11 @@ class GPModelWithDerivativesWrapper():
 
         self.coordinate_transformer = coordinate_transformer
 
+        # record the input data about initial value of kernel and noise info.
+        self.kernel_outputscale = kernel_outputscale
+        self.kernel_lengthscale_ratio = kernel_lengthscale_ratio
+        self.noise_std = noise_std
+
         # the training targets for the GPR with derivative is [V, dV/dx1, ..., dV/dxn]
         train_cartesian_targets = np.concatenate([train_V[:, np.newaxis], train_grad_x ], axis = 1)
 

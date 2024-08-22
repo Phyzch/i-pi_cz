@@ -259,8 +259,8 @@ class FixInternalDofs(object):
 
 class GPModelWithHessiansWrapper():
     '''
-    wrapper class for GPModelWithHessians
-    handles the transformation between internal coordinate and Cartesian coordinate + GPR training.
+    wrapper class for GPModelWithHessians.
+    This class handles the transformation between internal coordinate and Cartesian coordinate + GPR training.
     This code will use training data with potentials, forces and hessians, then predict Hessians.
     I wrote addition codes (See utils/gprHessian) to extend the gpytorch packages, so we can predict Hessians.
     '''

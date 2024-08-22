@@ -46,7 +46,7 @@ class non_redundant_coordinate_transformer():
     def _compute_redundant_gradient_matrix_B(self, x):
         '''
         compute how changes in Cartesian coordinate x will affect redundant coordinates d.
-        redundant gradient matrix B == \partial d / \partial x. 
+        redundant gradient matrix B == \\ partial d / \\ partial x. 
         :param: x: Cartesian coordinate.  size: [nbatch, 3 * natom]
         
         :return: matrix B: redundant gradient matrix. size: [nbatch, natom^2, 3 * natom]
@@ -172,7 +172,7 @@ class non_redundant_coordinate_transformer():
         '''
         compute hessian for redundant coordinate d. 
         Result will be a rank-4 tensor of shape: [nbatch, natom^2, 3 * natom, 3 * natom]
-        \partial^2 Dij / \partial r_{k alpha} \partial r_{l beta} = (-1)^m *  1/|r_i - r_j|^3 * ( 3 (r_{i alpha} - r_{j alpha}) * (r_{i beta} - r_{j beta}) / |r_i - r_j|^2 - delta_{alpha, beta})  ) 
+        \\ partial^2 Dij / \\ partial r_{k alpha} \\ partial r_{l beta} = (-1)^m *  1/|r_i - r_j|^3 * ( 3 (r_{i alpha} - r_{j alpha}) * (r_{i beta} - r_{j beta}) / |r_i - r_j|^2 - delta_{alpha, beta})  ) 
         m = 0 if k = l. m = 1 if k != l.
         here the hessian is only nonzero when k=i or j, l = i or j.
 

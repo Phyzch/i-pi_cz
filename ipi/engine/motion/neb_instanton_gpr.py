@@ -314,6 +314,9 @@ class MAPNEBGPRMover(Motion):
             # test predicting hessian using gaussian process regression.
             self.test_gpr_hessian()
 
+            print("finish testing gpr model which predicts hessians. Please check the output result for performance. Exiting now.")
+            self.options["stage"] = "converged"
+
         else:
             raise("unrecognized stage parameter. The stage has to be neb or instanton or converged")
 
@@ -969,9 +972,10 @@ class MAPNEBGPRMover(Motion):
 # ------------------- code below used to test the ability that gaussian process regression (GPR) predicts hessian information ----------
     def test_gpr_hessian(self):
         '''
-        test prediction of hessian using gaussian process regression
+        test the performance of gaussian process regression model that predicts hessians.
+        We randomly sample data around the center coordinate & separate data into training data and test data.
         '''
-        train_data_number = 100
+        train_data_number = 20
         test_data_number = 5 
         train_data_with_hessian_number = 5 
         test_data_with_hessian_number = test_data_number
@@ -988,23 +992,6 @@ class MAPNEBGPRMover(Motion):
         beads2 = Beads(natoms, total_data_with_hessian_number)
         forces2 = self.forces.copy(beads2, self.cell)
 
-        # beads for computing hessian for center data point
-        beads3 = Beads(natoms, 1)
-        forces3 = self.forces.copy(beads3, self.cell)
-        beads3.q = self.beads.q[0] 
-
-        # hessians_gs = ipi.utils.nebinstool.get_hessian(beads3, forces3, beads3.q, beads3.natoms, beads3.nbeads, self.fixatoms)
-        # hessians_gs = np.transpose(np.reshape(hessians_gs, [3 * natoms, beads3.nbeads, 3 * natoms]), (1,0,2))
-        # hessians_gs = hessians_gs[0]
-        # hessians_gs_symmetrized = (hessians_gs + np.transpose(hessians_gs, (1,0)) )/ 2
-        # m3 = self.beads.m3[0]
-        # m = 1/ np.sqrt(m3)
-        # mm = np.outer(m, m)
-        # hm = np.multiply(hessians_gs_symmetrized, mm)
-        # eigenvalues, eigenvectors = np.linalg.eig(hm)
-        # freq = np.sqrt(np.absolute(eigenvalues))/ (2 * np.pi * 3e10 * 2.4188843e-17) 
-
-        # pass 
 
         # create cartesian coordinate of training data and test data 
         center_coordinate = self.beads.q[0]
@@ -1027,17 +1014,13 @@ class MAPNEBGPRMover(Motion):
         train_pots = forces1.pots[:train_data_number]
         train_gradients = - np.copy(dstrip(forces1.f))[:train_data_number]
 
-        # train data without hessians
-        train_data_coordinate_without_hessians = train_data_coordinate[train_data_with_hessian_number:]
-        train_pots_without_hessians = train_pots[train_data_with_hessian_number:]
-        train_gradients_without_hessians = train_gradients[train_data_with_hessian_number:]
 
         test_pots = forces1.pots[train_data_number:]
         test_gradients = - np.copy(dstrip(forces1.f))[train_data_number:]
 
         hessians = ipi.utils.nebinstool.get_hessian(beads2,
                                                     forces2,
-                                                    beads2.q,
+                                                    np.copy(beads2.q),
                                                     beads2.natoms,
                                                     beads2.nbeads,
                                                     self.fixatoms)
@@ -1048,9 +1031,8 @@ class MAPNEBGPRMover(Motion):
         test_ab_initio_hessians = hessians[train_data_with_hessian_number:]
 
         train_hessian_data_point_index_array = np.arange(train_data_with_hessian_number)
+        test_hessian_data_point_index_array = np.arange(test_data_with_hessian_number)
 
-        initial_train_hessian_data_point_index_array = np.array([])
-        initial_train_hessians = np.array([])
         #TODO: store coordinate pots, gradients, hessian_index, hessian_data. 
 
         # create Gaussian Process regression model that can predict hessians
@@ -1058,8 +1040,8 @@ class MAPNEBGPRMover(Motion):
         ref_V = np.array([train_pots[0]])
         ref_grad_x = train_gradients[0]
         ref_hessian_x = train_ab_initio_hessians[0]
-        self.gpr_hessian_model = ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(train_data_coordinate_without_hessians, train_pots_without_hessians, train_gradients_without_hessians,
-                                                                                        initial_train_hessians, initial_train_hessian_data_point_index_array,
+        self.gpr_hessian_model = ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(train_data_coordinate, train_pots, train_gradients,
+                                                                                        train_ab_initio_hessians, train_hessian_data_point_index_array,
                                                                                         self.beads.natoms, self.coordinate_transformer,
                                                                                         self.options["gpr_SE_kernel_number"],
                                                                                         self.optarrays["gpr_kernel_outputscale"],
@@ -1072,105 +1054,40 @@ class MAPNEBGPRMover(Motion):
                                                                                         ref_mean_hessian_x= ref_hessian_x
                                                                                         )
         
-        gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.check_gpr_hessian_lengthscale()
+        gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = ipi.utils.nebinstgprtool.check_gpr_hessian_model_lengthscale(self.gpr_hessian_model)
 
-        # slowly add training hessian data.
-        retrain_bool = True
-        self.add_hessian_data_to_model(train_data_with_hessian_number, train_data_coordinate, train_pots, train_gradients, train_ab_initio_hessians, retrain_bool= retrain_bool)
         
         # test the training data 
-        predicted_train_hessians_q, train_ab_initio_hessians_q = self.test_training_hessians(train_data_with_hessian_coordinate, train_hessian_data_point_index_array, train_gradients, train_ab_initio_hessians, internal_coordinate_bool= True)
+        predicted_train_hessians_q, train_ab_initio_hessians_q = ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(train_data_with_hessian_coordinate,  train_gradients, train_ab_initio_hessians,
+                                                                                                                                          train_hessian_data_point_index_array,
+                                                                                                                                          self.gpr_hessian_model,
+                                                                                                                                        internal_coordinate_bool= True, training_data_bool= True)
         
-        predicted_train_hessians, train_ab_initio_hessians = self.test_training_hessians(train_data_with_hessian_coordinate, train_hessian_data_point_index_array, train_gradients, train_ab_initio_hessians, internal_coordinate_bool= False)
+        predicted_train_hessians, train_ab_initio_hessians = ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(train_data_with_hessian_coordinate,  train_gradients, train_ab_initio_hessians, 
+                                                                                                                                      train_hessian_data_point_index_array,
+                                                                                                                                      self.gpr_hessian_model,
+                                                                                                                                      internal_coordinate_bool= False, training_data_bool= True)
         
         # test the test data
-        predicted_test_hessians_q , test_ab_initio_hessians_q, predicted_test_grads_q, test_ab_initio_grads_q  = self.test_testing_hessians(test_data_with_hessian_coordinate, test_data_with_hessian_number, test_gradients, test_ab_initio_hessians, internal_coordinate_bool= True)
+        predicted_test_hessians_q , test_ab_initio_hessians_q  = ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(test_data_with_hessian_coordinate, test_gradients, test_ab_initio_hessians, 
+                                                                                                                                          test_hessian_data_point_index_array,
+                                                                                                                                          self.gpr_hessian_model,
+                                                                                                                                          internal_coordinate_bool= True,
+                                                                                                                                          training_data_bool= False)
         
-        predicted_test_hessians, test_ab_initio_hessians, predicted_test_grads, ab_initio_grads = self.test_testing_hessians(test_data_with_hessian_coordinate, test_data_with_hessian_number, test_gradients, test_ab_initio_hessians, internal_coordinate_bool= False)
+        predicted_test_hessians, test_ab_initio_hessians = ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(test_data_with_hessian_coordinate, test_gradients, test_ab_initio_hessians, 
+                                                                                                                                    test_hessian_data_point_index_array,
+                                                                                                                                    self.gpr_hessian_model,
+                                                                                                                                    internal_coordinate_bool= False,
+                                                                                                                                    training_data_bool= False)
 
-        
         pass 
     
-    def add_hessian_data_to_model(self, train_data_with_hessian_number, train_data_coordinate, train_pots, train_gradients, train_ab_initio_hessians, retrain_bool= True):
-        '''
-        '''
-        for hessian_index in range(train_data_with_hessian_number):
-            new_train_x = np.array([train_data_coordinate[hessian_index]])
-            new_train_V = np.array([train_pots[hessian_index]])
-            new_train_grad_x = np.array([train_gradients[hessian_index]])
-            new_train_hessian = np.array([train_ab_initio_hessians[hessian_index]])
-            new_hessian_data_point_index = np.array([0])
-            self.gpr_hessian_model.update_model_with_new_data(new_train_x, new_train_V, new_train_grad_x, new_train_hessian, new_hessian_data_point_index, retrain_bool= retrain_bool)
-            
-            gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.check_gpr_hessian_lengthscale()
 
-            pass
-
-    def check_gpr_hessian_lengthscale(self):
-        '''
-        '''
-        gpr_kernel_number = self.gpr_hessian_model.gpr_SE_kernel_number
-        gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.gpr_hessian_model.check_gpr_lengthscale()
-        print("gpr hessian output scale for kernel: " + str(gpr_hessian_kernel_outputscale))
-        for i in range(gpr_kernel_number):
-            print("kernel: " + str(i) + " gpr hessian length scale: " + str(gpr_hessian_lengthscale_list[i]))
-            print("kernel:  " + str(i) + " gpr hessian length scale ratio: " + str(gpr_hessian_lengthscale_ratio_list[i]))
-
-        return  gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list
-
-    def test_training_hessians(self, train_data_with_hessian_coordinate, train_hessian_data_point_index_array,
-                               train_gradients, train_ab_initio_hessians,
-                               internal_coordinate_bool = True,):
-        '''
-        '''
-        train_data_with_hessian_number = len(train_hessian_data_point_index_array)
-        # test the prediction of hessians:
-        # training data 
-        predicted_train_pots, predicted_train_grads, predicted_train_hessians, _, _, _ = self.gpr_hessian_model.predict_latent_function(train_data_with_hessian_coordinate,
-                                                                                                                                        train_hessian_data_point_index_array,
-                                                                                                                                        internal_coordinate_bool= False)
         
-        predicted_train_pots, predicted_train_grads_q , predicted_train_hessians_q, _, _, _ = self.gpr_hessian_model.predict_latent_function(train_data_with_hessian_coordinate,
-                                                                                                                                             train_hessian_data_point_index_array,
-                                                                                                                                             internal_coordinate_bool= True)
-
-        train_ab_initio_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(train_data_with_hessian_coordinate,
-                                                                                                                   train_gradients[:train_data_with_hessian_number],
-                                                                                                                   train_ab_initio_hessians)
 
 
-        if internal_coordinate_bool:
-            return predicted_train_hessians_q, train_ab_initio_hessians_q
-        else:
-            return predicted_train_hessians, train_ab_initio_hessians
 
-    def test_testing_hessians(self, test_data_with_hessian_coordinate, test_data_with_hessian_number, 
-                              test_gradients, test_ab_initio_hessians,
-                              internal_coordinate_bool= True):
-        '''
-        '''
-        test_hessian_data_point_index_array = np.arange(test_data_with_hessian_number)
-
-        predicted_test_pots, predicted_test_grads, predicted_test_hessians, _, _, _ = self.gpr_hessian_model.predict_latent_function(test_data_with_hessian_coordinate,
-                                                                                                                                   test_hessian_data_point_index_array,
-                                                                                                                                     internal_coordinate_bool= False)
-
-        predicted_test_pots, predicted_test_grads_q, predicted_test_hessians_q, _, _, _ = self.gpr_hessian_model.predict_latent_function(test_data_with_hessian_coordinate,
-                                                                                                                                     test_hessian_data_point_index_array,
-                                                                                                                                     internal_coordinate_bool= True)
-        
-        ab_initio_grads = test_gradients[:test_data_with_hessian_number]
-        test_ab_initio_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(test_data_with_hessian_coordinate,
-                                                                                                                  ab_initio_grads,
-                                                                                                                  test_ab_initio_hessians)
-        
-        test_ab_initio_grads_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(test_data_with_hessian_coordinate,
-                                                                                                               ab_initio_grads)
-
-        if internal_coordinate_bool:
-            return predicted_test_hessians_q , test_ab_initio_hessians_q, predicted_test_grads_q, test_ab_initio_grads_q 
-        else:
-            return predicted_test_hessians, test_ab_initio_hessians, predicted_test_grads, ab_initio_grads
 
 class LINEBGradientMapper(object):
     """Creation of the Line Integral function that will be minimized.
@@ -1855,15 +1772,18 @@ class RP_MAP(object):
         compute hessian of ring polymer
         '''
         if self.final_hessian_bool:
+            rp_beads_q = np.copy(self.rp_beads.q)
             # compute final hessians
             self.rp_hessian = ipi.utils.nebinstool.get_hessian(
                 self.rp_beads,
                 self.rp_forces,
-                self.rp_beads.q,
+                rp_beads_q,
                 self.rp_beads.natoms,
                 self.rp_beads.nbeads,
                 self.fixatoms
             )
+
+            self.rp_beads.q = rp_beads_q
         
     def optimize_GPR_model_for_dynamics_evolution(self):
         '''
@@ -1995,241 +1915,18 @@ class RP_MAP(object):
         # Need to figure out how to Gaussian Process Regression to predict the Hessian.
         self.compute_ring_polymer_hessian()
 
-        # TODO: code to test the GPModelWithHessianWrapper
-        self.test_gpr_hessian_prediction()
+        # code to test the GPModelWithHessianWrapper
+        x = self.rp_beads.q
+        pots = self.rp_forces.pots
+        grads = -np.copy(dstrip(self.rp_forces.f))
+        hessians= self.rp_hessian
+        ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(self.gpr_model, self.energy_shift,
+            x, pots, grads, hessians)
+
+        pass
     
-    def test_gpr_hessian_prediction(self):
-        '''
-        test gaussian process regression model that predict hessian.
-        '''
-        # collect gradient, force & hessian data to initialize the gpr
-        cartesian_x = self.gpr_model.train_cartesian_inputs
-        pots = self.gpr_model.train_cartesian_targets[:,0]
-        gradients = self.gpr_model.train_cartesian_targets[:, 1:]
-       
-
-        ## add more data points with potential and gradients.
-        # center_coordinate = np.mean(cartesian_x, axis= 0)
-        # new_coordinate_x, new_train_pots, new_train_gradients  = self.add_more_potential_gradient_data(center_coordinate)
         
-        # cartesian_x = np.concatenate([ cartesian_x, new_coordinate_x ])
-        # pots = np.concatenate([ pots, new_train_pots ])
-        # gradients = np.concatenate([ gradients, new_train_gradients ])
-
-        gpr_model_training_data_num = len(cartesian_x)
-
-        # training data point with hessians.
-        nbeads = self.rp_beads.nbeads
-        natoms = self.rp_beads.natoms
-
-        cartesian_x_with_hessian = self.rp_beads.q
-        pots_with_hessian = self.rp_forces.pots - self.energy_shift
-        gradients_with_hessian = - dstrip(self.rp_forces.f).copy() 
-
-        train_hessian_data_point_index_array = np.array([0, 4, 7, 10, 13, 15, 19])
-        test_hessian_data_point_index_array = np.delete(np.arange(0, nbeads), train_hessian_data_point_index_array)
-
-        # Previous shape: [3 * natoms, nbeads * 3 * natoms].
-        # change the shape of hessian to [nbeads, 3 * natoms, 3 * natoms]
-        hessians_full = np.transpose(np.reshape(self.rp_hessian, [3 * natoms, nbeads, 3 * natoms]), (1, 0, 2))
-
-        initial_train_hessians = np.array([])
-        initial_hessian_data_point_index_array = np.array([])
-
-        # initialize the gpr_hessian_model's training parameter with  output scale and length scale of previously trained model.
-        kernel_lengthscale_initio_value = self.gpr_model.output_kernel_lengthscale()
-        kernel_outputscale_initio_value = self.gpr_model.output_kernel_outputscale() 
-        # prepare the reference point with V, grad, hessian
-        hessian_ref_data_point_index = 10
-        ref_x = cartesian_x_with_hessian[hessian_ref_data_point_index]
-        ref_V = np.array([pots_with_hessian[hessian_ref_data_point_index]])
-        ref_grads = gradients_with_hessian[hessian_ref_data_point_index]
-        ref_hessians = hessians_full[hessian_ref_data_point_index]
-
-        self.gpr_hessian_model = ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(cartesian_x, pots, gradients,
-                                                                                      initial_train_hessians, initial_hessian_data_point_index_array,
-                                                                                      natoms, self.coordinate_transformer,
-                                                                                      self.gpr_model.gpr_SE_kernel_number,
-                                                                                      self.gpr_kernel_outputscale, self.gpr_kernel_lengthscale_ratio, 
-                                                                                      self.gpr_noise_std,
-                                                                                      kernel_lengthscale_initio_value= kernel_lengthscale_initio_value,
-                                                                                      kernel_outputscale_initio_value= kernel_outputscale_initio_value,
-                                                                                      constant_mean_bool= False,
-                                                                                      ref_mean_x= ref_x,
-                                                                                      ref_mean_V= ref_V,
-                                                                                      ref_mean_grad_x= ref_grads,
-                                                                                      ref_mean_hessian_x= ref_hessians)
-        
-        internal_coordinate_with_hessian = self.coordinate_transformer.get_internal_coordinate_q(cartesian_x_with_hessian)
-        internal_coordinate_with_hessian = internal_coordinate_with_hessian[:, self.gpr_hessian_model.FixingDofs.free_moving_dofs]
-        train_coordinate_with_hessian = internal_coordinate_with_hessian[train_hessian_data_point_index_array]
-        test_coordinate_with_hessian = internal_coordinate_with_hessian[test_hessian_data_point_index_array]
-
-        # add noise to hessian 
-        # hessian_noise_std = self.gpr_noise_std["hessian_noise_prior"]
-        # hessian_noise = np.random.normal(0, hessian_noise_std, size = hessians_full.shape)
-        # hessians_full_with_noise = hessians_full + hessian_noise
-
-        gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.check_gpr_lengthscale()
-        for hessian_data_point_index in train_hessian_data_point_index_array:
-            retrain_bool = False
-            new_train_x = np.array([cartesian_x_with_hessian[hessian_data_point_index]])
-            new_train_V = np.array([pots_with_hessian[hessian_data_point_index]])
-            new_train_grad_x = np.array([gradients_with_hessian[hessian_data_point_index]])
-            new_train_hessian = np.array([hessians_full[hessian_data_point_index]])
-            new_hessian_data_point_index = np.array([0])
-            self.gpr_hessian_model.update_model_with_new_data(new_train_x, new_train_V, new_train_grad_x, new_train_hessian, new_hessian_data_point_index, retrain_bool= retrain_bool)
-
-            gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.check_gpr_lengthscale()
-            pass
-
-        # test the predictio of gradients for unknown test data
-        self.test_gradients_test_data(cartesian_x)
-        
-        # test the prediction of hessian of training data.
-        predicted_train_hessian_q, ab_initio_train_hessian_q  = self.test_hessian_training_data(cartesian_x_with_hessian, gradients_with_hessian, hessians_full, train_hessian_data_point_index_array)
-        
-        # test data case for hessians.
-        predicted_test_hessian_q, ab_initio_test_hessian_q = self.test_hessian_test_data(cartesian_x_with_hessian, gradients_with_hessian, hessians_full, train_hessian_data_point_index_array)
-        
-        # test data case for hessians in Cartesian coordinate
-        predicted_test_hessian, ab_initio_test_hessian = self.test_hessian_test_data(cartesian_x_with_hessian, gradients_with_hessian, hessians_full, train_hessian_data_point_index_array, internal_coordinate_bool= False)
-
-        pass 
     
-    def add_more_potential_gradient_data(self, center_coordinate: np.ndarray):
-        '''
-        add more ab initio potential & gradient data
-        '''
-        new_train_data_number = 40 
-        natoms = self.rp_beads.natoms 
 
-        beads1 = Beads(natoms, new_train_data_number)
-        forces1 = self.rp_forces.copy(beads1, self.dcell)
 
-        sample_distance = 0.05
-        data_coordinate_shape = np.concatenate([[new_train_data_number], np.array(center_coordinate.shape) ])
-        data_coordinate_displacement = np.random.normal(0, scale= sample_distance, size= data_coordinate_shape)
-        data_coordinate = data_coordinate_displacement + center_coordinate[np.newaxis, ...]
 
-        beads1.q = data_coordinate 
-        train_pots = forces1.pots 
-        train_gradients = - np.copy(dstrip(forces1.f))
-
-        return data_coordinate, train_pots, train_gradients 
-
-    def test_hessian_training_data(self, cartesian_x_with_hessian, gradients_with_hessian, hessians_full, train_hessian_data_point_index):
-        # training data case:
-        test_x = cartesian_x_with_hessian
-        if len(train_hessian_data_point_index) > 0:
-            ab_initio_grads = gradients_with_hessian[train_hessian_data_point_index]
-            ab_initio_train_grads_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(cartesian_x_with_hessian[train_hessian_data_point_index],
-                                                                                                              ab_initio_grads)
-            ab_initio_train_hessians = hessians_full[train_hessian_data_point_index]
-            ab_initio_train_hessian_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(cartesian_x_with_hessian[train_hessian_data_point_index],
-                                                                                                                 gradients_with_hessian[train_hessian_data_point_index],
-                                                                                                                 ab_initio_train_hessians)
-        else:
-            ab_initio_train_hessians = np.array([])
-            ab_initio_train_hessian_q = np.array([])
-
-        predicted_train_pots, predicted_train_grads_q, predicted_train_hessian_q, _, _, _ = self.gpr_hessian_model.predict_latent_function(cartesian_x_with_hessian, 
-                                                                                                                      train_hessian_data_point_index,
-                                                                                                                      internal_coordinate_bool= True)
-        
-        free_moving_dofs = self.gpr_hessian_model.FixingDofs.free_moving_dofs
-        free_moving_dofs_2d = np.meshgrid(free_moving_dofs, free_moving_dofs, indexing= 'ij')
-        
-        selected_ab_initio_train_hessian_q = ab_initio_train_hessian_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
-        selected_predicted_train_hessian_q = predicted_train_hessian_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
-
-        print("training case: [0,0] ab_initio: " + str(selected_ab_initio_train_hessian_q[:, 0, 0]))
-        print("training case, [0,0] predicted" + str(selected_predicted_train_hessian_q[:, 0, 0]))
-        print("training case: [3,3] ab_initio: " + str(selected_ab_initio_train_hessian_q[:, 3, 3]))
-        print("training case, [3,3] predicted" + str(selected_predicted_train_hessian_q[:, 3, 3]))
-
-        print("training case: ab_initio: " + str(selected_ab_initio_train_hessian_q[0]))
-        print("training case: predicted: " + str(selected_predicted_train_hessian_q[0]))
-
-        print("\n")
-        print("\n")
-        print("\n")
-
-        return selected_predicted_train_hessian_q, selected_ab_initio_train_hessian_q 
-
-    def test_hessian_test_data(self, cartesian_x_with_hessian, gradients_with_hessian, hessians_full, train_hessian_data_point_index, internal_coordinate_bool= True):
-        nbeads = len(cartesian_x_with_hessian)
-        if len(train_hessian_data_point_index) > 0:
-            test_hessian_data_point_index = np.delete(np.arange(0, nbeads), train_hessian_data_point_index)
-        else:
-            test_hessian_data_point_index = np.arange(0, nbeads)
-        ab_initio_test_hessians = hessians_full[test_hessian_data_point_index]
-
-        ab_initio_test_hessians_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(cartesian_x_with_hessian[test_hessian_data_point_index],
-                                                                                                                gradients_with_hessian[test_hessian_data_point_index],
-                                                                                                                ab_initio_test_hessians)
-
-        if internal_coordinate_bool:
-            predicted_test_pots, predicted_test_grads_q, predicted_test_hessian_q, _, _, _ = self.gpr_hessian_model.predict_latent_function(cartesian_x_with_hessian, 
-                                                                                                                                test_hessian_data_point_index,
-                                                                                                                                internal_coordinate_bool= True)
-
-            free_moving_dofs = self.gpr_hessian_model.FixingDofs.free_moving_dofs
-            free_moving_dofs_2d = np.meshgrid(free_moving_dofs, free_moving_dofs, indexing= 'ij')
-            
-            selected_ab_initio_test_hessian_q = ab_initio_test_hessians_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
-            selected_predicted_test_hessian_q = predicted_test_hessian_q[:, free_moving_dofs_2d[0], free_moving_dofs_2d[1]]
-            print("testing case: [0,0] ab_initio: " + str(selected_ab_initio_test_hessian_q[:,0, 0]))
-            print("testing case: [0,0] prediction: " + str(selected_predicted_test_hessian_q[:,0, 0]))
-            print("testing case: [3,3] ab_initio: " + str(selected_ab_initio_test_hessian_q[:,3, 3]))
-            print("testing case: [3,3] prediction: " + str(selected_predicted_test_hessian_q[:,3, 3]))
-
-            pass
-
-            return selected_predicted_test_hessian_q, selected_ab_initio_test_hessian_q
-        else:
-            predicted_test_pots, predicted_test_grads, predicted_test_hessians, _, _, _ = self.gpr_hessian_model.predict_latent_function(cartesian_x_with_hessian,
-                                                                                                                                         test_hessian_data_point_index,
-                                                                                                                                         internal_coordinate_bool= False)
-            
-            return predicted_test_hessians, ab_initio_test_hessians
-
-    def test_gradients_test_data(self, cartesian_x):
-        # test the prediction of gradients:
-        new_x = np.array([cartesian_x[0] + cartesian_x[1]])/2
-        predicted_pots, predicted_train_grads, _, _, _, _ = self.gpr_hessian_model.predict_latent_function(new_x, np.array([]), internal_coordinate_bool= False)
-        predicted_pots1, predicted_train_grads1, _, _ = self.gpr_model.predict_latent_function(new_x)
-        self.cl_bead.q = new_x 
-        ab_initio_grads = - dstrip(self.cl_forces.f).copy()
-        
-        print("predicted grads (gpr_model): " + str(predicted_train_grads1))
-        print("predicted grads (hessian_gpr_model): " + str(predicted_train_grads))
-        print("ab initio grads: " + str(ab_initio_grads))
-    
-    def check_gpr_lengthscale(self):
-        '''
-        '''
-        gpr_kernel_number = self.gpr_hessian_model.gpr_SE_kernel_number
-        # gpr hessian model.
-        gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list = self.gpr_hessian_model.check_gpr_lengthscale()
-        print("gpr hessian output scale for kernel: " + str(gpr_hessian_kernel_outputscale))
-        for i in range(gpr_kernel_number):
-            print("kernel: " + str(i) + " gpr hessian length scale: " + str(gpr_hessian_lengthscale_list[i]))
-            print("kernel:  " + str(i) + " gpr hessian length scale ratio: " + str(gpr_hessian_lengthscale_ratio_list[i]))
-
-        # gpr model.
-        gpr_model_kernel_outputscale= self.gpr_model.output_kernel_outputscale() 
-        print("gpr output scale for kernel: " + str(gpr_model_kernel_outputscale))
-        free_moving_dofs = self.gpr_model.FixingDofs.free_moving_dofs
-        gpr_input_range = np.max(self.gpr_model.train_inputs, axis= 0) - np.min(self.gpr_model.train_inputs, axis= 0)
-        gpr_input_range = gpr_input_range[free_moving_dofs]
-        
-        for i in range(gpr_kernel_number):
-            gpr_lengthscale = self.gpr_model.gpr_model.base_kernel_component_list[i].lengthscale 
-            gpr_lengthscale = gpr_lengthscale.detach().numpy()[0]
-            gpr_lengthscale_ratio = gpr_lengthscale / gpr_input_range
-            print("kernel:  " + str(i) +  " gpr lengthscale ratio:" + str(gpr_lengthscale_ratio))
-        print("\n")
-        print("\n")
-
-        return gpr_hessian_kernel_outputscale, gpr_hessian_lengthscale_list, gpr_hessian_lengthscale_ratio_list
