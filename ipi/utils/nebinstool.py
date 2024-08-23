@@ -1,6 +1,6 @@
 """
 utility code for neb_instanton.py. 
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 """
 import numpy as np
 from scipy.interpolate import CubicSpline
@@ -306,6 +306,7 @@ def get_hessian(
                 continue
 
     # Start calculation:
+    # deep copy data in case rp_beads.q == x0.
     if type(x0) == ipi.utils.depend.depend_array:
         x0_copy = np.copy(dstrip(x0))
     elif type(x0) == np.ndarray:

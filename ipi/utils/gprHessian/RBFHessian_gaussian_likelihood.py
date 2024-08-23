@@ -1,4 +1,8 @@
-
+'''
+The class that compute marginalized probability distribution after consider noise in the data. 
+In the code, we transform noise from Cartesian coordinate into internal coordinate.
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+'''
 from typing import Any, Optional, Union 
 
 import numpy as np 
@@ -28,10 +32,11 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
     :param: force_noise_prior: prior for force noise 
     :param: hessian_noise_prior: prior for hessian noise.
     :param: pot_noise_constraint, force_noise_constraint, hessian_noise_constraint: constraint for pot, force and hessian data.
-    :param: has_covar_factor: The noise covariance matrix is not diagonal. The covariance matrix is written as covar_factor * covar_factor.T.
-    :param: noise_covar_factor: covariance factor for individual data point.
-    :param: grad_covar_factor_rank: the rank of covariance factor for gradient component.
-    :param: hessian_covar_factor_rank: the rank of covariance factor for hessian component.
+    :param: has_covar_factor: The noise covariance matrix is not diagonal. The covariance matrix is expressed as covar_factor * covar_factor.T.
+    :param: noise_covar_factor_pot_grad_array: An array of covar factor for all data points. The covar factor here perform transformation of gradient noise from Cartesian coordinate into internal coordinate.
+    :param: noise_covar_factor_with_hessian_array: An array of covar factor for data points with hessians. The covar factor here perform transformation of gradient & hessian noise from Cartesian coordinate into internal coordinate.
+    :param: grad_covar_factor_rank: the rank of covariance factor for gradient component. (this is number of dimensions in Cartesian coordinate.)
+    :param: hessian_covar_factor_rank: the rank of covariance factor for hessian component. (this is number of upper triangle components in Cartesian coordinate.)
     '''
     def __init__(
         self, 
@@ -67,15 +72,15 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         self.has_covar_factor = has_covar_factor
         
         if not has_covar_factor:
-            # The case that the noise of potential, force & hessian are independent. 
+            # The case that the noise of potential, gradient & hessian are (sigma_V)^2 I, (sigma_g)^2 I, (sigma_H)^2 I
             pass
         else:
-            # the case that the covariance matrix of the noise of force & hessian is the product of covariance factor. 
+            # the case that the covariance matrix of the noise of gradient & hessian is the product of covariance factor:  covar_factor @ covar_factor ^T
             if grad_covar_factor_rank == 0 or hessian_covar_factor_rank == 0:
-                raise("Must provides the rank of covariance factor for force noise & hessian noise if the noise have covariant factor.")
+                raise("Must provides the rank of covariance factor for gradient noise & hessian noise if the noise have covariant factor.")
             self.grad_covar_factor_rank = grad_covar_factor_rank
             self.hessian_covar_factor_rank = hessian_covar_factor_rank
-            self.rank = 1 + grad_covar_factor_rank + hessian_covar_factor_rank  # total rank for noise matrix of pot + grad + hessian. 
+            self.rank = 1 + grad_covar_factor_rank + hessian_covar_factor_rank  # total rank (number of columns) for noise matrix of pot + grad + hessian. 
 
             # check the shape of covar_factor_matrix
             self.noise_covar_factor_pot_grad_array = noise_covar_factor_pot_grad_array
@@ -83,14 +88,14 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
             if len(noise_covar_factor_pot_grad_array) != 0:
                 row_size = noise_covar_factor_pot_grad_array[0].shape[0]
                 column_size = noise_covar_factor_pot_grad_array[0].shape[1]
-                assert row_size == 1 + ndof, "the number of rows for covar_factor_pot_grad should fit the size of gradient & hessian in gpr model"
-                assert column_size == 1 + grad_covar_factor_rank, "the number of columns for covar_factor_pot_grad should fit the rank of gradient & hessian."
+                assert row_size == 1 + ndof, "the number of rows for covar_factor_pot_grad should be the same as the size of gradient in gpr model"
+                assert column_size == 1 + grad_covar_factor_rank, "the number of columns for covar_factor_pot_grad should be the same as the rank of gradient."
 
             if len(noise_covar_factor_with_hessian_array) != 0:
                 row_size = noise_covar_factor_with_hessian_array[0].shape[0]
                 column_size = noise_covar_factor_with_hessian_array[0].shape[1]
-                assert row_size == 1 + ndof + hessian_triu_size,  "the number of rows for covar_factor_with_hessian should fit the size of gradient & hessian in gpr model"
-                assert column_size == 1 + grad_covar_factor_rank + hessian_covar_factor_rank, "the number of columns for covar_factor_with_hessian should fit the rank of gradient & hessian."
+                assert row_size == 1 + ndof + hessian_triu_size,  "the number of rows for covar_factor_with_hessian should be the same as the size of gradient & hessian in gpr model"
+                assert column_size == 1 + grad_covar_factor_rank + hessian_covar_factor_rank, "the number of columns for covar_factor_with_hessian should be the same as the rank of gradient & hessian."
 
         # register potential noises, the constraint for the potential noise & the prior for the potential noise
         # follwoing the convention in gpytorch, here pot_noises are variances of noise 
@@ -151,13 +156,17 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                                         new_noise_covar_factor_pot_grad_array: torch.Tensor,
                                         new_noise_covar_factor_with_hessian_array: torch.Tensor):
         '''
-        update the noise_covar_factor, which transform the noise from Cartesian coordinate into internal coordinate
+        update the noise_covar_factor_array, which transform the noise from Cartesian coordinate into internal coordinate.
+        Note here: for each data point, it has its own noise_covar_factor_pot_grad & noise_covar_factor_with_hessian (if the data point contains hessian information).
+        Therefore, when we add new data into Gaussian Process Regression model, we need to update the noise_covar_factor array.
+        :param: new_noise_covar_factor_pot_grad_array: the covar factor matrix for transformation of gradient noise for the new data point.
+        :param: new_noise_covar_factor_with_hessian_array: the covar factor matrix for transformation of gradient + hessian noise for the new data point.
         '''
         if len(new_noise_covar_factor_pot_grad_array) != 0:
                 row_size = new_noise_covar_factor_pot_grad_array[0].shape[0]
                 column_size = new_noise_covar_factor_pot_grad_array[0].shape[1]
-                assert row_size == 1 + self.ndof, "the number of rows for covar_factor_pot_grad should fit the size of gradient & hessian in gpr model"
-                assert column_size == 1 + self.grad_covar_factor_rank, "the number of columns for covar_factor_pot_grad should fit the rank of gradient & hessian."
+                assert row_size == 1 + self.ndof, "the number of rows for covar_factor_pot_grad should fit the size of gradient in gpr model"
+                assert column_size == 1 + self.grad_covar_factor_rank, "the number of columns for covar_factor_pot_grad should fit the rank of gradient."
 
         if len(new_noise_covar_factor_with_hessian_array) != 0:
                 row_size = new_noise_covar_factor_with_hessian_array[0].shape[0]
@@ -176,7 +185,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
     ):
         '''
         :param: M: total number of input data points
-        :param: M_H: number of input data points contain hessian information.
+        :param: hessian_data_point_index_array: the index for data point contains hessian information. 
         '''
         n_batch_dim = len(self.batch_shape)
         M_H = len(hessian_data_point_index_array)
@@ -196,21 +205,21 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
             noise_covar_matrix[diag_index, diag_index] = noises_var
         else:
             # Covariance matrix of the noise : covar_factor * Diag(pot_noise_var, force_noise_var, hessian_noise_var) * covar_factor
-            pot_noises_std = torch.sqrt(self.pot_noises).type(self.noise_covar_factor_pot_grad_array.dtype)
-            force_noises_std = torch.sqrt(self.force_noises).repeat([self.grad_covar_factor_rank]).type(self.noise_covar_factor_pot_grad_array.dtype)
-            hessian_noises_std = torch.sqrt(self.hessian_noises).repeat([self.hessian_covar_factor_rank]).type(self.noise_covar_factor_pot_grad_array.dtype)
+            pot_noises_std = torch.sqrt(self.pot_noises).type(self.noise_covar_factor_pot_grad_array.dtype)  # shape [1]
+            force_noises_std = torch.sqrt(self.force_noises).repeat([self.grad_covar_factor_rank]).type(self.noise_covar_factor_pot_grad_array.dtype)  # shape: [grad_rank]
+            hessian_noises_std = torch.sqrt(self.hessian_noises).repeat([self.hessian_covar_factor_rank]).type(self.noise_covar_factor_pot_grad_array.dtype)  # shape: [hessian_rank]
 
-            matrix_size = M + M * self.ndof + M_H * self.hessian_triu_size 
-            covar_factor_rank_size = M + M * self.grad_covar_factor_rank + M_H * self.hessian_covar_factor_rank
-            noise_covar_matrix = torch.zeros([matrix_size, matrix_size], dtype= self.noise_covar_factor_pot_grad_array.dtype)
-            noise_covar_factor_all_data = torch.zeros([matrix_size, covar_factor_rank_size], dtype= self.noise_covar_factor_pot_grad_array.dtype)
+            matrix_size = M + M * self.ndof + M_H * self.hessian_triu_size  # the size of covariance matrix.  It is also number of rows for covar_factor
+            covar_factor_rank_size = M + M * self.grad_covar_factor_rank + M_H * self.hessian_covar_factor_rank  # the column size of covar_factor
+            noise_covar_matrix = torch.zeros([matrix_size, matrix_size], dtype= self.noise_covar_factor_pot_grad_array.dtype)  # the covariance matrix of noise. 
+            noise_covar_factor_all_data = torch.zeros([matrix_size, covar_factor_rank_size], dtype= self.noise_covar_factor_pot_grad_array.dtype) # the covariance factor of noise. 
 
             # weight of covariance factor of the noise covariance matrix. This is noise in Cartesian coordinate. 
-            noise_covar_factor_weight = torch.zeros([self.rank, self.rank], dtype= self.noise_covar_factor_pot_grad_array.dtype)
+            noise_covar_factor_weight = torch.zeros([self.rank, self.rank], dtype= self.noise_covar_factor_pot_grad_array.dtype)  # the standard deviation of potential, gradient & hessian noise in Cartesian coordinate.
             noise_covar_factor_weight_diag = torch.concatenate([pot_noises_std, force_noises_std, hessian_noises_std])
             noise_covar_factor_weight[torch.arange(self.rank), torch.arange(self.rank)] = noise_covar_factor_weight_diag 
             
-            # the covariance factor for potential and gradient
+            # the noise for potential and gradient in Cartesian coordinate
             noise_covar_factor_weight_pot_grad = noise_covar_factor_weight[: 1 + self.grad_covar_factor_rank, : 1 + self.grad_covar_factor_rank]
             
             hessian_data_point_index = -1
@@ -222,8 +231,9 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                 grad_column_index = np.arange(0, self.grad_covar_factor_rank) + (M + data_point_index * self.grad_covar_factor_rank)                
 
                 if data_point_index in hessian_data_point_index_array:
+                    # the data point index in the hessian_data_point_index_array.
                     hessian_data_point_index = int(torch.argwhere(data_point_index == hessian_data_point_index_array)[0][0])
-
+                    # the row and column index in noise_covar_factor matrix that corresponds to single data point.
                     hessian_row_index = np.arange(0, self.hessian_triu_size) + (M * (self.ndof + 1) + hessian_data_point_index * self.hessian_triu_size)
                     row_index = np.concatenate([ pot_row_index, grad_row_index, hessian_row_index])
 
@@ -234,6 +244,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                     noise_covar_factor = self.noise_covar_factor_with_hessian_array[hessian_data_point_index]  # covariance factor with hessian info.
                     noise_covar_factor_all_data[two_dimensional_index[0], two_dimensional_index[1]] = torch.matmul(noise_covar_factor, noise_covar_factor_weight)
                 else:
+                    # the row and column index in noise_covar_factor matrix that corresponds to single data point.
                     row_index = np.concatenate([ pot_row_index, grad_row_index ])
                     column_index = np.concatenate([ pot_column_index, grad_column_index])
 
@@ -242,6 +253,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                     noise_covar_factor_pot_grad = self.noise_covar_factor_pot_grad_array[data_point_index]
                     noise_covar_factor_all_data[two_dimensional_index[0], two_dimensional_index[1]] = torch.matmul(noise_covar_factor_pot_grad, noise_covar_factor_weight_pot_grad)
 
+            # the covariance matrix of noise is covar_factor @ (covar_factor)^T
             noise_covar_matrix = torch.matmul(noise_covar_factor_all_data, noise_covar_factor_all_data.transpose(-1, -2))    
         
         return noise_covar_matrix 
@@ -265,6 +277,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
     def marginal(self, function_dist: MultivariateNormal, *params : Any, **kwargs: Any) -> MultivariateNormal:
         r"""
         compute the marginal probability p(y|X), marginalize over f(X).
+        the covariance matrix will be K + noise_covar_matrix.
         :param: function_dist: latent function distribution f(X). MultivariateNormal distribution.
         :param: M: number of data points in the 1d data.
         :param: hessian_data_point_index_array: The index of data point that contains hessian information.
@@ -274,13 +287,14 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
 
         M = params[0]
         hessian_data_point_index_array = params[1]
-
+        # covar: covariance matrix of the latent function.
         mean, covar = function_dist.mean, function_dist.lazy_covariance_matrix
 
         # ensure that sumKroneckerLT is actually called
         if isinstance(covar, LazyEvaluatedKernelTensor):
             covar = covar.evaluate_kernel()
         
+        # compute the covariance matrix of the noise.
         noise_covar = self._shaped_noise_covar(
             M, hessian_data_point_index_array
         )

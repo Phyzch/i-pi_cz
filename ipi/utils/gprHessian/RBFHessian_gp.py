@@ -1,3 +1,8 @@
+"""
+Contains classes for Gaussian Process Regression model, which is capable of predicting hessians.
+The code is adapted from GPytorch package: https://gpytorch.ai/. This code is based on version v1.12. 
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+"""
 from .RBFHessianKernel import RBFKernelHessian 
 from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian
 from .RBFHessian_prediction_strategy import RBFHessianPredictionStrategy
@@ -23,20 +28,32 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                  noise_covar_factor_pot_grad_array: torch.Tensor, noise_covar_factor_with_hessian_array: torch.Tensor,
                  kernel_lengthscale_initio_value: np.ndarray= np.array([]),
                  kernel_outputscale_initio_value: np.ndarray= np.array([]),
-                 constant_mean_bool= True,
+                 constant_mean_func_bool= True,
                  ref_mean_coordinate: torch.Tensor= torch.Tensor([]),
                  ref_mean_pot: torch.Tensor= torch.Tensor([]),
                  ref_mean_grad: torch.Tensor= torch.Tensor([]),
                  ref_mean_hessian: torch.Tensor= torch.Tensor([])):
         '''
+        :param: train_inputs: input coordinate of training data. shape: [M, ard_num_dims]
+        :param: train_targets: 1d targets of training data. 
+        :param: training_data_hessian_data_point_index: the indices of data points that contain hessian information.
+        :param: hessian_fixdofs: the index of hessian dofs that need to be excluded from modeling. (In current implementation, it is empty)
         :param: gpr_SE_kernel_number: number of squared exponential kernel for GPR model.
         :param: kernel_outputscale: numpy array, shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
-        :param: kernel_lengthscale_ratio: numpy array. shape: [gpr_SE_kernel_number, ard_num_dims]   Estimation of the length scale of kernel.
-        :param: likelihood_pot_noise: numpy array. shape: [1]. Estimation of the variance of the potential noise.
-        :param: likelihood_force_noise: numpy array. shape: [ard_num_dims]: Estimation of the variance of the force noise.
-        :param: likelihood_hessian_noise: numpy array. shape: [hessian_triu_size]. Estimation of the variance of the hessian noise. 
-        :param: kernel_lengthscale_initio_value: 2d numpy array.
-        :param: kernel_outputscale_initio_value: 1d numpy array.
+        :param: kernel_lengthscale_ratio: numpy array. shape: [gpr_SE_kernel_number, ard_num_dims]   Estimation of the ratio between length scale of kernel and range of input data.
+        :param: likelihood_pot_noise_var: numpy array. shape: [1]. Estimation of the variance of the potential noise.
+        :param: likelihood_force_noise_var: numpy array. shape: [ard_num_dims]: Estimation of the variance of the force noise.
+        :param: likelihood_hessian_noise_var: numpy array. shape: [hessian_triu_size]. Estimation of the variance of the hessian noise. 
+        :param: likelihood_force_noise_rank: The rank of covar factor of force noises. This is equal to number of degrees of freedoms of force in Cartesian coordinate.
+        :param: likelihood_hessian_noise_rank: The rank of covar factor of hessian noises. This is equal to the number of upper triangle components of hessian matrix in Cartesian coordinate.
+        :param: noise_covar_factor_pot_grad_array: the covariance factor matrix that transform noise in Cartesian coordinate into internal coordiante. (only transform gradient noise). 
+                shape: [M, 1 + ard_num_dims, 1 + force_noise_rank]
+        :param: noise_covar_factor_with_hessian_array: the covariance factor matrix that transform noise in Cartesian coordinate into internal coordinate (include gradient and hessian noise).
+                shape: [M_H, 1 + ard_num_dims + hessian_triu_size, 1 + force_noise_rank + hessian_noise_rank]
+        :param: kernel_lengthscale_initio_value: 2d numpy array. If set, we will initialize the length scale of kernel as this value.
+        :param: kernel_outputscale_initio_value: 1d numpy array. If set, we will initialize the output scale of kernel as this value.
+        :param: constant_mean_func_bool: If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians. Otherwise, it will be Taylor expansion around ref point to second order. 
+        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         '''
         # the data point index that contains the hessian information.
         self.training_data_hessian_data_point_index = training_data_hessian_data_point_index
@@ -47,24 +64,24 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
         self.ard_num_dims = ard_num_dims 
 
-        nactive = ard_num_dims - len(hessian_fixdofs)
-        hessian_triu_size = int(nactive * (nactive + 1) / 2)
+        nactive = ard_num_dims - len(hessian_fixdofs)  # number of active degrees of freedom.
+        hessian_triu_size = int(nactive * (nactive + 1) / 2) # the number of upper triangle components in hessian matrices.
 
         self.hessian_triu_size = hessian_triu_size
 
-        target_len = data_num * (ard_num_dims + 1) + hessian_triu_size  * len(training_data_hessian_data_point_index)
+        target_len = data_num * (ard_num_dims + 1) + hessian_triu_size * len(training_data_hessian_data_point_index)  # the length of target data.
         assert len(train_targets) == target_len, "the length of target data is wrong."
         
-        # set the likelihood function 
+        # set the likelihood function for Gaussian Process Regression model. Likelihood function describe the noise in data.
         likelihood = self._set_likelihood_noise_prior(train_inputs, likelihood_pot_noise_var, likelihood_force_noise_var, likelihood_hessian_noise_var,
                                                       likelihood_force_noise_rank, likelihood_hessian_noise_rank, 
                                                       noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array)
 
         super(GPModelWithHessians, self).__init__(train_inputs, train_targets, likelihood)
 
-        # constraint for mean:
+        # set the mean function of GPR model. It will be either (1) constant value function (2) function as Taylor expansion of potential around a reference point.
         self._set_mean_function(train_inputs, train_targets, 
-                                constant_mean_bool, 
+                                constant_mean_func_bool, 
                                 ref_mean_coordinate, ref_mean_pot, ref_mean_grad, ref_mean_hessian)
 
         # set the covariance function (kernel) for Gaussian Process regression.
@@ -78,12 +95,13 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                            ref_mean_coordinate, ref_mean_pot, ref_mean_grad, ref_mean_hessian):
         '''
         set the mean function for the Gaussian Process Regression.
-        
+        If constant_mean_bool = True, we will set the mean function as constant potential function.
+        If constant_mean_bool = False, we will set the mean function as Taylor expansion around the reference point to second order.
         '''
         data_num = train_inputs.shape[-2]
         
         if constant_mean_bool:
-            mean_constant_estimate = torch.mean(train_targets[..., :data_num], dim= -1)
+            mean_constant_estimate = torch.mean(train_targets[..., :data_num], dim= -1)  # the mean value of the potential.
             self.mean_module = ConstantMeanHessian()
             self.mean_module.constant = mean_constant_estimate  # set the constant (size 1) as mean value of prior 
         else:
@@ -91,15 +109,19 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             assert ref_mean_grad.shape[0] == self.ard_num_dims 
             assert ref_mean_hessian.shape[0] == self.hessian_triu_size
             self.ref_mean_coordinate = ref_mean_coordinate
-
+            # set the mean function as Taylor expansion around the reference point.
             self.mean_module = MeanWithPotGradHessian(ref_mean_coordinate, ref_mean_pot, ref_mean_grad, ref_mean_hessian,
-                grad_size= self.ard_num_dims, hessian_size= self.hessian_triu_size)
+                grad_size= self.ard_num_dims, hessian_triu_size= self.hessian_triu_size)
  
             
-    def _set_gpr_kernel(self, train_inputs, gpr_SE_kernel_number, kernel_outputscale, kernel_lengthscale_ratio, 
+    def _set_gpr_kernel(self, train_inputs, gpr_SE_kernel_number, 
+                        kernel_outputscale, kernel_lengthscale_ratio, 
                         kernel_lengthscale_initio_value, kernel_outputscale_initio_value):
         '''
         set the kernel for the Gaussian Process Regression. 
+        We set constraint and prior for lengthscale and output scale parameter in the model.
+        If kernel_lengthscale_initio_value is given (typically inherit from previous gpr model training), we will use this value.
+        Otherwise, we use the length scale value computed from kernel_length_scale_ratio.
         '''
         self.gpr_SE_kernel_number = gpr_SE_kernel_number 
 
@@ -132,7 +154,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             length_scale_cutoff = length_scale_ratio_cutoff * train_inputs_range 
             lengthscale_constraint = gpytorch.constraints.GreaterThan(length_scale_cutoff) 
 
-            # set Squared exponential kernel function 
+            # set Squared exponential kernel function which also includes hessian data. 
+            # This kernel assume data is 1d data, where we compress potential V, gradient g and hessian h into 1d.
             base_kernel = RBFKernelHessian(ard_num_dims= ard_num_dims, 
                                             lengthscale_prior= lengthscale_prior, 
                                             lengthscale_constraint= lengthscale_constraint,
@@ -140,13 +163,15 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             
             covar_module = gpytorch.kernels.ScaleKernel(base_kernel, outputscale_prior = outputscale_prior)
 
-            # Initialize lengthscale and output scale to the mean of priors. Or use the value specified by users.
+            # Initialize lengthscale and outputscale to the mean of priors. Or use the value specified by users.
             if len(kernel_lengthscale_initio_value) == 0:
                 covar_module.base_kernel.lengthscale = lengthscale_prior.mean 
             else:
                 if len(kernel_lengthscale_initio_value[i]) == len(covar_module.base_kernel.lengthscale[0]): 
+                    # the size of initio value chosen by users match the size of kernel in the model, we set the value
                     covar_module.base_kernel.lengthscale[0] = torch.tensor(kernel_lengthscale_initio_value[i])
                 else:
+                    print("@Warning: GPRHessian model: the initio length scale value (from previous GPR model) does not match the shape of the model, we will still use the initio value set in the input file.")
                     covar_module.base_kernel.lengthscale = lengthscale_prior.mean
 
             if len(kernel_outputscale_initio_value) == 0:
@@ -160,7 +185,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self.base_kernel_component_list = base_kernel_component_list 
         self.covar_module_component_list = covar_module_component_list
 
-        # sum of Squared Exponential Covariance function. 
+        # sum of Squared Exponential Covariance function. This will be the covariance function.
         self.covar_module = self.covar_module_component_list[0]
         for i in range(1, gpr_SE_kernel_number):
             self.covar_module = self.covar_module + self.covar_module_component_list[i]
@@ -170,7 +195,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                                     likelihood_force_noise_rank, likelihood_hessian_noise_rank, 
                                     noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array):
         '''
-        set the prior and constraint for the likelihood noise.
+        set the prior and constraint for the noise of GPR model.
+        The information will be contained in likelihood class: RBFHessianGaussianLikelihood.
         '''
         ard_num_dims = train_inputs.shape[-1]
         data_point_nums = train_inputs.shape[-2]
@@ -242,7 +268,12 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
     def forward(self,x, inputs_hessian_data_point_index= torch.tensor([]), **kwargs):
         '''
-        return the distribution of the training targets
+        return the distribution of the training targets.
+        The mean function will be given by mean module.
+        The covariance of Gaussian distribution will be given by covar_module.
+        Following the convention of pytorch (&Gpytorch), the __call__() function will call __forward__() function to get distribution of target data.
+
+        :param: inputs_hessian_data_point_index: the index of data that contain hessian information in the input data.
         ''' 
         nactive = self.ard_num_dims - len(self.hessian_fixdofs)
         mean_x = self.mean_module(x, hessian_data_point_index= inputs_hessian_data_point_index, nactive= nactive)
@@ -255,9 +286,11 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
     def __call__(self, *args, **kwargs) -> MultivariateNormal:
         '''
+        Adapted from __call__() function in gpytorch/models/exact_gp.py/ExactGP class
         *args are new input data (either training inputs or test inputs)
         **kwargs: key word arguments.
-        :param: inputs_hessian_data_point_index is used for covariance matrix (kernel) evaluation.
+        :param: inputs_hessian_data_point_index is used for covariance matrix (kernel) evaluation. (see forward() function).
+        We need to provide inputs_hessian_data_point_index for the forward function when we call __call__().
         '''
         train_inputs = list(self.train_inputs) if self.train_inputs is not None else []
         inputs = [i.unsqueeze(-1) if i.ndimension() == 1 else i for i in args]  # make inputs data have 2 dimensions.
@@ -340,6 +373,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 full_inputs.append(torch.cat([train_input, input], dim=-2))
 
             # Get the joint distribution for training / test data 
+            # the hessian data point index in test data should be shifted by number of training data when we compute covariance matrix of full inputs (training input + test input).
             inputs_hessian_data_point_index_in_full_input = inputs_hessian_data_point_index + train_inputs[0].shape[-2]
             full_inputs_hessian_data_point_index = torch.cat((self.training_data_hessian_data_point_index, inputs_hessian_data_point_index_in_full_input)).to(torch.int32)
 
@@ -349,7 +383,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                     raise RuntimeError("ExactGP.forward must return a MultivariateNormal")
             full_mean, full_covar = full_output.loc, full_output.lazy_covariance_matrix
 
-            # Make the prediction
+            # Make the prediction of test data. 
             with settings.cg_tolerance(settings.eval_cg_tolerance.value()) and settings.fast_pred_var(True):
                 (
                     predictive_mean,
@@ -363,8 +397,7 @@ def train_gpr_model(model: GPModelWithHessians, training_error_cutoff= np.power(
     '''
     the function that train the GPR model.
     :param: model: GPR model with Hessian information.
-    :param: training_error_cutoff: train until the change of loss function is smaller than the cutoff.
-
+    :param: training_error_cutoff: train until the change of loss function in one step is smaller than the cutoff.
     :return: None
     '''
      # set model & likelihood to the training mode

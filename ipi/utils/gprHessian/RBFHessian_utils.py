@@ -1,31 +1,37 @@
+'''
+Utility function for Gaussian Process Regression model (with capability of predicting hessians.)
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+'''
 import numpy as np 
 import torch 
 
 def transform_1d_train_targets_into_pots_grads_hessians(train_targets: torch.Tensor, M: int , ndofs: int, fixdofs: np.ndarray, M_H: int):
     '''
-    Transform the 1d training targets from the pot, gradient and hessian data
+    Transform the 1d training targets into the potential, gradient and hessian data.
+    For the structure of 1d targets, see (eq.9) in J.Chem. Theory Comput. 2024, 20,3766-3778
     :param: M: total number of input data points.
     :param: ndofs: number of degrees of freedom in input data points.
     :param: fixdofs: numpy.ndarray. the dof that keep fixed in hessian calculation.
     :param: M_H: number of data points that contain hessian information.
     '''
-    nactive = ndofs - len(fixdofs)
-    hessian_triu_size = int(nactive * (nactive + 1) / 2) 
-    targets_size = M * (ndofs + 1) + hessian_triu_size * M_H 
+    nactive = ndofs - len(fixdofs)  # number of active dofs
+    hessian_triu_size = int(nactive * (nactive + 1) / 2)   # the number of elements in upper triangle part of hessian matrix.
+    targets_size = M * (ndofs + 1) + hessian_triu_size * M_H  # size of target data: pot (M) + gradient (M * ndofs) + hessian: (hessian_triu_size * M_H)
     
     batch_shape = train_targets.shape[:-2]
     assert train_targets.shape[-1] == targets_size, "the size of training target does not match the required data. Current shape: {}, required shape: {}".foramt(train_targets.shape[-1], targets_size)
 
     pot_data = train_targets[..., :M] 
-    force_data = train_targets[..., M: M * (ndofs + 1)]
+    gradient_data = train_targets[..., M: M * (ndofs + 1)]
 
     pots = pot_data 
-    forces = force_data.reshape([*batch_shape, M, ndofs])
+    gradients = gradient_data.reshape([*batch_shape, M, ndofs])
 
     if M_H > 0:
         hessian_data = train_targets[..., M * (ndofs + 1): M * (ndofs + 1) + hessian_triu_size * M_H]
         hessian_triu = hessian_data.reshape([*batch_shape, M_H, hessian_triu_size ])
         
+        # generate 2d hessian matrix from upper triangle part of hessians.
         triu_indices = torch.triu_indices(nactive, nactive)
         triu_1d_indices = triu_indices[0] * nactive + triu_indices[1]
 
@@ -41,12 +47,12 @@ def transform_1d_train_targets_into_pots_grads_hessians(train_targets: torch.Ten
         hessians = torch.Tensor([])
 
     
-    return pots, forces, hessians 
+    return pots, gradients, hessians 
     
 def take_upper_triangular_part(tensor):
     '''
-    Take the upper triangular part of the matrix of tensor (upper triangular part of last 2 dimensions).
-    :param: tensor: tensor to take the upper triangular part. Can be numpy or torch.Tensor
+    Take the upper triangular part of tensor. (here if the dimension of tensor > 2, we treat it as a stack of matrices. The last two dimensions are the dimension for matrix.)
+    :param: tensor: tensor to take the upper triangular part. the data type can be numpy.ndarray or torch.Tensor
     '''
     if len(tensor) == 0:
         # in case the tensor is empty.
@@ -57,7 +63,7 @@ def take_upper_triangular_part(tensor):
     size2 = tensor.shape[-1]
 
     if size1 != size2:
-        raise RuntimeError("The matrix we take upper triangular part about is not square matrix.  size1: {},  size2: {}".format(size1, size2))
+        raise RuntimeError("The matrix we try to take upper triangular part is not a square matrix.  size1: {},  size2: {}".format(size1, size2))
 
     if type(tensor) == torch.Tensor:
         # torch.Tensor 

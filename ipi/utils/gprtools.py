@@ -1,7 +1,7 @@
 '''
 packages for constructing gaussian process regression model
 using gpytorch framework (See https://docs.gpytorch.ai/en/stable/).
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import torch 
 import gpytorch
@@ -240,16 +240,6 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
 
     train_counts = 0 
 
-    # for debug
-    # print("Iter %d" %(train_counts))
-    # print("mean_module constant: " + str(model.mean_module.constant))    
-    # kernel_lengthscale = model.output_kernel_lengthscale()
-    # print("kernel lengthscale: " + str(kernel_lengthscale) )
-    # output_scale = model.output_kernel_outputscale()
-    # print("outputscale: " + str(output_scale))
-    # print("noise:" + str(likelihood.task_noises))
-    # print("\n")
-
     loss_value_list = []
     loss_prior_list = []
     
@@ -281,16 +271,6 @@ def train_gpr(model:GPModelWithDerivatives , training_error_cutoff = np.power(10
         optimizer.step()
 
         train_counts = train_counts + 1
-
-    # for debug:
-    # print("Iter %d - Loss %.3f" %(train_counts, loss_value))
-    # print("mean_module constant: " + str(model.mean_module.constant))
-    # kernel_lengthscale = model.output_kernel_lengthscale()
-    # print("kernel lengthscale: " + str(kernel_lengthscale) )
-    # output_scale = model.output_kernel_outputscale()
-    # print("outputscale: " + str(output_scale))
-    # print("noise:" + str(likelihood.task_noises))
-    # print("\n")
 
     pass 
 

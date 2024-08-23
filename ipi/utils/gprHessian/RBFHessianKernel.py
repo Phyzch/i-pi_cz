@@ -1,6 +1,10 @@
-# Radial Basis function kernel with Hessian information.
-# Adapted from rbf_kernel_grad.py in gpytorch
-# This is an extension of gpytorch rbfkernel
+'''
+Radial Basis function kernel after including Hessian information.
+Adapted from gpytorch/kernels/rbfkernel.py in GPytorch package.
+This is an extension of gpytorch rbfkernel, which computes covariance matrix (kernel) between two 1d data point, which may contain hessian information.
+
+Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+'''
 import numpy as np 
 import torch 
 from linear_operator.operators import KroneckerProductLinearOperator
@@ -100,8 +104,15 @@ def matrix_outer_product(matrix1, matrix2, d):
 
 class RBFKernelHessian(RBFKernel):
     r"""
-
-    :param: 
+    Class that compute kernels for 1d data contains hessian information. See eq.(9) in J.Chem. Theory Comput. 2024, 20,3766−3778 for the structure of data.
+    Adapated from RBFKernel in Gpytorch (gpytorch.kernels.rbf_kernel.py)
+    :param: ard_num_dims: number of degrees of freedom in input data.
+    :param: batch_shape: shape of batch. 
+    :param: active_dims: the dimension that are active. (not used in the current implementation).
+    :param: lengthscale_prior: the prior distribution of length scale.
+    :param: lengthscale_constraint: the constraint on length scale parameter.
+    :param eps: The minimum value that the lengthscale can take (prevents divide by zero errors). (Default: `1e-6`.)
+    :param: hessian_fixdofs: the degrees of freedom in hessian need to be fixed.
     """
     def __init__(self,
         ard_num_dims: Optional[int] = None,
@@ -124,6 +135,8 @@ class RBFKernelHessian(RBFKernel):
         y1 = (V^(1), ..., V^(M), dV^(1)/dx, dV^(2)/dx, ..., dV^(M)/dx, d^2 V^(1)/dx^2, ..., d^2 V^(M_H)/dx^2).
         y2 : similarly but with different data number M and Hessian data number M_H. 
         Here d^2 V^(1) / dx^2 is the upper triangular part of Hessian with active dimensions. We do not include all dimensions in the Hessian (exclude fixdof). The size of hessian matrix is native * (nactive + 1) / 2
+        Below, we use index 1 represent potential data, index 2 represent gradient data and index 3 represent hessian data. 
+        For example: K12: covariance between potential and gradient. K23: covariance between gradient and hessian.
         :param: x1: input data, shape: (M1, d).
         :param: x2: input data, shape: (M2, d)
         :param: M_H1: data number that contains Hessian information in x1.
@@ -364,7 +377,7 @@ class RBFKernelHessian(RBFKernel):
             K32 = K32_part1 + K32_part2 
             K[..., M1 * (1 + d): , M2 : M2 * (1 + d) ] = K32 
 
-        # 9) K33: covariance function between hessian matrices. 
+        # 9) K33: covariance function between two hessian matrices.  (d^2 V^(1) / dx^2, .., d^2 V^(M_H1) / dx^2) and (d^2 V^(1) / dx^2, .., d^2 V^(M_H2) / dx^2)  
         # (x1_p - x2_p)/(l_p)^2. Note only some data points have hessian information. Also only active_dims dofs will appear in hessian matrix.
         # shape: (M_H1, M_H2, nactive)
         if M_H1 > 0 and M_H2 > 0:
@@ -399,7 +412,7 @@ class RBFKernelHessian(RBFKernel):
             K33 = K33 * RBF_K33
             K[..., (1 + d) * M1: , (1 + d) * M2 : ] = K33 
 
-        # symmetrize for stability 
+        # symmetrize the covariance matrix for stability. 
         if M1 == M2 and torch.eq(x1, x2).all() and torch.all(hessian_data_point_index_1 == hessian_data_point_index_2):
             K = 0.5 * (K.transpose(-1, -2) + K)
 

@@ -1011,11 +1011,11 @@ class MAPNEBGPRMover(Motion):
         beads2.q = np.concatenate([ train_data_with_hessian_coordinate, test_data_with_hessian_coordinate ])
 
         # compute potential and force and hessian.
-        train_pots = forces1.pots[:train_data_number]
+        train_pots = forces1.pots[:train_data_number] - self.optarrays["energy_shift"]
         train_gradients = - np.copy(dstrip(forces1.f))[:train_data_number]
 
 
-        test_pots = forces1.pots[train_data_number:]
+        test_pots = forces1.pots[train_data_number:]  - self.optarrays["energy_shift"]
         test_gradients = - np.copy(dstrip(forces1.f))[train_data_number:]
 
         hessians = ipi.utils.nebinstool.get_hessian(beads2,
@@ -1033,8 +1033,6 @@ class MAPNEBGPRMover(Motion):
         train_hessian_data_point_index_array = np.arange(train_data_with_hessian_number)
         test_hessian_data_point_index_array = np.arange(test_data_with_hessian_number)
 
-        #TODO: store coordinate pots, gradients, hessian_index, hessian_data. 
-
         # create Gaussian Process regression model that can predict hessians
         ref_x = train_data_coordinate[0]
         ref_V = np.array([train_pots[0]])
@@ -1047,7 +1045,7 @@ class MAPNEBGPRMover(Motion):
                                                                                         self.optarrays["gpr_kernel_outputscale"],
                                                                                         self.optarrays["gpr_kernel_lengthscale_ratio"],
                                                                                         self.optarrays["gpr_noise_std"],
-                                                                                        constant_mean_bool= False,
+                                                                                        constant_mean_func_bool= False,
                                                                                         ref_mean_x= ref_x, 
                                                                                         ref_mean_V= ref_V, 
                                                                                         ref_mean_grad_x= ref_grad_x,
