@@ -1,6 +1,6 @@
 """
 utility code for neb_instanton.py. 
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 """
 import numpy as np
 from scipy.interpolate import CubicSpline
@@ -103,9 +103,13 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
 
     cs = CubicSpline(neb_bead_path_r_scaled, b, axis = 0)  # object for cubic spline interpolation. interpolate along axis 0.
 
-    new_a = np.linspace(0, neb_bead_path_r_scaled[-1], num = interpolation_bead_number)  
+    cs1 = CubicSpline(np.arange(neb_bead_number), neb_bead_path_r_scaled)
+    
+    new_a = np.linspace(0, neb_bead_number - 1, num = interpolation_bead_number)  
+    
+    new_bead_r_scaled = cs1(new_a)
 
-    bead_path_x = cs(new_a)
+    bead_path_x = cs(new_bead_r_scaled)
 
     bead_distance = np.linalg.norm(bead_path_x[1:] - bead_path_x[:-1], axis = 1)
 

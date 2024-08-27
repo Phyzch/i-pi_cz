@@ -5,7 +5,7 @@ The LI-NEB calculation is accelerated by Gaussian Process Regression method. See
 
 The algorithm is first implemented by Chenghao Zhang, 2023. Adapted from neb module & instanton module in i-pi package.
 
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
 """
 
 # This file is part of i-PI.
@@ -65,7 +65,7 @@ class MAPNEBGPRMover(Motion):
         fixatoms=None,
         mode = "verlet",
         prefix = "neb_instanton",
-        tolerances = { "gradient": 5e-3},
+        tolerances = { "gradient": 5e-3, "gradient_end_bead": 1e-2},
         energy_shift = 0.00,
         time_step = 4.0,
         instanton_time_step = 4.0,
@@ -474,7 +474,8 @@ class MAPNEBGPRMover(Motion):
             we need to early stop the algorithm and compute the ab-initio V & F at that given bead & add to the training data.
             The trust region is defined in the internal coordinate, scaled by the length scale of the squared exponential kernel.
         '''
-        grad_max = 1000
+        grad_max_inner_bead = 1000
+        grad_max_end_bead = 1000
         tolerances = self.options["tolerances"]  # tolerances for converging the LI-NEB calculation.
         
         neb_step = 0  # count the step number of neb move. (inner loop)
@@ -489,8 +490,8 @@ class MAPNEBGPRMover(Motion):
 
         print("\n")
         print("@Start outer loop: " + str(outer_loop_step) + "\n")
-        while grad_max > tolerances["gradient"]:
-            grad_max, early_stop_bool, outrange_bead_index_list = self.neb_step(outer_loop_step, neb_step)
+        while grad_max_inner_bead > tolerances["gradient"] or grad_max_end_bead > tolerances["gradient_end_bead"]:
+            grad_max_inner_bead, grad_max_end_bead, early_stop_bool, outrange_bead_index_list = self.neb_step(outer_loop_step, neb_step)
             neb_step = neb_step + 1
 
             # beads move out of trust region.
@@ -532,16 +533,17 @@ class MAPNEBGPRMover(Motion):
 
         self.f_mscaled, self.action = self.nebgm(self.x)  
 
-    def neb_instanton_step_info(self, outer_loop_step, neb_step, grad_max):
+    def neb_instanton_step_info(self, outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead):
         '''
         output the information about convergence check for each step of neb move
         '''
         tolerances = self.options["tolerances"]
 
         print("\n")
-        info("@Inner step summary: Outer loop # {} , inner loop # {},  max force gradient {:4.2e} , (condition {:4.2e})".format(
+        info("@Inner step summary: Outer loop # {} , inner loop # {},  max force gradient for inner bead {:4.2e}, (condition {:4.2e}), max force gradient for end bead {:4.2e} (condition {:4.2e})".format(
                 outer_loop_step, neb_step,
-                grad_max, tolerances["gradient"]
+                grad_max_inner_bead,  tolerances["gradient"],
+                grad_max_end_bead ,tolerances["gradient_end_bead"]
             ),
             verbosity.low
             )
@@ -572,7 +574,8 @@ class MAPNEBGPRMover(Motion):
         # scale the kappa (energy constraint term for two end beads) in LI-NEB relative to the force at end beads. Using stability criterion.
         self.check_spring_k_kappa()
 
-        grad_max = 0
+        grad_max_inner_bead = 0
+        grad_max_end_bead = 0
         # check early stop condition if there are beads out of trust region.
         # the trust region is defined in the internal coordinate, scaled by length scale of the kernel.
         early_stop_bool, outrange_bead_index_list, self.internal_coordinate_closest_r_list = ipi.utils.nebinstgprtool.check_neb_early_stop(self.beads.q,
@@ -583,7 +586,7 @@ class MAPNEBGPRMover(Motion):
         
         # stop the step early if there are beads out of trust region.
         if early_stop_bool:
-            return grad_max, early_stop_bool, outrange_bead_index_list
+            return grad_max_inner_bead, grad_max_end_bead, early_stop_bool, outrange_bead_index_list
 
         # neb move using gradient of LINEBGradient
         # use projected verlet algorithm.
@@ -621,12 +624,15 @@ class MAPNEBGPRMover(Motion):
             )
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
-        grad_max = np.amax(npnorm(self.nebgm.neb_optimization_force, axis = 1))
+        grad_norm = npnorm(self.nebgm.neb_optimization_force, axis = 1)
+        grad_max = np.amax(grad_norm) 
 
+        grad_max_inner_bead = np.amax(grad_norm[1: nbeads - 1])
+        grad_max_end_bead = np.amax(np.array([grad_norm[0],  grad_norm[-1]]))
         # output info about neb calculation.
-        self.neb_instanton_step_info(outer_loop_step, neb_step, grad_max)
+        self.neb_instanton_step_info(outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead)
         
-        return grad_max, early_stop_bool, outrange_bead_index_list   
+        return grad_max_inner_bead, grad_max_end_bead, early_stop_bool, outrange_bead_index_list   
 
 
     def update_GPR_model_one_bead_subroutine(self, training_x, bead_index_for_update, training_bead_forces):
@@ -1153,6 +1159,7 @@ class LINEBGradientMapper(object):
             assert self.VSC_E_ref > self.instanton_path_energy, "The reference energy (VSC_E_ref) must be larger than the energy of end beads of instanton path (instanton_path_energy) when we vary the spring constant (variable_spring_constant = True)"
             print("\n")
             print("@Variable Spring Constant: the current ratio between k_max & k_min for variable spring constant is {}: ".format(self.VSC_spring_k_max_ratio))
+            print("We use linear interpolation to choose spring constant for beads whose energy is between VSC_E_ref and the energy of end beads.")
             print("\n")
 
             self.VSC_k_max = self.spring_k  
@@ -1358,10 +1365,10 @@ class LINEBGradientMapper(object):
             for i in range(nimage - 1):
                 if i != nimage - 2 and i != 0:
                    bead_energy_min = np.min([beads_energy[i], beads_energy[i + 1]])  # the minimum of the energy of two beads connected by spring.
-                elif i == 0:
-                   bead_energy_min = beads_energy[0]
                 else:
-                   bead_energy_min = beads_energy[nimage - 1]
+                   # the end beads spring constant is chosen as k_max.
+                   spring_k_list[i] = k_max  
+                   continue 
                 
                 if bead_energy_min > E_ref:
                    spring_k_list[i] = self.VSC_k_ref 
@@ -1583,12 +1590,12 @@ class RP_MAP(object):
         self.instanton_temp = 1 / self.imag_time_period  # temperature of instanton path.
         info("finish evolution of dynamics along Minimum action path, the period of motion is : {} " + str(self.imag_time_period) )
 
-        print("potential of points (eV): " + str(pot_list) )
-        print("\n")
-        print("kinetic energy (eV): " + str( kinetic_energy_list ))
-        print("\n")
-        print("total energy (eV): " + str(total_energy_list))
-        print("\n")
+        # print("potential of points (eV): " + str(pot_list) )
+        # print("\n")
+        # print("kinetic energy (eV): " + str( kinetic_energy_list ))
+        # print("\n")
+        # print("total energy (eV): " + str(total_energy_list))
+        # print("\n")
 
     def cl_dynamics_along_MAP(self):
         '''
@@ -1898,7 +1905,7 @@ class RP_MAP(object):
         
         # optimize GPR model to make sure it will give accurate force for dynamics.
         # Separate point as test set and training set, add training set until the generalization error is small.
-        self.optimize_GPR_model_for_dynamics_evolution()
+        # self.optimize_GPR_model_for_dynamics_evolution()
 
         # start classical dynamics along minimum action path (MEP) on the inverted potential.
         t_list, v_list, x_list  = self.cl_dynamics_along_MAP()
@@ -1910,18 +1917,18 @@ class RP_MAP(object):
         self.interpolate_ring_polymer_beads(t_list, v_list, x_list)
 
         # compute hessian of ring polymers
-        # Need to figure out how to Gaussian Process Regression to predict the Hessian.
         self.compute_ring_polymer_hessian()
 
         # code to test the GPModelWithHessianWrapper
-        x = self.rp_beads.q
-        pots = self.rp_forces.pots
-        grads = -np.copy(dstrip(self.rp_forces.f))
-        hessians= self.rp_hessian
-        ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(self.gpr_model, self.energy_shift,
-            x, pots, grads, hessians)
+        if self.final_hessian_bool:
+            x = self.rp_beads.q
+            pots = self.rp_forces.pots
+            grads = -np.copy(dstrip(self.rp_forces.f))
+            hessians= self.rp_hessian
+            ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(self.gpr_model, self.energy_shift,
+                x, pots, grads, hessians)
 
-        pass
+            pass
     
         
     

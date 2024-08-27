@@ -1,6 +1,7 @@
 '''
 packages for transformation between Cartesian coordinate (x) and internal coordinate q.
 See section 2.4 of Faraday Discuss., 2018, 212, 237 and J. Chem. Phys. 105, 192–212 (1996)
+Code written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory, 2024.
 '''
 import numpy as np 
 from numpy.linalg import norm as npnorm

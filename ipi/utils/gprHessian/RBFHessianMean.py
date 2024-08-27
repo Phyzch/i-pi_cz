@@ -1,6 +1,6 @@
 '''
 Provide mean function for Gaussian Process Regression model.
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import torch
 from gpytorch.means.mean import Mean 

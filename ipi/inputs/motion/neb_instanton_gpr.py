@@ -45,10 +45,10 @@ class InputNebInstGPR(InputDictionary):
             InputDictionary,
             {
                 "dtype": float,
-                "options": ["gradient"],
-                 "default": [5e-3],
+                "options": ["gradient", "gradient_end_bead"],
+                 "default": [5e-3, 1e-2],
                  "help": "Convergence criteria for neb optimization",
-                 "dimension": ["undefined"]
+                 "dimension": ["undefined", "undefined"]
             },
         ),
 

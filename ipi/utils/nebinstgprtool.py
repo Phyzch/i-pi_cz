@@ -1,6 +1,6 @@
 '''
 utility module for neb_instanton_gpr.py module.
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import numpy as np 
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer

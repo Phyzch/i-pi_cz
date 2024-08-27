@@ -4,7 +4,7 @@ J. Chem. Phys. 148, 102334 (2018); https://doi.org/10.1063/1.5007180
 The algorithms are first implemented by Chenghao Zhang, 2023. Adapted from neb module & instanton module in i-pi package.
 Algorithm for using li-neb to search instanton path.
 
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov)
 """
 
 # This file is part of i-PI.

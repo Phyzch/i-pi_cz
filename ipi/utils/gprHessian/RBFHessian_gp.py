@@ -1,7 +1,7 @@
 """
 Contains classes for Gaussian Process Regression model, which is capable of predicting hessians.
 The code is adapted from GPytorch package: https://gpytorch.ai/. This code is based on version v1.12. 
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 """
 from .RBFHessianKernel import RBFKernelHessian 
 from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian

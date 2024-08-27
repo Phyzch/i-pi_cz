@@ -1,6 +1,6 @@
 '''
 Utility function for Gaussian Process Regression model (with capability of predicting hessians.)
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import numpy as np 
 import torch 

@@ -1,7 +1,7 @@
 '''
 packages for predicting hessian of ring polymer beads using Gaussian Process Regression (GPR).
 The GPR part use GPytorch framework (https://docs.gpytorch.ai/en/stable/)
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import torch 
 import numpy as np 

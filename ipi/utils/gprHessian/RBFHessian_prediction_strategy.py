@@ -2,7 +2,7 @@
 Provide code to compute posterior distribution from joint distribution in Gaussian Process Regression model.
 Adapated from gpytorch.models.exact_prediction_strategies.py in Gpytorch package (v.1.12).
 
-Written by Chenghao Zhang, Pacific Norhtwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Norhtwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import torch
 from gpytorch.models.exact_prediction_strategies import DefaultPredictionStrategy

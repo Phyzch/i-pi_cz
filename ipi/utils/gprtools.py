@@ -1,7 +1,7 @@
 '''
 packages for constructing gaussian process regression model
 using gpytorch framework (See https://docs.gpytorch.ai/en/stable/).
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import torch 
 import gpytorch

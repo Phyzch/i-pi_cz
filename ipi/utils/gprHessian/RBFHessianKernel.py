@@ -3,7 +3,7 @@ Radial Basis function kernel after including Hessian information.
 Adapted from gpytorch/kernels/rbfkernel.py in GPytorch package.
 This is an extension of gpytorch rbfkernel, which computes covariance matrix (kernel) between two 1d data point, which may contain hessian information.
 
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 import numpy as np 
 import torch 

@@ -1,7 +1,7 @@
 '''
 The class that compute marginalized probability distribution after consider noise in the data. 
 In the code, we transform noise from Cartesian coordinate into internal coordinate.
-Written by Chenghao Zhang, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
+Written by Chenghao Zhang & Niri Govind. Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 '''
 from typing import Any, Optional, Union 
 
