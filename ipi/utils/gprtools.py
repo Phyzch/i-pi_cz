@@ -6,7 +6,6 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 
 import torch
 import gpytorch
-import math
 import numpy as np
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 
@@ -469,12 +468,12 @@ def update_model_with_new_data(
     train_targets = model.train_targets
 
     # check the data type of input training data. If it's not torch.Tensor, convert it to torch.Tensor.
-    if type(new_train_inputs) != torch.Tensor:
+    if not isinstance(new_train_inputs, torch.Tensor):
         new_train_inputs_tensor = torch.from_numpy(np.array(new_train_inputs))
     else:
         new_train_inputs_tensor = torch.clone(new_train_inputs)
 
-    if type(new_train_targets) != torch.Tensor:
+    if not isinstance(new_train_targets, torch.Tensor):
         new_train_targets_tensor = torch.from_numpy(np.array(new_train_targets))
     else:
         new_train_targets_tensor = torch.clone(new_train_targets)
@@ -578,7 +577,7 @@ class FixInternalDofs(object):
             train_targets
         )  # the first column of target is potential V.
 
-        if type(noise_var) != type(None):
+        if not isinstance(noise_var, None):
             if len(self.fixed_internal_dofs) != 0:
                 moving_noise_var = np.delete(noise_var, self.fixed_internal_dofs + 1)
             else:
@@ -903,7 +902,6 @@ class GPModelWithDerivativesWrapper:
             np.shape(test_x)[1] == 3 * self.natom
         ), "dim of coordinates for input data is not 3 * natom"
 
-        test_data_num = np.shape(test_x)[0]
         # transform to internal coordinate q.
         moving_test_q = self.get_free_moving_internal_coordinate(test_x)
         moving_test_q_tensor = torch.from_numpy(moving_test_q)

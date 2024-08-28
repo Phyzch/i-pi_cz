@@ -1,6 +1,6 @@
 """
 Contains classes for Gaussian Process Regression model, which is capable of predicting hessians.
-The code is adapted from GPytorch package: https://gpytorch.ai/. This code is based on version v1.12. 
+The code is adapted from GPytorch package: https://gpytorch.ai/. This code is based on version v1.12.
 Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 """
 
@@ -9,7 +9,8 @@ from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian
 from .RBFHessian_prediction_strategy import RBFHessianPredictionStrategy
 from .RBFHessian_gaussian_likelihood import RBFHessianGaussianLikelihood
 from .RBFHessian_marginal_log_likelihood import CustomMarginalLogLikelihood
-from .RBFHessian_utils import transform_1d_train_targets_into_pots_grads_hessians
+from .RBFHessian_utils import \
+      transform_1d_train_targets_into_pots_grads_hessians
 import torch
 import gpytorch
 import numpy as np
@@ -46,52 +47,79 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         ref_mean_hessian: torch.Tensor = torch.Tensor([]),
     ):
         """
-        :param: train_inputs: input coordinate of training data. shape: [M, ard_num_dims]
+        :param: train_inputs: input coordinate of training data.
+                shape: [M, ard_num_dims]
         :param: train_targets: 1d targets of training data.
-        :param: training_data_hessian_data_point_index: the indices of data points that contain hessian information.
-        :param: hessian_fixdofs: the index of hessian dofs that need to be excluded from modeling. (In current implementation, it is empty)
+        :param: training_data_hessian_data_point_index:
+                the indices of data points that contain hessian information.
+        :param: hessian_fixdofs:
+                the index of hessian dofs that need to be excluded from modeling. 
+                (In current implementation, it is empty)
         :param: gpr_SE_kernel_number: number of squared exponential kernel for GPR model.
-        :param: kernel_outputscale: numpy array, shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
-        :param: kernel_lengthscale_ratio: numpy array. shape: [gpr_SE_kernel_number, ard_num_dims]   Estimation of the ratio between length scale of kernel and range of input data.
-        :param: likelihood_pot_noise_var: numpy array. shape: [1]. Estimation of the variance of the potential noise.
-        :param: likelihood_force_noise_var: numpy array. shape: [ard_num_dims]: Estimation of the variance of the force noise.
-        :param: likelihood_hessian_noise_var: numpy array. shape: [hessian_triu_size]. Estimation of the variance of the hessian noise.
-        :param: likelihood_force_noise_rank: The rank of covar factor of force noises. This is equal to number of degrees of freedoms of force in Cartesian coordinate.
-        :param: likelihood_hessian_noise_rank: The rank of covar factor of hessian noises. This is equal to the number of upper triangle components of hessian matrix in Cartesian coordinate.
-        :param: noise_covar_factor_pot_grad_array: the covariance factor matrix that transform noise in Cartesian coordinate into internal coordiante. (only transform gradient noise).
-                shape: [M, 1 + ard_num_dims, 1 + force_noise_rank]
-        :param: noise_covar_factor_with_hessian_array: the covariance factor matrix that transform noise in Cartesian coordinate into internal coordinate (include gradient and hessian noise).
+        :param: kernel_outputscale: 
+                shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
+        :param: kernel_lengthscale_ratio: 
+                shape: [gpr_SE_kernel_number, ard_num_dims]   
+                Estimation of the ratio between length scale of kernel and range of input data.
+        :param: likelihood_pot_noise_var: 
+                shape: [1]. Estimation of the variance of the potential noise.
+        :param: likelihood_force_noise_var: 
+                shape: [ard_num_dims]: Estimation of the variance of the force noise.
+        :param: likelihood_hessian_noise_var: 
+                shape: [hessian_triu_size]. 
+                Estimation of the variance of the hessian noise.
+        :param: likelihood_force_noise_rank: 
+                The rank of covar factor of force noises. 
+                This is equal to number of degrees of freedoms of force in Cartesian coordinate.
+        :param: likelihood_hessian_noise_rank: 
+                The rank of covar factor of hessian noises. 
+                This is equal to the number of upper triangle components of hessian matrix in Cartesian coordinate.
+        :param: noise_covar_factor_pot_grad_array:
+                shape: [M, 1 + ard_num_dims, 1 + force_noise_rank] 
+                the covariance factor matrix that transform noise in Cartesian coordinate into internal coordiante. 
+                (only transform gradient noise).
+        :param: noise_covar_factor_with_hessian_array: 
                 shape: [M_H, 1 + ard_num_dims + hessian_triu_size, 1 + force_noise_rank + hessian_noise_rank]
-        :param: kernel_lengthscale_initio_value: 2d numpy array. If set, we will initialize the length scale of kernel as this value.
-        :param: kernel_outputscale_initio_value: 1d numpy array. If set, we will initialize the output scale of kernel as this value.
-        :param: constant_mean_func_bool: If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians. Otherwise, it will be Taylor expansion around ref point to second order.
-        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
+                the covariance factor matrix that transform noise in Cartesian coordinate into internal coordinate
+                (include gradient and hessian noise).
+        :param: kernel_lengthscale_initio_value:  
+                If set, we will initialize the length scale of kernel as this value.
+        :param: kernel_outputscale_initio_value:  
+                If set, we will initialize the output scale of kernel as this value.
+        :param: constant_mean_func_bool: 
+                If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians. 
+                Otherwise, it will be Taylor expansion around ref point to second order.
+        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  
+                this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         """
         # the data point index that contains the hessian information.
         self.training_data_hessian_data_point_index = (
             training_data_hessian_data_point_index
         )
 
+        # dofs that we will not include in hessian calculations.
         self.hessian_fixdofs = (
-            hessian_fixdofs  # dofs that we will not include in hessian calculations.
+            hessian_fixdofs  
         )
         ard_num_dims = train_inputs.shape[-1]
         data_num = train_inputs.shape[-2]
 
         self.ard_num_dims = ard_num_dims
 
+        # number of active degrees of freedom.
         nactive = ard_num_dims - len(
             hessian_fixdofs
-        )  # number of active degrees of freedom.
+        )  
+        # the number of upper triangle components in hessian matrices.
         hessian_triu_size = int(
             nactive * (nactive + 1) / 2
-        )  # the number of upper triangle components in hessian matrices.
+        )  
 
         self.hessian_triu_size = hessian_triu_size
-
+        # the length of target data.
         target_len = data_num * (ard_num_dims + 1) + hessian_triu_size * len(
             training_data_hessian_data_point_index
-        )  # the length of target data.
+        )  
         assert len(train_targets) == target_len, "the length of target data is wrong."
 
         # set the likelihood function for Gaussian Process Regression model. Likelihood function describe the noise in data.
@@ -250,7 +278,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                     )
                 else:
                     print(
-                        "@Warning: GPRHessian model: the initio length scale value (from previous GPR model) does not match the shape of the model, we will still use the initio value set in the input file."
+                        "@Warning: GPRHessian model: the initio length scale value (from previous GPR model) does not match the shape of the model, \
+                          we will still use the initio value set in the input file."
                     )
                     covar_module.base_kernel.lengthscale = lengthscale_prior.mean
 
@@ -288,7 +317,6 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         The information will be contained in likelihood class: RBFHessianGaussianLikelihood.
         """
         ard_num_dims = train_inputs.shape[-1]
-        data_point_nums = train_inputs.shape[-2]
         batch_shape = train_inputs.shape[:-2]
 
         nactive = ard_num_dims - len(self.hessian_fixdofs)
@@ -463,11 +491,11 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             inputs_hessian_data_point_index = kwargs.get(
                 "inputs_hessian_data_point_index"
             )
-            if inputs_hessian_data_point_index == None:
+            if inputs_hessian_data_point_index is None:
                 raise RuntimeError(
                     "Must provide inputs_hessian_data_point_index for computing kernel."
                 )
-            if type(inputs_hessian_data_point_index) != torch.Tensor:
+            if not isinstance(inputs_hessian_data_point_index, torch.Tensor):
                 raise RuntimeError(
                     "The inputs_hessian_data_point_index must be a tensor."
                 )
@@ -486,11 +514,11 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             inputs_hessian_data_point_index = kwargs.get(
                 "inputs_hessian_data_point_index"
             )
-            if inputs_hessian_data_point_index == None:
+            if inputs_hessian_data_point_index is None:
                 raise RuntimeError(
                     "Must provide inputs_hessian_data_point_index for computing kernel."
                 )
-            if type(inputs_hessian_data_point_index) != torch.Tensor:
+            if not isinstance(inputs_hessian_data_point_index, torch.Tensor):
                 raise RuntimeError(
                     "The inputs_hessian_data_point_index must be a tensor."
                 )
@@ -606,7 +634,6 @@ def train_gpr_model(
     # number of total training data points : M.
     # number of data points containing hessian information: M_H.
     M = train_inputs.shape[-2]
-    M_H = len(model.training_data_hessian_data_point_index)
 
     # choose the optimizer for the training to train the parameter of models (raw_parameter)
     # https://pytorch.org/docs/stable/generated/torch.optim.Adam.html
@@ -769,13 +796,13 @@ def update_model_with_new_data_GPHessian(
     new_M_H = len(new_train_data_hessian_data_point_index)
 
     assert (
-        type(new_train_inputs) == torch.Tensor
+        isinstance(new_train_inputs, torch.Tensor)
     ), "the data type of new_train_inputs need to be torch.Tensor"
     assert (
-        type(new_train_targets) == torch.Tensor
+        isinstance(new_train_inputs, torch.Tensor)
     ), "the data type of new train targets need to be torch.Tensor"
     assert (
-        type(new_train_data_hessian_data_point_index) == torch.Tensor
+        isinstance(new_train_data_hessian_data_point_index, torch.Tensor)
     ), "the data type of new_train_data_hessian_data_point_index need to be torch.Tensor"
 
     # new hessian data point index
@@ -806,9 +833,9 @@ def update_model_with_new_data_GPHessian(
     )
     full_targets_grads = torch.cat(
         (
-            train_targets[..., train_data_num : train_data_num * (ard_num_dim + 1)],
+            train_targets[..., train_data_num: train_data_num * (ard_num_dim + 1)],
             new_train_targets[
-                ..., new_train_data_num : new_train_data_num * (ard_num_dim + 1)
+                ..., new_train_data_num: new_train_data_num * (ard_num_dim + 1)
             ],
         ),
         dim=-1,
@@ -817,13 +844,13 @@ def update_model_with_new_data_GPHessian(
         (
             train_targets[
                 ...,
-                train_data_num * (ard_num_dim + 1) : train_data_num * (ard_num_dim + 1)
+                train_data_num * (ard_num_dim + 1): train_data_num * (ard_num_dim + 1)
                 + hessian_triu_size * M_H,
             ],
             new_train_targets[
                 ...,
                 new_train_data_num
-                * (ard_num_dim + 1) : new_train_data_num
+                * (ard_num_dim + 1): new_train_data_num
                 * (ard_num_dim + 1)
                 + hessian_triu_size * new_M_H,
             ],

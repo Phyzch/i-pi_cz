@@ -11,17 +11,13 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 # i-PI Copyright (C) 2014-2021 i-PI developers
 # See the "licenses" directory for full license information.
 
-import sys
 import numpy as np
 from numpy.linalg import norm as npnorm
-import scipy
-import time
 from ipi.utils import units
 from ipi.engine.normalmodes import NormalModes
 from ipi.engine.motion import Motion
 from ipi.utils.depend import dstrip
 from ipi.utils.softexit import softexit
-from ipi.utils.mintools import Damped_BFGS, FIRE
 from ipi.utils.messages import verbosity, info
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
@@ -252,15 +248,13 @@ class MAPNEBMover(Motion):
 
     # --------- NEB method -----------------------
     def step_neb(self, step):
-        n_activedim = self.beads.q[0].size - len(self.fixatoms) * 3
-        nbeads = self.beads.nbeads
         dt = self.optarrays["time_step"]
 
         # check if spring_k and kappa value is appropriate.
         self.check_spring_k_kappa()
 
         # For first step when we RESTART simulation or when step = 0 (just start simulation.)
-        if np.all(self.velocity_mscaled) == None:
+        if np.all(self.velocity_mscaled) is None:
             self.neb_initialize()
 
         self.print_geometry(step)
@@ -406,7 +400,7 @@ class MAPNEBMover(Motion):
         )
         print(
             "inner product between tangent and force direction: "
-            + str(self.nebgm.f_tau_inner_product[1 : self.beads.nbeads - 1])
+            + str(self.nebgm.f_tau_inner_product[1: self.beads.nbeads - 1])
         )
         print(
             "beads optimization gradient: "
@@ -520,7 +514,7 @@ class LINEBGradientMapper(object):
         self.spring_k = None  # spring constants for internal beads
         self.kappa = None  # spring constants for beads at two ends.
 
-        self.init_allpots = None  #  initial potential for all beads. This potential will not be updated.
+        self.init_allpots = None  # initial potential for all beads. This potential will not be updated.
         self.action_forces = None  # minus gradient of abbreviated action
         self.action = None  # abbreviated action.
         self.neb_optimization_force = (
@@ -685,8 +679,8 @@ class LINEBGradientMapper(object):
 
         # sqrt(2 (V - E))
         action_each_bead = np.zeros([nimage])
-        action_each_bead[1 : nimage - 1] = np.sqrt(
-            2 * (beads_energy[1 : nimage - 1] - self.instanton_path_energy)
+        action_each_bead[1: nimage - 1] = np.sqrt(
+            2 * (beads_energy[1: nimage - 1] - self.instanton_path_energy)
         )
         if beads_energy[0] > self.instanton_path_energy:
             action_each_bead[0] = np.sqrt(
@@ -737,8 +731,8 @@ class LINEBGradientMapper(object):
 
         # sqrt(2 (V - E))
         action_each_bead = np.zeros([nimage])
-        action_each_bead[1 : nimage - 1] = np.sqrt(
-            2 * (beads_energy[1 : nimage - 1] - self.instanton_path_energy)
+        action_each_bead[1: nimage - 1] = np.sqrt(
+            2 * (beads_energy[1: nimage - 1] - self.instanton_path_energy)
         )  # sqrt(2 (V - E))
         if beads_energy[0] > self.instanton_path_energy:
             action_each_bead[0] = np.sqrt(

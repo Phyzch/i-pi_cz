@@ -12,17 +12,13 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 # i-PI Copyright (C) 2014-2021 i-PI developers
 # See the "licenses" directory for full license information.
 
-import sys
 import numpy as np
 from numpy.linalg import norm as npnorm
-import scipy
-import time
 from ipi.utils import units
 from ipi.engine.normalmodes import NormalModes
 from ipi.engine.motion import Motion
 from ipi.utils.depend import dstrip
 from ipi.utils.softexit import softexit
-from ipi.utils.mintools import Damped_BFGS, FIRE
 from ipi.utils.messages import verbosity, info
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
@@ -32,7 +28,6 @@ import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
 import ipi.utils.nebinstool
 import ipi.utils.gpr_hessian_tools
-from ipi.utils.nebinstgprtool import compute_frobenius_norm
 
 from timeit import default_timer as timer
 
@@ -291,7 +286,7 @@ class MAPNEBGPRMover(Motion):
             )
             self.nebgm.VSC_E_ref = self.nebgm.VSC_E_ref + self.optarrays["energy_shift"]
 
-        if self.coordinate_transformer == None:
+        if self.coordinate_transformer is None:
             # initialize Gaussian Process Regression(GPR) model and coordiante transformer
             self.initialialize_GPR_model()
             if not self.options["stage"] == "test_gpr_hessian":
@@ -410,7 +405,6 @@ class MAPNEBGPRMover(Motion):
         """
         # Initialize non redundant coordinate transformer.
         # choose the point with the highest potential in the initial instanton path as reference point.
-        nbeads = self.beads.nbeads
         beads_pots = np.copy(self.forces.pots)
         bead_index_at_transition_state = np.argmax(beads_pots)
         ref_x = dstrip(self.beads.q[bead_index_at_transition_state]).copy()
@@ -719,7 +713,6 @@ class MAPNEBGPRMover(Motion):
         """
         LI-NEB move for one step.
         """
-        n_activedim = self.beads.q[0].size - len(self.fixatoms) * 3
         nbeads = self.beads.nbeads
         dt = self.optarrays["time_step"]
 
@@ -796,9 +789,8 @@ class MAPNEBGPRMover(Motion):
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
         grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
-        grad_max = np.amax(grad_norm)
 
-        grad_max_inner_bead = np.amax(grad_norm[1 : nbeads - 1])
+        grad_max_inner_bead = np.amax(grad_norm[1: nbeads - 1])
         grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
         # output info about neb calculation.
         self.neb_instanton_step_info(
@@ -1001,7 +993,7 @@ class MAPNEBGPRMover(Motion):
             # all beads pass the test. The simulation has converged
             if len(self.bead_index_with_converged_gpr_force) == self.beads.nbeads:
                 ab_initial_shifted_energy = self.gpr_model.train_cartesian_targets[
-                    -self.beads.nbeads :, 0
+                    -self.beads.nbeads:, 0
                 ]
                 ab_initio_beads_energy = (
                     ab_initial_shifted_energy + self.optarrays["energy_shift"]
@@ -1153,11 +1145,11 @@ class MAPNEBGPRMover(Motion):
 
         # store potential and forces for the final LI-NEB beads.
         self.LINEB_pots = (
-            self.gpr_model.train_cartesian_targets[-self.beads.nbeads :, 0]
+            self.gpr_model.train_cartesian_targets[-self.beads.nbeads:, 0]
             + self.optarrays["energy_shift"]
         )
         self.LINEB_forces = -self.gpr_model.train_cartesian_targets[
-            -self.beads.nbeads :, 1:
+            -self.beads.nbeads:, 1:
         ]
 
         ipi.utils.nebinstgprtool.store_training_data(
@@ -1315,7 +1307,6 @@ class MAPNEBGPRMover(Motion):
         train_pots = forces1.pots[:train_data_number] - self.optarrays["energy_shift"]
         train_gradients = -np.copy(dstrip(forces1.f))[:train_data_number]
 
-        test_pots = forces1.pots[train_data_number:] - self.optarrays["energy_shift"]
         test_gradients = -np.copy(dstrip(forces1.f))[train_data_number:]
 
         hessians = ipi.utils.nebinstool.get_hessian(
@@ -1441,10 +1432,10 @@ class LINEBGradientMapper(object):
         self.spring_k = None  # spring constants for internal beads
         self.kappa = None  # spring constants for beads at two ends.
 
-        self.init_allpots = None  #  initial potential for all beads. This potential will not be updated.
+        self.init_allpots = None  # initial potential for all beads. This potential will not be updated.
         self.action = None  # abbreviated action.
         self.action_forces = None  # minus gradient of abbreviated action
-        self.neb_optimization_force = (
+        self.neb_optimization_force - (
             None  # neb force for optimization of action with constraints at two ends.
         )
         self.neb_transverse_force = (
@@ -1717,7 +1708,7 @@ class LINEBGradientMapper(object):
             gj_force_component = 0.5 * (1 / action_each_bead[j] * (dj1 + dj2) * fj)
 
             gj_curvature_component = 0.5 * (
-                -(action_each_bead[j] + action_each_bead[j - 1]) * dj1_unit_vector
+                - (action_each_bead[j] + action_each_bead[j - 1]) * dj1_unit_vector
                 + (action_each_bead[j] + action_each_bead[j + 1]) * dj2_unit_vector
             )
             gj = gj_force_component + gj_curvature_component
@@ -1813,7 +1804,7 @@ class LINEBGradientMapper(object):
         beads_energy = self.beads_energy
 
         # kappa: restraint force back to iso-energy contour.
-        left_kappa = self.kappa["left"]  #  kappa for the left end beads
+        left_kappa = self.kappa["left"]  # kappa for the left end beads
         right_kappa = self.kappa["right"]  # kappa for the right end beads.
 
         neb_optimization_force = np.zeros([nimage, 3 * natom])
@@ -2029,8 +2020,6 @@ class RP_MAP(object):
         kinetic_energy_list = units.unit_to_user(
             "energy", "electronvolt", kinetic_energy_list
         )
-
-        a_norm = npnorm(a_list, axis=1)
 
         self.imag_time_period = (
             2 * t_list[-1]

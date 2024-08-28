@@ -6,7 +6,6 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 
 import torch
 import numpy as np
-import gpytorch
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 from .gprHessian.RBFHessian_gp import GPModelWithHessians, train_gpr_model
 from .gprHessian.RBFHessian_utils import (
@@ -616,8 +615,6 @@ class GPModelWithHessiansWrapper:
         hessian_noise_std_cartesian = noise_std["hessian_noise_prior"]
 
         # variance of pot noise, force noise and hessian noise in Cartesian coordinate.
-        x_size = 3 * self.natom
-
         pot_noise_var = np.array([np.power(pot_noise_std, 2)])
         force_noise_var = np.ones([1]) * np.power(force_noise_std_cartesian, 2)
         hessian_noise_var = np.ones([1]) * np.power(hessian_noise_std_cartesian, 2)
@@ -861,7 +858,6 @@ class GPModelWithHessiansWrapper:
         assert (
             np.shape(test_x)[1] == 3 * self.natom
         ), "dim of coordinate for input data is not 3 * natom"
-        test_data_num = np.shape(test_x)[0]
 
         # transform the input data into internal coordinate.
         moving_test_q = self.get_free_moving_internal_coordinate(test_x)
