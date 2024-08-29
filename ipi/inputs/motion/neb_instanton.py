@@ -120,7 +120,8 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": float,
                 "default": 1.00,
-                "help": "the final calculated temperature for minimum action path: inverse of period (beta hbar) for periodic motion. (Used for saving result in RESTART)",
+                "help": "the final calculated temperature for minimum action path: inverse of period (beta hbar) for periodic motion. \
+                  (Used for saving result in RESTART)",
                 "dimension": "temperature"
             }
         ),
@@ -130,7 +131,8 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
-                "help": "the bead coordinate for instanton beads (spaced equally along imaginary time) on the minimum action path. (Used for recording result in RESTART)",
+                "help": "the bead coordinate for instanton beads (spaced equally along imaginary time) on the minimum action path. \
+                  (Used for recording result in RESTART)",
                 "dimension": "length"
             }
         ),
@@ -140,7 +142,8 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": float,
                 "default" : input_default(factory=np.zeros, args=(0,)),
-                "help": "the potential energy for instanton beads (spaced equally along imaginary time) on the minimum action path. (Used for recording result in RESTART)"
+                "help": "the potential energy for instanton beads (spaced equally along imaginary time) on the minimum action path. \
+                  (Used for recording result in RESTART)"
             }
         ),
         
@@ -169,7 +172,8 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": float,
                 "default": 0.1,
-                "help": "the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2).  Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)"
+                "help": "the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2). \
+                  Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)"
             }
         ),
 
@@ -184,7 +188,8 @@ class InputNebInst(InputDictionary):
                 See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018).
                 We need two different values of kappa for asymmetric potential. 
                 For symmetric potential, we can set left and right kappa to the same value.
-                Two kappa values will be updated accordingly during the simulation using force information |dV/dx|. So, choosing the value here is not that important.
+                Two kappa values will be updated accordingly during the simulation using force information |dV/dx|. 
+                So, choosing the value here is not that important.
                         |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value)
                         """
             },
@@ -221,7 +226,8 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": bool,
                 "default": False,
-                "help": "Bool variable. Enable variable spring constant. Make the spring constant near the end bead region larger, to have a higher resolution near the instanton path end."
+                "help": "Bool variable. Enable variable spring constant. Make the spring constant near the end bead region larger, \
+                to have a higher resolution near the instanton path end."
             }
         ),
 
@@ -230,7 +236,9 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": float, 
                 "default": 0.000,
-                "help": "reference energy E_ref for variable spring constant (VSC). For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. The spring constant between beads at lower energy has larger spring constant. ",
+                "help": "reference energy E_ref for variable spring constant (VSC). For E_min < E < E_ref, \
+                we have linear interpolation between k_max and k_ref. \
+                The spring constant between beads at lower energy has larger spring constant. ",
                 "dimension": "energy"
             }
         ),
@@ -240,7 +248,10 @@ class InputNebInst(InputDictionary):
             {
                 "dtype": float,
                 "default": 3.00,
-                "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. The spring constant between beads at lower energy has larger spring constant. k_max specify the spring constant at two end beads"
+                "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). \
+                For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
+                The spring constant between beads at lower energy has larger spring constant. \
+                  k_max specify the spring constant at two end beads"
             }
         )
 

@@ -197,6 +197,28 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_triu_size=self.hessian_triu_size,
             )
 
+    def update_mean_function(self,
+                             ref_mean_coordinate,
+                             ref_mean_pot,
+                             ref_mean_grad,
+                             ref_mean_hessian,):
+        """
+        update the mean function as Taylor expansion around a reference point
+        """
+        assert ref_mean_pot.shape[0] == 1
+        assert ref_mean_grad.shape[0] == self.ard_num_dims
+        assert ref_mean_hessian.shape[0] == self.hessian_triu_size
+        self.ref_mean_coordinate = ref_mean_coordinate
+        # set the mean function as Taylor expansion around the reference point.
+        self.mean_module = MeanWithPotGradHessian(
+            ref_mean_coordinate,
+            ref_mean_pot,
+            ref_mean_grad,
+            ref_mean_hessian,
+            grad_size=self.ard_num_dims,
+            hessian_triu_size=self.hessian_triu_size,
+        )
+
     def _set_gpr_kernel(
         self,
         train_inputs,

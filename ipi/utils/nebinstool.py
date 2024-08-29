@@ -2,22 +2,25 @@
 utility code for neb_instanton.py. 
 Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (chenghao.zhang@pnnl.gov), 2024.
 """
+
 import numpy as np
 from scipy.interpolate import CubicSpline
 from ipi.engine.beads import Beads
 from ipi.utils.messages import verbosity, info
 from ipi.utils import units
 import ipi.utils.mathtools as mt
-import os 
+import os
 from ipi.utils.depend import dstrip
-import ipi 
+import ipi
+
 
 def print_neb_instanton_geo(
     prefix, step, nbeads, natoms, names, q, pots, cell, shift, output_maker
 ):
     """
     adapted from instool.py: print_instanton_geo
-    Alternative (but very useful) output of the instanton geometry and potential energy"""
+    Alternative (but very useful) output of the instanton geometry and potential energy
+    """
 
     outfile = output_maker.get_output(prefix + "_" + str(step) + ".ener", "w")
     print("#Bead    Energy (eV)", file=outfile)
@@ -31,7 +34,6 @@ def print_neb_instanton_geo(
             file=outfile,
         )
     outfile.close_stream()
-
 
     # print out the coordinate in .xyz form
     unit = "angstrom"
@@ -62,80 +64,117 @@ def print_neb_instanton_geo(
 
     outfile.close_stream()
 
+
 def print_instanton_rp_time(prefix, image_time_period, rp_t_list, output_maker):
-    '''
+    """
     print info about imaginary time of ring polymer beads we print out.
-    '''
+    """
     nbead = len(rp_t_list)
     outfile = output_maker.get_output(prefix + ".txt", "w")
-    print("imaginary time for periodic motion: {}".format(image_time_period) , file = outfile)
-    print(" #Bead  time", file = outfile)
+    print(
+        "imaginary time for periodic motion: {}".format(image_time_period), file=outfile
+    )
+    print(" #Bead  time", file=outfile)
     for i in range(nbead):
-        print(
-            str(i) + "    "
-            + str(rp_t_list[i]), 
-            file = outfile
-        )
-    
+        print(str(i) + "    " + str(rp_t_list[i]), file=outfile)
+
     outfile.close_stream()
 
 
-
 def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
-    '''
-    do cubic interpolation of minimum action path. 
+    """
+    do cubic interpolation of minimum action path.
     return coordinate (x) and distance from initial point (r) along interpolated beads.
     :param: neb_bead_q:  coordinate of nudged elastic band bead
     :param: interpolation_bead_number: number of point to interpolate beads.
-    
+
     :return: bead_path_x : the coordinate of interpolated points along minimum action path.
              bead_path_r: the cumulative distance from initial point along minimum action path.
-    '''
+    """
     neb_bead_q_array = np.array(neb_bead_q)
     neb_bead_number = len(neb_bead_q)
 
-    neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis = 1)
+    neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
     neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
     # make the variable in the range of [0, neb_bead_number]
     neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] * neb_bead_number
 
     b = neb_bead_q_array
 
-    cs = CubicSpline(neb_bead_path_r_scaled, b, axis = 0)  # object for cubic spline interpolation. interpolate along axis 0.
+    cs = CubicSpline(
+        neb_bead_path_r_scaled, b, axis=0
+    )  # object for cubic spline interpolation. interpolate along axis 0.
 
     cs1 = CubicSpline(np.arange(neb_bead_number), neb_bead_path_r_scaled)
-    
-    new_a = np.linspace(0, neb_bead_number - 1, num = interpolation_bead_number)  
-    
+
+    new_a = np.linspace(0, neb_bead_number - 1, num=interpolation_bead_number)
+
     new_bead_r_scaled = cs1(new_a)
 
     bead_path_x = cs(new_bead_r_scaled)
 
-    bead_distance = np.linalg.norm(bead_path_x[1:] - bead_path_x[:-1], axis = 1)
+    bead_distance = np.linalg.norm(bead_path_x[1:] - bead_path_x[:-1], axis=1)
 
-    bead_path_r = np.concatenate([[0], np.cumsum(bead_distance)]) # distance from initial beads.
+    bead_path_r = np.concatenate(
+        [[0], np.cumsum(bead_distance)]
+    )  # distance from initial beads.
 
-    return bead_path_x, bead_path_r 
+    return bead_path_x, bead_path_r
 
-def interpolate_ring_polymer_beads(period, t_list, x_list, v_list, instanton_bead_number):
+def path_equal_distance_interpolation(neb_bead_q, interpolation_bead_number):
     '''
-    interpolate the position of ring polymer beads along minmium action path. 
-    x[bead_i] = x(t = period / (2N) * bead_i) with total N beads. We only record half ring-polymer as it folds back to itself.
+    interpolate the path to find points spaced with equal distance along the path.
+    :param: neb_bead_q:  coordinate of nudged elastic band bead.
+    :param: interpolation_bead_number: number of point to interpolate beads.
+    '''
+    neb_bead_q_array = np.array(neb_bead_q)
+    neb_bead_number = len(neb_bead_q)
+    neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
+    neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
+    # make the variable in the range of [0, neb_bead_number]
+    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] * neb_bead_number
+
+    cs = CubicSpline(
+        neb_bead_path_r_scaled, neb_bead_q_array, axis= 0
+    )
+
+    interpolate_r_scaled = np.arange(0, neb_bead_number + 1, num= interpolation_bead_number)
+
+    bead_path_x = cs(interpolate_r_scaled)
     
+    bead_distance = np.linalg.norm(bead_path_x[1:] - bead_path_x[:-1], axis= 1)
+
+    bead_path_r = np.concatenate(
+        [[0], np.cumsum(bead_distance)]
+    )  # distance from initial beads.
+
+    return bead_path_x, bead_path_r
+
+def interpolate_ring_polymer_beads(
+    period, t_list, x_list, v_list, instanton_bead_number
+):
+    """
+    interpolate the position of ring polymer beads along minmium action path.
+    x[bead_i] = x(t = period / (2N) * bead_i) with total N beads. We only record half ring-polymer as it folds back to itself.
+
     :param:  period: imaginary time evolution period (= beta hbar)
              t_list: list of time for trajectory recorded.
              v_list: list of velocity for the trajectory recorded.
              x_list: list of coordinate for trajectory recorded
              instanton_bead_number: bead number for ring-polymers along instanton path to interpolate.
-    
+
     :return: rp_t_list: time list for instanton ring-polymer
              rp_x_list: coordinate list for instanton ring-polymer
-    '''
-    rp_t_list = np.linspace(0, period / 2, instanton_bead_number, endpoint = False) # i * beta * hhbar / (2N) : here i = 0, ..., N-1.
-    rp_t_list = rp_t_list + period / (4 * instanton_bead_number)  # (1/2 + i) * (beta * hbar / (2N)) : here i = 0, .., N-1
+    """
+    rp_t_list = np.linspace(
+        0, period / 2, instanton_bead_number, endpoint=False
+    )  # i * beta * hhbar / (2N) : here i = 0, ..., N-1.
+    rp_t_list = rp_t_list + period / (
+        4 * instanton_bead_number
+    )  # (1/2 + i) * (beta * hbar / (2N)) : here i = 0, .., N-1
 
     print("imaginary time list for ring polymer: " + str(rp_t_list))
-        
+
     t_list_len = len(t_list)
 
     rp_x_list = []
@@ -145,27 +184,30 @@ def interpolate_ring_polymer_beads(period, t_list, x_list, v_list, instanton_bea
     for i in range(instanton_bead_number):
         rp_t = rp_t_list[i]
 
-        for t_index in range(t_index_start, t_list_len):
+        for t_index in range(t_index_start, t_list_len - 1):
             if rp_t > t_list[t_index] and rp_t < t_list[t_index + 1]:
                 # interpolate using velocity and acceleration.
                 dt = t_list[t_index + 1] - t_list[t_index]
                 rp_dt = rp_t - t_list[t_index]
-                
+
                 dx = x_list[t_index + 1] - x_list[t_index]
-                rp_dx = v_list[t_index] * rp_dt + np.power(rp_dt / dt , 2) * (dx - v_list[t_index] * dt)  # velocity and acceleration contribution.
-                
-                rp_x = x_list[t_index] + rp_dx 
+                rp_dx = v_list[t_index] * rp_dt + np.power(rp_dt / dt, 2) * (
+                    dx - v_list[t_index] * dt
+                )  # velocity and acceleration contribution.
+
+                rp_x = x_list[t_index] + rp_dx
                 rp_x_list.append(rp_x)
 
                 t_index_start = t_index
-                break 
+                break
 
     rp_x_list = np.array(rp_x_list)
-    
-    return rp_t_list, rp_x_list 
 
-def RK4(y , t , dydt , param , h):
-    '''
+    return rp_t_list, rp_x_list
+
+
+def RK4(y, t, dydt, param, h):
+    """
     Evolve system one step further using 4th order Runge_Kutta method.
     :param t: time
     :param y: variable
@@ -173,32 +215,36 @@ def RK4(y , t , dydt , param , h):
     :param param: parameter for dydt function
     :param h: time step
     :return:
-    '''
-    k1 = h * dydt( y , t, param )
-    k2 = h * dydt( y + 0.5 * k1 , t + 0.5 * h , param)
-    k3 = h * dydt( y + 0.5 * k2 , t + 0.5 * h , param)
-    k4 = h * dydt( y + k3 , t + h , param)
+    """
+    k1 = h * dydt(y, t, param)
+    k2 = h * dydt(y + 0.5 * k1, t + 0.5 * h, param)
+    k3 = h * dydt(y + 0.5 * k2, t + 0.5 * h, param)
+    k4 = h * dydt(y + k3, t + h, param)
 
-    new_y = y + 1/6 * (k1 + 2 * k2 + 2 * k3 + k4 )
+    new_y = y + 1 / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
     return new_y
 
-def compute_acceleration_along_path(negative_f: np.ndarray, tau: np.ndarray, m3: np.ndarray):
-    '''
-    :param: negative_f : negative force 
+
+def compute_acceleration_along_path(
+    negative_f: np.ndarray, tau: np.ndarray, m3: np.ndarray
+):
+    """
+    :param: negative_f : negative force
     :param: tau: tangent vector along the path
     :param: m3: mass vector. mass for different atoms.
-    '''
+    """
     tau_mass_scaled = tau * np.sqrt(m3)
     tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
     f_mass_scaled = negative_f / np.sqrt(m3)
     f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled
     a = f_mass_scaled_projected / np.sqrt(m3)
 
-    return a 
+    return a
+
 
 def dydt_inverted_pot(y, t, param):
-    '''
+    """
     y=[x,v]. That is y[0] = x. y[1] = v.
     dydt[0] = v. dydt[1] = a (inverted pot)
     param = [cl_beads, cl_forces, m3, tau]
@@ -206,7 +252,7 @@ def dydt_inverted_pot(y, t, param):
     cl_forces: force object that connect to force engine to compute force (Depending on bead object's location)
     m3 : mass. size : [3 * natom]
     tau: tangent direction of motion. unit vector.
-    '''
+    """
     x = y[0]
     v = y[1]
 
@@ -216,53 +262,53 @@ def dydt_inverted_pot(y, t, param):
     tau = param[3]
 
     # update coordinate of bead object to enable the forces object to compute force
-    if (cl_beads.q[0] != x).any() :
+    if (cl_beads.q[0] != x).any():
         cl_beads.q[0] = np.copy(x)
 
     negative_f = -dstrip(cl_forces.f).copy()[0]  # negative force
-    
+
     # compute the acceleration along the path
     a = compute_acceleration_along_path(negative_f, tau, m3)
 
-    dydt = np.array([ v, a ])
+    dydt = np.array([v, a])
 
-    return dydt 
+    return dydt
+
 
 def bisect_dt(dt_right, dt_left, old_y, t, param, target_dr):
-    '''
+    """
     using bisection search method to find the appropriate dt value to go to end beads.
-    '''
+    """
     old_x = np.copy(old_y[0])
     dr = 1000
 
     while abs(target_dr - dr) > 0.0005:
-        dt = (dt_left + dt_right)/2
+        dt = (dt_left + dt_right) / 2
         new_y = RK4(np.copy(old_y), t, dydt_inverted_pot, param, dt)
         new_x = np.copy(new_y[0])
         dr = np.linalg.norm(new_x - old_x)
 
         if dr > target_dr:
             # dt is too large. make dt smaller.
-            dt_right = dt 
+            dt_right = dt
         else:
             # dt is too small. make dt larger.
-            dt_left = dt 
-    
-    return dt, new_y 
+            dt_left = dt
+
+    return dt, new_y
+
 
 def print_instanton_hess(prefix, hessian, output_maker):
     """Print physical part of the instanton hessian"""
-    outfile = output_maker.get_output(prefix + ".hess" , "w")
+    outfile = output_maker.get_output(prefix + ".hess", "w")
     np.savetxt(outfile, hessian.reshape(1, hessian.size))
     outfile.close_stream()
 
 
-def get_hessian(
-    rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001
-):
+def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001):
     """
     Adapted from hesstool.py
-    Compute hessian as finite difference of force. 
+    Compute hessian as finite difference of force.
     The intermediate steps are written as a temporary files so the full hessian calculations is only ONE step.
 
     IN     rp_beads: bead object for ring polymer
@@ -279,10 +325,12 @@ def get_hessian(
     info(" @get_hessian: Computing hessian", verbosity.low)
     fixdofs = list()
     for i in fixatoms:
-        fixdofs.extend([3 * i, 3 * i + 1, 3 * i + 2])  # add all fixdofs attached to fix atoms.
+        fixdofs.extend(
+            [3 * i, 3 * i + 1, 3 * i + 2]
+        )  # add all fixdofs attached to fix atoms.
     ii = natoms * 3
     activedof = np.delete(np.arange(ii), fixdofs)
-    ncalc = ii - len(fixdofs)  #for each bead, # of free dofs need calculation.
+    ncalc = ii - len(fixdofs)  # for each bead, # of free dofs need calculation.
     if x0.size != natoms * 3 * nbeads:
         raise ValueError(
             "The position vector is not consistent with the number of atoms/beads."
@@ -311,11 +359,11 @@ def get_hessian(
 
     # Start calculation:
     # deep copy data in case rp_beads.q == x0.
-    if type(x0) == ipi.utils.depend.depend_array:
+    if isinstance(x0, ipi.utils.depend.depend_array):
         x0_copy = np.copy(dstrip(x0))
-    elif type(x0) == np.ndarray:
+    elif isinstance(x0, np.ndarray):
         x0_copy = np.copy(x0)
-    
+
     for j in range(i0 + 1, ii):
         if j in fixdofs:
             continue
@@ -334,8 +382,8 @@ def get_hessian(
 
             # Minus
             x[:, j] = x0_copy[:, j] - d
-            rp_beads.q[:] = x 
-            g2 = -rp_forces.f # gradient = - force.
+            rp_beads.q[:] = x
+            g2 = -rp_forces.f  # gradient = - force.
 
             # COMBINE
             g = (g1 - g2) / (2 * d)
@@ -346,7 +394,6 @@ def get_hessian(
             np.savetxt(file, h)
             file.close()
 
-    
     # remove hessian temporary file
     for i in range(ii):
         try:
@@ -354,5 +401,4 @@ def get_hessian(
         except OSError:
             pass
 
-    
     return h

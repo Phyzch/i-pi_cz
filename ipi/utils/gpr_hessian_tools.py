@@ -442,6 +442,7 @@ class GPModelWithHessiansWrapper:
         self.natom = natom
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
         self.coordinate_transformer = coordinate_transformer
+        self.constant_mean_func_bool = constant_mean_func_bool
 
         # symmetrize the hessian
         if len(train_hessian_x) > 0:
@@ -1104,6 +1105,18 @@ class GPModelWithHessiansWrapper:
         new_noise_covar_factor_with_hessian_array = torch.from_numpy(
             new_noise_covar_factor_with_hessian_array
         )
+        # update the mean function if mean function is still constant mean
+        if self.constant_mean_func_bool:
+            self.constant_mean_func_bool = False 
+            ref_mean_q_tensor = new_train_inputs_tensor[0]
+            ref_mean_V_tensor = torch.tensor([new_train_V[0]])
+            ref_mean_grad_q_tensor = new_train_grad_q[0]
+            ref_mean_hessian_q_tensor = new_train_hessian_q[0]
+
+            self.update_mean_function(ref_mean_q_tensor, 
+                                      ref_mean_V_tensor,
+                                      ref_mean_grad_q_tensor,
+                                      ref_mean_hessian_q_tensor)       
 
         # update the Gaussian Process Regression model with new data.
         ipi.utils.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(
@@ -1115,6 +1128,7 @@ class GPModelWithHessiansWrapper:
             new_noise_covar_factor_with_hessian_array,
             retrain_bool=retrain_bool,
         )
+
 
     def train_model(self, output_training_info=False):
         """
@@ -1137,6 +1151,22 @@ class GPModelWithHessiansWrapper:
         )
 
         return free_moving_beads_internal_coordinate
+
+    def update_mean_function(self,
+                             ref_mean_coordinate,
+                             ref_mean_pot,
+                             ref_mean_grad,
+                             ref_mean_hessian,):
+        '''
+        update the mean function as Taylor expansion around a reference point
+        '''
+        self.gpr_model.update_mean_function(ref_mean_coordinate,
+                                            ref_mean_pot,
+                                            ref_mean_grad,
+                                            ref_mean_hessian)
+        
+        if self.constant_mean_func_bool:
+            self.constant_mean_func_bool = False
 
     # ------ output information -------
     def check_gpr_lengthscale(self):

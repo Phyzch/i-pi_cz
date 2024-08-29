@@ -119,7 +119,8 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 1.00,
-                "help": "the final calculated temperature for minimum action path: inverse of period (beta hbar) for periodic motion. (Used for saving result in RESTART)",
+                "help": """ the final calculated temperature for minimum action path: inverse of period (beta hbar) for periodic motion. 
+                (Used for saving result in RESTART) """,
                 "dimension": "temperature"
             }
         ),
@@ -129,7 +130,8 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
-                "help": "the bead coordinate for instanton beads (spaced equally along imaginary time) on the minimum action path. (Used for recording result in RESTART)",
+                "help": """the bead coordinate for instanton beads (spaced equally along imaginary time)
+                on the minimum action path. (Used for recording result in RESTART)""",
                 "dimension": "length"
             }
         ),
@@ -139,7 +141,8 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default" : input_default(factory=np.zeros, args=(0,)),
-                "help": "the potential energy for instanton beads (spaced equally along imaginary time) on the minimum action path. (Used for recording result in RESTART)"
+                "help": """the potential energy for instanton beads (spaced equally along imaginary time) 
+                on the minimum action path. (Used for recording result in RESTART)"""
             }
         ),
         
@@ -187,8 +190,9 @@ class InputNebInstGPR(InputDictionary):
                 See eq.(19) of THE JOURNAL OF CHEMICAL PHYSICS 148, 102334 (2018).
                 We need two different values of kappa for asymmetric potential. 
                 For symmetric potential, we can set left and right kappa to the same value.
-                Two kappa values will be updated accordingly during the simulation using the force information |dV/dx|. So, we do not need to specify this value.
-                        |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value). The value will be used for restarting the algorithm. 
+                Two kappa values will be updated accordingly during the simulation using the force information |dV/dx|. 
+                So, we do not need to specify this value.
+                |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value). The value will be used for restarting the algorithm. 
                         """
             },
         ),
@@ -196,9 +200,18 @@ class InputNebInstGPR(InputDictionary):
         "final_hessian_bool":(
             InputValue,
             {
-                "dtype" : bool,
+                "dtype": bool,
                 "default": False,
                 "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory."
+            }
+        ),
+
+        "ab_initio_hessian_bool":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help": "Bool variable. if True, compute hessians of all beads ab initio. If false, use GPR to predict hessians."
             }
         ),
 
@@ -224,7 +237,9 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 0.05,
-                "help": "convergence criterion for gpr outer loop. |f^GPR - f|/|f| < gpr_relative_force_error_criterion means GPR prediction is reliable for force is reliable. Stop the outer loop."
+                "help": "convergence criterion for gpr outer loop. \
+                |f^GPR - f|/|f| < gpr_relative_force_error_criterion means GPR prediction is reliable for force is reliable. \
+                Stop the outer loop."
             }
 
         ),
@@ -234,7 +249,9 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 0.0002, 
-                "help": "convergence criterion for gpr outer loop. When |f^GPR - f| < gpr_absolute_force_error_criterion, this means the GPR prediction is already reliable for that bead."
+                "help": "convergence criterion for gpr outer loop. \
+                When |f^GPR - f| < gpr_absolute_force_error_criterion, \
+                this means the GPR prediction is already reliable for that bead."
             }
         ),
 
@@ -243,7 +260,9 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 0.1,
-                "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region. If the distance between NEB beads and nearest GPR point exceed r_max, we stop the NEB inner loop and evaluate ab-initio force on that point."
+                "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region. \
+                  If the distance between NEB beads and nearest GPR point exceed r_max, \
+                  we stop the NEB inner loop and evaluate ab-initio force on that point."
             }
         ),
         
@@ -252,7 +271,10 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
-                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Mean value for output scale prior of Gaussian process regression kernel. Typically it is the variance of potential energy"
+                "help": "Gaussian Process Regression hyperparameter. \
+                  Each element corresponds to one Squared Exponential kernel we use to construct covariance function. \
+                  Mean value for output scale prior of Gaussian process regression kernel. \
+                  Typically it is the variance of potential energy"
             }
         ),
 
@@ -261,7 +283,10 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
-                "help": "Gaussian Process Regression hyperparameter. This is an array, with each element corresponds to one Squared Exponential kernel we use to construct covariance function. Ratio of the mean value for the prior of the lengthscale of Gaussian Process regression model / length of bead in non-redundant internal coordinate. Typically this should be in the same order of the range of input data.",
+                "help": "Gaussian Process Regression hyperparameter. \
+                  Each element corresponds to one Squared Exponential kernel we use to construct covariance function. \
+                    Ratio of the mean value for the prior of the lengthscale of Gaussian Process regression model / length of bead in non-redundant internal coordinate. \
+                      Typically this should be in the same order of the range of input data.",
                 "dimension": "length"
             }
         ),
@@ -281,7 +306,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": int,
                 "default": 1,
-                "help" : "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. For symmetric potential system, 1 Squared Exponential kernel will fit the potential well. However, for asymmetric system, 2 Squared Exponential kernel is recommended."
+                "help" : "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. "
             }
         ),
 
@@ -294,12 +319,52 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
+        "read_gpr_hessian_folder":(
+            InputValue,
+            {
+                "dtype": str, 
+                "default": "None",
+                "help": "Provide the name of folder. Read coordinate, potential, gradient & hessians for the gpr_hessian model from a given folder."
+            }
+        ),
+
+        "add_new_hessian_data_bool":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help": "Bool variable to decide whether we will add new hessian training data in the training set."
+            }
+        ),
+
+        "candidate_hessian_data_number":(
+            InputValue,
+            {
+                "dtype": int,
+                "default": 20,
+                "help": "number of ab initio hessian data we can potentially compute along the path. \
+                    we can choose indices from these data points and use them to construct gpr_hessian model."
+            }
+        ),
+
+        "new_hessian_data_index":(
+            InputArray,
+            {
+                "dtype": int,
+                "default": input_default(factory= np.zeros, args=(0,)),
+                "help": "The index for new data point which we will compute hessian. \
+                  These hessian data will be added to the gpr_hessian model."
+            }
+        ),
+
          "variable_spring_constant":(
             InputValue,
             {
                 "dtype": bool,
                 "default": False,
-                "help": "Bool variable. Enable variable spring constant. Make the spring constant near the end bead region larger, to have a higher resolution near the instanton path end."
+                "help": "Bool variable. Enable variable spring constant. \
+                Make the spring constant near the end bead region larger, \
+                to have a higher resolution near the instanton path end."
             }
         ),
 
@@ -308,7 +373,9 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float, 
                 "default": 0.000,
-                "help": "reference energy E_ref for variable spring constant (VSC). For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. The spring constant between beads at lower energy has larger spring constant. ",
+                "help": "reference energy E_ref for variable spring constant (VSC). \
+                For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
+                The spring constant between beads at lower energy has larger spring constant. ",
                 "dimension": "energy"
             }
         ),
@@ -318,7 +385,10 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 3.00,
-                "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. The spring constant between beads at lower energy has larger spring constant. k_max specify the spring constant at two end beads"
+                "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). \
+                  For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
+                    The spring constant between beads at lower energy has larger spring constant. \
+                    k_max specify the spring constant at two end beads"
             }
         )
 
@@ -346,10 +416,14 @@ class InputNebInstGPR(InputDictionary):
         self.alt_out.store(options["alt_out_step"])
         self.prefix.store(options["prefix"])
         self.final_hessian_bool.store(options["final_hessian_bool"])
-
+        self.ab_initio_hessian_bool.store(options["ab_initio_hessian_bool"])
         # options for GPR kernel
         self.gpr_SE_kernel_number.store(options["gpr_SE_kernel_number"])
         self.read_initial_gpr_training_data.store(options["read_initial_gpr_training_data"])
+        # about computing hessian for gpr model & rate calculation.
+        self.read_gpr_hessian_folder.store(options["read_gpr_hessian_folder"])
+        self.add_new_hessian_data_bool.store(options["add_new_hessian_data_bool"])
+        self.candidate_hessian_data_number.store(options["candidate_hessian_data_number"])
 
         # optarrays
         self.energy_shift.store(optarrays["energy_shift"])
@@ -382,6 +456,8 @@ class InputNebInstGPR(InputDictionary):
         self.instanton_bead_pot.store(optarrays["instanton_bead_pot"])
         self.instanton_hessian.store(optarrays["instanton_hessian"])
 
+        # about computing hessian for gpr model & rate calculation.
+        self.new_hessian_data_index.store(optarrays["new_hessian_data_index"])
         
 
     def fetch(self):

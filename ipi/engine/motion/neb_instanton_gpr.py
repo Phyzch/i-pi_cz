@@ -28,7 +28,7 @@ import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
 import ipi.utils.nebinstool
 import ipi.utils.gpr_hessian_tools
-
+import os 
 from timeit import default_timer as timer
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
@@ -1974,7 +1974,10 @@ class RP_MAP(object):
     def analyze_cl_dynamics_along_MAP(
         self, x_list, v_list, a_list, t_list, r_list, pot_list
     ):
-        """ """
+        """
+        compute the temperature of instanton path from period of motion.
+        monitor potential, total energy and kinetic energy during the dynamics.
+        """
         x_list = np.array(x_list)
         v_list = np.array(v_list)
         t_list = np.array(t_list)
@@ -2456,23 +2459,28 @@ class RP_MAP(object):
         (2) Add new hessian data into gpr_hessian_model
         (3) store the updated data set into new folder.
         """
-        if self.read_gpr_hessian_folder == "None":
-            candidate_hessian_point_x, _ = (
-                ipi.utils.nebinstool.path_equal_distance_interpolation(
-                    np.copy(self.neb_beads.q), self.candidate_hessian_data_number
-                )
-            )
-            # index of hessian data that is already computed among candidate data point list.
-            self.hessian_index_in_candidate_list = np.array([])
-        else:
-            # read candidate_hessian_point_x, hessian_index_in_candidate_list from self.read_gpr_hessian_folder.
-            (candidate_hessian_point_x, self.hessian_index_in_candidate_list) = (
-                ipi.utils.nebinstgprtool.read_candidate_hessian_data_coordinate(
-                    self.read_gpr_hessian_folder
-                )
-            )
-
         if self.add_new_hessian_data_bool:
+            # find the location of data point we can compute hessian & the index of data point that we have already computed hessians.
+            if self.read_gpr_hessian_folder == "None":
+                candidate_hessian_point_x, _ = (
+                    ipi.utils.nebinstool.path_equal_distance_interpolation(
+                        np.copy(self.neb_beads.q), self.candidate_hessian_data_number
+                    )
+                )
+                # index of hessian data that is already computed among candidate data point list.
+                self.hessian_index_in_candidate_list = np.array([])
+            else:
+                # read candidate_hessian_point_x, hessian_index_in_candidate_list from self.read_gpr_hessian_folder.
+                (candidate_hessian_point_x, self.hessian_index_in_candidate_list) = (
+                    ipi.utils.nebinstgprtool.read_candidate_hessian_data_coordinate(
+                        self.read_gpr_hessian_folder
+                    )
+                )
+
+                assert (
+                    len(candidate_hessian_point_x) == self.candidate_hessian_data_number
+                ), "the candidate hessian data point number read from file is not the same as the one in input.xml"
+
             assert (
                 np.max(self.new_hessian_data_index) < self.candidate_hessian_data_number
             ), "the index of new hessian data point should not be larger than the number of candidate hessian data point"
@@ -2526,7 +2534,8 @@ class RP_MAP(object):
             )
 
             # create a new data folder with up to date potential, gradient & hessian data.
-            new_data_folder = (
+            # the newly computed hessian will also be stored in this file.
+            self.data_destination_folder = (
                 ipi.utils.nebinstgprtool.store_training_data_in_gpr_hessian_model(
                     self.gpr_hessian_model, self.energy_shift
                 )
@@ -2538,12 +2547,41 @@ class RP_MAP(object):
                 [self.hessian_index_in_candidate_list, self.new_hessian_data_index]
             )
 
-            # store candidate_hessian_point_x, hessian_index_in_candidate_list in new_data_folder
+            # store candidate_hessian_point_x, hessian_index_in_candidate_list in data destination folder.
             ipi.utils.nebinstgprtool.store_candidate_hessian_data_coordinate(
                 candidate_hessian_point_x,
                 self.hessian_index_in_candidate_list,
-                new_data_folder,
+                self.data_destination_folder,
             )
+
+    def predict_ring_polymer_hessians_using_gpr(self):
+        """
+        predict hessians of all ring polymer beads using Gaussian Process regression model. (self.gpr_hessian)
+        """
+        coord = np.copy(self.rp_beads.q)
+        nbeads = self.rp_beads.nbeads
+        natoms = self.rp_beads.natoms
+
+        hessian_data_point_index = np.arange(nbeads)
+
+        # use Gaussian Process Regression model to predict potentials, gradients and hessians
+        pots, grads, hessians, _, _, _ = self.gpr_hessian_model.predict_latent_function(
+            coord, hessian_data_point_index, internal_coordinate_bool=False
+        )
+
+        # reshape hessians ([nbeads, 3 * natoms, 3 * natoms]) 
+        # to fit the shape of self.rp_hessian: [3 * natoms, nbeads * 3 * natoms]
+        self.rp_hessian = np.reshape(
+            np.transpose(hessians, (1, 0, 2)), [3 * natoms, nbeads * 3 * natoms]
+        )
+
+        # store computed hessians.
+        prefix = os.path.join(self.data_destination_folder, "nbeads=" + str(int(nbeads)))
+        ipi.utils.nebinstool.print_instanton_hess(
+            prefix,
+            self.rp_hessian,
+            self.output_maker
+        )
 
     def generate_ring_polymer_beads(self, neb_beads, neb_final_step):
         """
@@ -2582,3 +2620,12 @@ class RP_MAP(object):
             else:
                 # create gpr hessian model either reading data from input file or using training data from gpr model.
                 self.construct_gpr_hessian_model()
+
+                # add new hessian data into GPR model.
+                # the location of new hessian data is given by self.new_hessian_data_point_index.
+                # candidate_hessian_point_x spaced with equal distance along the path.
+                self.add_new_hessian_data()
+
+                # predict hessians of ring polymer beads using Gaussian Process Regression.
+                # The result is stored in self.rp_hessians, which will be stored in RESTART file for post-processing.
+                self.predict_ring_polymer_hessians_using_gpr()
