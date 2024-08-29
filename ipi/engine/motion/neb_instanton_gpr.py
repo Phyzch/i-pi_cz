@@ -634,6 +634,7 @@ class MAPNEBGPRMover(Motion):
                 early_stop_bool,
                 outrange_bead_index_list,
             ) = self.neb_step(outer_loop_step, neb_step)
+            
             neb_step = neb_step + 1
 
             # beads move out of trust region.
@@ -1371,7 +1372,7 @@ class LINEBGradientMapper(object):
         )
         self.action = None  # abbreviated action.
         self.action_forces = None  # minus gradient of abbreviated action
-        self.neb_optimization_force - (
+        self.neb_optimization_force = (
             None  # neb force for optimization of action with constraints at two ends.
         )
         self.neb_transverse_force = (

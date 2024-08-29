@@ -577,7 +577,7 @@ class FixInternalDofs(object):
             train_targets
         )  # the first column of target is potential V.
 
-        if not isinstance(noise_var, None):
+        if not (noise_var is None):
             if len(self.fixed_internal_dofs) != 0:
                 moving_noise_var = np.delete(noise_var, self.fixed_internal_dofs + 1)
             else:
