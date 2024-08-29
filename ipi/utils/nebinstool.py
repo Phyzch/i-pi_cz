@@ -138,17 +138,17 @@ def path_equal_distance_interpolation(neb_bead_q, interpolation_bead_number):
         neb_bead_path_r_scaled, neb_bead_q_array, axis= 0
     )
 
-    interpolate_r_scaled = np.arange(0, neb_bead_number + 1, num= interpolation_bead_number)
+    interpolate_r_scaled = np.linspace(0, neb_bead_number, num= interpolation_bead_number)
 
-    bead_path_x = cs(interpolate_r_scaled)
+    bead_path_q = cs(interpolate_r_scaled)
     
-    bead_distance = np.linalg.norm(bead_path_x[1:] - bead_path_x[:-1], axis= 1)
+    bead_distance = np.linalg.norm(bead_path_q[1:] - bead_path_q[:-1], axis= 1)
 
     bead_path_r = np.concatenate(
         [[0], np.cumsum(bead_distance)]
     )  # distance from initial beads.
 
-    return bead_path_x, bead_path_r
+    return bead_path_q, bead_path_r
 
 def interpolate_ring_polymer_beads(
     period, t_list, x_list, v_list, instanton_bead_number
@@ -300,9 +300,17 @@ def bisect_dt(dt_right, dt_left, old_y, t, param, target_dr):
 
 def print_instanton_hess(prefix, hessian, output_maker):
     """Print physical part of the instanton hessian"""
-    outfile = output_maker.get_output(prefix + ".hess", "w")
-    np.savetxt(outfile, hessian.reshape(1, hessian.size))
-    outfile.close_stream()
+    hessian_file_name = prefix + ".hess"
+    if os.path.exists(hessian_file_name):
+        os.rename(hessian_file_name, hessian_file_name + "#")
+    with open(hessian_file_name, "w") as f:
+        hessian_1d = hessian.flatten()
+        hessian_size = hessian.size 
+        for i in range(hessian_size):
+            f.write(str(hessian_1d[i]) + " ")
+        
+        f.write("\n")
+
 
 
 def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001):

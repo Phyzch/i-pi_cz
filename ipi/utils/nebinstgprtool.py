@@ -10,7 +10,7 @@ import os
 from ipi.utils.nebinstool import RK4
 import ipi.utils.nebinstool
 from ipi.utils.gpr_hessian_tools import GPModelWithHessiansWrapper
-
+import shutil
 
 def check_neb_early_stop(
     beads_x,
@@ -208,8 +208,11 @@ def store_training_data(cartesian_coordinate_x, V, forces, prefix):
     training_bead_number = np.shape(cartesian_coordinate_x)[0]
     ndofs = np.shape(cartesian_coordinate_x)[1]
     # create folder with prefix
+    if os.path.exists("#" + prefix):
+        shutil.rmtree("#" + prefix)
+        
     if os.path.exists(prefix):
-        os.rename(prefix, "#" + prefix)
+        shutil.move(prefix, "#" + prefix)
 
     os.mkdir(prefix)
 
@@ -259,7 +262,6 @@ def store_training_data_with_hessian(cartesian_coordinate_x, V, forces, hessian_
     '''
     store the training data (coord, pot, grad) + hessian
     '''
-    training_bead_number = np.shape(cartesian_coordinate_x)[0]
     ndofs = np.shape(cartesian_coordinate_x)[1]
 
     store_training_data(cartesian_coordinate_x, V, forces, prefix)
@@ -279,7 +281,7 @@ def store_training_data_with_hessian(cartesian_coordinate_x, V, forces, hessian_
             f.write(str(hessian_index_list[i]) + "   ")
             for j in range(ndofs):
                 for k in range(ndofs):
-                    f.write(str(hessians[i,j,k] + " "))
+                    f.write(str(hessians[i,j,k]) + " ")
             
             f.write("\n")
 
@@ -939,6 +941,7 @@ def add_hessian_data_to_model(
     """
     simple function to add data with hessian information (coordinate + pot + gradients + hessian) into the gpr_hessian_model.
     We also shift the potential energy before we add the data into gpr_hessian_model.
+    We assume all data points have hessian information.
     """
     train_hessian_data_num = len(train_data_coordinate)
     new_train_x = np.copy(train_data_coordinate)
@@ -975,7 +978,7 @@ def store_training_data_in_gpr_hessian_model(gpr_hessian_model: GPModelWithHessi
     gradients_num = len(gradients)
     hessians_num = len(hessian_index_list)
 
-    prefix= "#grad " + str(gradients_num) + " #hessian " + str(hessians_num)
+    prefix= "grad# " + str(gradients_num) + " hessian# " + str(hessians_num)
 
     store_training_data_with_hessian(cartesian_x, 
                                      pots,

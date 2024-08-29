@@ -1093,6 +1093,7 @@ class GPModelWithHessiansWrapper:
             )
         )
 
+        new_train_hessian_q_triu = take_upper_triangular_part(new_train_hessian_q)
         # transform the training inputs, training targets into tensor.Torch
         new_train_inputs_tensor = torch.from_numpy(new_train_inputs)
         new_train_targets_tensor = torch.from_numpy(new_train_targets)
@@ -1106,17 +1107,19 @@ class GPModelWithHessiansWrapper:
             new_noise_covar_factor_with_hessian_array
         )
         # update the mean function if mean function is still constant mean
-        if self.constant_mean_func_bool:
-            self.constant_mean_func_bool = False 
-            ref_mean_q_tensor = new_train_inputs_tensor[0]
-            ref_mean_V_tensor = torch.tensor([new_train_V[0]])
-            ref_mean_grad_q_tensor = new_train_grad_q[0]
-            ref_mean_hessian_q_tensor = new_train_hessian_q[0]
+        # if self.constant_mean_func_bool:
+        #     self.constant_mean_func_bool = False 
 
-            self.update_mean_function(ref_mean_q_tensor, 
-                                      ref_mean_V_tensor,
-                                      ref_mean_grad_q_tensor,
-                                      ref_mean_hessian_q_tensor)       
+        #     (ref_mean_q_tensor, ref_mean_V_tensor,
+        #      ref_mean_grad_q_tensor, ref_mean_hessian_q_triu_tensor) = self.compute_mean_function_param(
+        #          new_train_x[0], np.array([new_train_V[0]]), 
+        #          new_train_grad_x[0], new_train_hessian_x[0]
+        #      )
+
+        #     self.update_mean_function(ref_mean_q_tensor, 
+        #                               ref_mean_V_tensor,
+        #                               ref_mean_grad_q_tensor,
+        #                               ref_mean_hessian_q_triu_tensor)       
 
         # update the Gaussian Process Regression model with new data.
         ipi.utils.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(
