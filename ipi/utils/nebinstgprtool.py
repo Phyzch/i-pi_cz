@@ -274,7 +274,7 @@ def store_training_data_with_hessian(cartesian_coordinate_x, V, forces, hessian_
     hessian_data_num = len(hessian_index_list)
     with open(hessian_file_name, "w") as f:
         f.write("Total hessian number: \n")
-        f.write(str(hessian_data_num) + "\n")
+        f.write(str(int(hessian_data_num)) + "\n")
 
         f.write("Bead_index  Hessian (Hatree/ a.u.^2) \n")
         for i in range(hessian_data_num):
@@ -427,7 +427,7 @@ def read_training_data_with_hessian(prefix):
                 lines[line_index]
             )
             
-            bead_with_hessian_index = int(line[0])
+            bead_with_hessian_index = int(float(line[0]))
             hessian_index_list.append(bead_with_hessian_index)
 
             hessian_data = np.array(list(map(float, line[1:]))) 
@@ -472,7 +472,7 @@ def read_candidate_hessian_data_coordinate(prefix):
     
     with open(hessian_index_file_name, "r") as f:
         lines = f.readlines()
-        line = extract_number_from_line(lines[0])
+        line = extract_number_from_line(lines[1])
         used_hessian_index_in_candidate_list = np.array(list(map(int, line)))
     
     return candidate_hessian_point_x, used_hessian_index_in_candidate_list

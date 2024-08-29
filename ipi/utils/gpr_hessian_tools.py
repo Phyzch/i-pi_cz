@@ -1003,6 +1003,9 @@ class GPModelWithHessiansWrapper:
 
         else:
             new_train_hessian_q = np.array([])
+        
+        # number of training data before adding data into model.
+        training_data_num = np.shape(self.train_cartesian_input)[0]
 
         # update the recorded training inputs and targets
         self.train_cartesian_input = np.concatenate(
@@ -1022,7 +1025,6 @@ class GPModelWithHessiansWrapper:
             self.train_cartesian_hessian = new_train_hessian_x_symmetrized
 
         # update the index for data point that contains hessian information.
-        training_data_num = np.shape(self.train_cartesian_input)[0]
         new_hessian_data_point_index_in_full_data_set = (
             new_hessian_data_point_index + training_data_num
         )  # the hessian index in full data set after concatnate new data

@@ -318,6 +318,7 @@ class MAPNEBGPRMover(Motion):
         # Check if we enter the program directly into "instanton" stage:
         if self.options["stage"] == "instanton" and step == 0:
             self.rp_map.skip_neb_mode_bool = True
+            print("Skip neb stage. Go directly into instanton stage. \n")
         else:
             self.rp_map.skip_neb_mode_bool = False
 
@@ -634,7 +635,7 @@ class MAPNEBGPRMover(Motion):
                 early_stop_bool,
                 outrange_bead_index_list,
             ) = self.neb_step(outer_loop_step, neb_step)
-            
+
             neb_step = neb_step + 1
 
             # beads move out of trust region.
@@ -2460,6 +2461,15 @@ class RP_MAP(object):
         (2) Add new hessian data into gpr_hessian_model
         (3) store the updated data set into new folder.
         """
+        self.data_destination_folder = self.read_gpr_hessian_folder
+        
+        if (not self.add_new_hessian_data_bool) and self.read_gpr_hessian_folder == "None":
+            raise(
+                "Error. You must provide hessian data for gpr_hessian training. \
+                  Either add new hessian data (add_new_hessian_data_bool= True) or read hessian data \
+                  from read_gpr_hessian_folder"
+            ) 
+
         if self.add_new_hessian_data_bool:
             # find the location of data point we can compute hessian & the index of data point that we have already computed hessians.
             if self.read_gpr_hessian_folder == "None":
