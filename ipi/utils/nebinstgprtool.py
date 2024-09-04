@@ -513,7 +513,7 @@ def bisect_dt_gpr(dt_right, dt_left, old_y, t, param, target_dr):
     old_x = np.copy(old_y[0])
     dr = 1000
 
-    while abs(target_dr - dr) > 0.0005:
+    while abs(target_dr - dr) > 0.0001:
         dt = (dt_left + dt_right) / 2
         new_y = RK4(np.copy(old_y), t, dydt_inverted_pot_gpr, param, dt)
         new_x = np.copy(new_y[0])

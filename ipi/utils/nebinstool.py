@@ -83,7 +83,7 @@ def print_instanton_rp_time(prefix, image_time_period, rp_t_list, output_maker):
 
 def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
     """
-    do cubic interpolation of minimum action path.
+    do cubic spline interpolation of minimum action path.
     return coordinate (x) and distance from initial point (r) along interpolated beads.
     :param: neb_bead_q:  coordinate of nudged elastic band bead
     :param: interpolation_bead_number: number of point to interpolate beads.
@@ -102,7 +102,7 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
     b = neb_bead_q_array
 
     cs = CubicSpline(
-        neb_bead_path_r_scaled, b, axis=0
+        neb_bead_path_r_scaled, b, axis=0, bc_type= "natural"
     )  # object for cubic spline interpolation. interpolate along axis 0.
 
     cs1 = CubicSpline(np.arange(neb_bead_number), neb_bead_path_r_scaled)

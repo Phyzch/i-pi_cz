@@ -12,7 +12,7 @@ Adapted from Instanton_postproc.py written by Y. Litman
 instanton according to J. Phys. Chem. Lett. 7, 437(2016) (Instanton Rate calculations) or J. Chem. Phys. 134, 054109 (2011) (Tunneling Splitting)
 
 
-Syntax:    python  Instanton_postproc.py  <checkpoint_file> -c <case> -t  <temperature (K)>  (-n <nbeads(full polymer)>) (-freq <freq_reactant.dat>)
+Syntax:    python  neb_instanton_postproc.py  <checkpoint_file> -c <case> -t  <temperature (K)> -e <ground_state_energy> (-n <nbeads(full polymer)>) (-freq <freq_reactant.dat>)
 
 Examples for rate calculation:
            python  Instanton_postproc.py   RESTART  -c  instanton    -t   300
@@ -49,7 +49,8 @@ cm2au = unit_to_internal("frequency", "hertz", 1.0) * 3e10
 def parse_input():
     # INPUT
     parser = argparse.ArgumentParser(
-        description="""Post-processing routine in order to obtain different quantities from an instanton (or instanton related) calculation. These quantities can be used for the calculation of rates or tunneling splittings in the instanton approximation."""
+        description="""Post-processing routine in order to obtain different quantities from an instanton (or instanton related) calculation. 
+        These quantities can be used for the calculation of rates or tunneling splittings in the instanton approximation."""
     )
     parser.add_argument("input", help="Restart file")  # positional argument.
     parser.add_argument(
@@ -68,7 +69,7 @@ def parse_input():
         help="Removes the zero frequency vibrational modes depending on the symmerty of the system",
     )
     parser.add_argument(
-        "-e", "--energy_shift", type=float, default=0.0, help="Zero of energy in eV"
+        "-e", "--energy_shift", type=float, default=0.0, help="energy of ground state in eV"
     )
     parser.add_argument(
         "-f",
@@ -159,12 +160,16 @@ def Read_instanton_data(inputt, V00, temp, quiet):
     pots_half_rp = simulation.syslist[0].motion.optarrays["instanton_bead_pot"]   # pots for half ring polymer
     half_rp_beads_q = simulation.syslist[0].motion.optarrays["instanton_bead_q"]
     
-    V0 = simulation.syslist[0].motion.optarrays["energy_shift"]
-
+    # V0 = simulation.syslist[0].motion.optarrays["energy_shift"]
  
     if V00 != 0.0:
-        print("Overwriting the energy shift with the provided values from terminal (unit eV)")
+        print("Use the energy shift (reactant energy) with the provided values from terminal (unit eV)")
         V0 = V00 * eV2au 
+    else:
+        raise("must provide the energy shift: the ground state energy of the reactant. use -e <energy(eV)> \
+              (if value is 0, use small number, 1e-6 for example)")
+        
+
     
     if np.absolute(temp - temp2) / K2au > 2:
         print(
@@ -273,7 +278,7 @@ def get_rp_freq(w0, nbeads, temp, mode="rate"):
     :param: w0: square of frequency of harmonic potential
     :param: nbeads: number of beads for half ring-polymer.
     :param: temp: temperature
-    omega^2 = omega_0 ^2 + [2/(betaP * hbar) * sin(pi * |k|/N)]^2 for mode q_k. here mode q_k = 1/sqrt{N} \sum_j e^{2ikj/N} q_j
+    omega^2 = omega_0 ^2 + [2/(betaP * hbar) * sin(pi * |k|/N)]^2 for mode q_k. here mode q_k = 1/sqrt{N} sum_j e^{2ikj/N} q_j
     """
     hbar = 1.0
     kb = 1
