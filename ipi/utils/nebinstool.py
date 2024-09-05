@@ -96,13 +96,11 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
 
     neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
     neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
-    # make the variable in the range of [0, neb_bead_number]
-    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] * neb_bead_number
-
-    b = neb_bead_q_array
+    # make the variable in the range of [0, 1]
+    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] 
 
     cs = CubicSpline(
-        neb_bead_path_r_scaled, b, axis=0, bc_type= "natural"
+        neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type= "natural"
     )  # object for cubic spline interpolation. interpolate along axis 0.
 
     cs1 = CubicSpline(np.arange(neb_bead_number), neb_bead_path_r_scaled)
@@ -120,6 +118,27 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
     )  # distance from initial beads.
 
     return bead_path_x, bead_path_r
+
+def path_cubic_spline_function(neb_bead_q):
+    """
+    return cubic spline function of minimum action path using the location of neb beads.
+    The spline function x = Cs(r), will r is the normalized distance along the path. (at the end of path, r=1).
+
+    :param: neb_bead_q: coordinate of nudged elastic band bead
+
+    :return cs: CubicSpline function : scipy.interpolate.CubicSpline
+    """
+    neb_bead_q_array = np.array(neb_bead_q)
+    neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
+    neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
+    # make the variable in the range of [0, 1]
+    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] 
+
+    cs = CubicSpline(
+        neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type= "natural"
+    )
+
+    return cs
 
 def path_equal_distance_interpolation(neb_bead_q, interpolation_bead_number):
     '''
@@ -226,53 +245,37 @@ def RK4(y, t, dydt, param, h):
     return new_y
 
 
-def compute_acceleration_along_path(
-    negative_f: np.ndarray, tau: np.ndarray, m3: np.ndarray
-):
-    """
-    :param: negative_f : negative force
-    :param: tau: tangent vector along the path
-    :param: m3: mass vector. mass for different atoms.
-    """
-    tau_mass_scaled = tau * np.sqrt(m3)
-    tau_mass_scaled = tau_mass_scaled / np.linalg.norm(tau_mass_scaled)
-    f_mass_scaled = negative_f / np.sqrt(m3)
-    f_mass_scaled_projected = np.dot(f_mass_scaled, tau_mass_scaled) * tau_mass_scaled
-    a = f_mass_scaled_projected / np.sqrt(m3)
 
-    return a
+def compute_r_acceleration_along_path(
+    negative_f: np.ndarray, 
+    jacobian: np.ndarray, 
+    jacobian_rate: np.ndarray,
+    m3_matrix: np.ndarray,
+    v_r: np.ndarray
+):
+    '''
+    :param: negative_f: negative force.
+    :param: jacobian: dx/dr 
+    :param: jacobian_rate: d(dx/dr)/dt 
+    :param: m3_matrix: diagonal matrix. diagonal element is m3.
+    :param: v_r: dr/dt. velocity for r.
+    '''
+    jacobian_transpose = np.transpose(jacobian)
+    term1 = np.dot(jacobian, negative_f)
+    term2 = np.matmul(np.matmul(jacobian_transpose, m3_matrix), jacobian_rate) * v_r 
+
+    denominator = np.matmul(np.matmul(jacobian_transpose, m3_matrix), jacobian) 
+
+    a_r = (term1 - term2) / denominator 
+
+    return a_r 
 
 
 def dydt_inverted_pot(y, t, param):
     """
-    y=[x,v]. That is y[0] = x. y[1] = v.
-    dydt[0] = v. dydt[1] = a (inverted pot)
-    param = [cl_beads, cl_forces, m3, tau]
-    cl_beads: bead object that record the coordinate of current particle
-    cl_forces: force object that connect to force engine to compute force (Depending on bead object's location)
-    m3 : mass. size : [3 * natom]
-    tau: tangent direction of motion. unit vector.
+    TODO: Need to rewrite this code for evolution of r.
     """
-    x = y[0]
-    v = y[1]
-
-    cl_beads = param[0]
-    cl_forces = param[1]
-    m3 = param[2]
-    tau = param[3]
-
-    # update coordinate of bead object to enable the forces object to compute force
-    if (cl_beads.q[0] != x).any():
-        cl_beads.q[0] = np.copy(x)
-
-    negative_f = -dstrip(cl_forces.f).copy()[0]  # negative force
-
-    # compute the acceleration along the path
-    a = compute_acceleration_along_path(negative_f, tau, m3)
-
-    dydt = np.array([v, a])
-
-    return dydt
+    pass
 
 
 def bisect_dt(dt_right, dt_left, old_y, t, param, target_dr):

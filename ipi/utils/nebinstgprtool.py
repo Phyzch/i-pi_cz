@@ -479,30 +479,45 @@ def read_candidate_hessian_data_coordinate(prefix):
 
 def dydt_inverted_pot_gpr(y, t, param):
     """
-    y=[x,v]. That is y[0] = x. y[1] = v.
-    dydt[0] = v. dydt[1] = a (inverted pot)
-    param = [cl_beads, cl_forces, m3, tau]
-    cl_beads: bead object that record the coordinate of current particle
-    gpr_model: gaussian process regression model
-    m3 : mass. size : [3 * natom]
-    tau: tangent direction of motion. unit vector.
+    y = [r, v_r]. 
+    That is y[0] = r, y[1] = v_r = dr/dt.
+    dydt[0] = v_r, dydt[1] = a (acceleration on inverted potential.)
+    param = [gpr_model, m3, cubic_spline]
+    here gpr_model: gaussian process regression model 
+         m3_matrix: mass. 2d diagonal matrix. size: [3 * natoms, 3* natoms]. The diagonal element is m3.
+         cubic_spline: cubic spline function that return x(r).
+    
+    acceleration: d^2 r/ dt^2 is from constrained dynamics. 
+    See eq.(13) in Witkin, A. (1997). Computer graphics, 9, 27
     """
-    x = y[0]
-    v = y[1]
+    r_distance = y[0]
+    v_r = y[1]
 
     gpr_model = param[0]
-    m3 = param[1]
-    tau = param[2]
+    m3_matrix = param[1]
+    cubic_spline = param[2] 
 
-    # update coordinate of bead object to enable the forces object to compute force
+    x = cubic_spline(r_distance, nu= 0)  # coordinate of the system from cubic spline (vector)
+    dx_dr = cubic_spline(r_distance, nu= 1)  # jacobian dx/dr (vector)
+    dx_dr_second_deriv = cubic_spline(r_distance, nu= 2) # second derivative d^2 x/ dr^2 (vector)
+
+    dx_dr_rate = dx_dr_second_deriv * v_r # d(dx/dr)/dt: rate of change for the jacobian (vector)
+
+    # compute the negative force in upside down potential.
     _, grad_V, _, _ = gpr_model.predict_latent_function(np.array([x]))
     negative_f = grad_V[0]
 
-    # compute acceleration along the path.
-    a = ipi.utils.nebinstool.compute_acceleration_along_path(negative_f, tau, m3)
+    # compute the acceleration of r.
+    a_r = ipi.utils.nebinstool.compute_r_acceleration_along_path(
+        negative_f,
+        dx_dr, 
+        dx_dr_rate,
+        m3_matrix,
+        v_r
+    )
 
-    dydt = np.array([v, a])
-
+    dydt = np.array([v_r, a_r])
+    
     return dydt
 
 
