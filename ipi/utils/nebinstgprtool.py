@@ -481,7 +481,7 @@ def dydt_inverted_pot_gpr(y, t, param):
     """
     y = [r, v_r]. 
     That is y[0] = r, y[1] = v_r = dr/dt.
-    dydt[0] = v_r, dydt[1] = a (acceleration on inverted potential.)
+    dydt[0] = v_r, dydt[1] = a (acceleration of r on inverted potential.)
     param = [gpr_model, m3, cubic_spline]
     here gpr_model: gaussian process regression model 
          m3_matrix: mass. 2d diagonal matrix. size: [3 * natoms, 3* natoms]. The diagonal element is m3.

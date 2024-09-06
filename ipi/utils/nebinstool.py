@@ -273,9 +273,53 @@ def compute_r_acceleration_along_path(
 
 def dydt_inverted_pot(y, t, param):
     """
-    TODO: Need to rewrite this code for evolution of r.
+    y = [r, v_r].
+    r is normalized distance along the path.
+    y[0] = r,  y[1] = v_r 
+    dydt[0] = v_r,  dydt[1] = a_r  (acceleration of r on inverted potential)
+    param = [cl_bead, cl_forces, m3_matrix, cubic_spline]
+    here cl_bead is the bead for classical dynamics. 
+         cl_forces is force engine for classical dynamics.
+         set cl_bead.q[0] = x. Then we can call force engine to get potential and force.
+
+         m3_matrix: mass. 2d diagonal matrix. size: [3 * natoms, 3* natoms]. 
+                    The diagonal element is m3.
+        cubic_spline: cubic spline function that return coordinate x(r).
+
+    acceleration d^2 r/dt^2 is from constrained dynamics.
+    See eq.(13) in Witkin, A. (1997). Computer graphics, 9, 27
     """
-    pass
+    r_distance = y[0]
+    v_r = y[1]
+
+    cl_bead = param[0]
+    cl_forces = param[1]
+    m3_matrix = param[2]
+    cubic_spline = param[3]
+
+    x = cubic_spline(r_distance , nu = 0)  # coordinate of the system from cubic spline (vector)
+    dx_dr = cubic_spline(r_distance, nu= 1)  # jacobian dx/dr (vector)
+    dx_dr_second_deriv = cubic_spline(r_distance, nu= 2) # second derivative d^2 x/ dr^2 (vector)
+
+    dx_dr_rate = dx_dr_second_deriv * v_r # d(dx/dr)/dt: rate of change for the jacobian (vector)
+
+    # compute the negative force on the up-side down potential.
+    cl_bead.q[0] = x 
+    forces = cl_forces.f[0]
+    negative_f = - forces 
+
+    # compute acceleration of r.
+    a_r = compute_r_acceleration_along_path(
+        negative_f,
+        dx_dr,
+        dx_dr_rate,
+        m3_matrix,
+        v_r
+    )
+
+    dydt = np.array([v_r, a_r])
+
+    return dydt
 
 
 def bisect_dt(dt_right, dt_left, old_y, t, param, target_dr):
