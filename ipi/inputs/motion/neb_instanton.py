@@ -156,16 +156,6 @@ class InputNebInst(InputDictionary):
             }
         ),
 
-        # for MD along minimum actioin path.
-        "path_interpolation_bead_number":(
-            InputValue,
-            {
-                "dtype": int,
-                "default": 20,
-                "help": "the number of interpolation point along the minimum action path to compute imaginary time t = beta * hbar"
-            }
-        ),
-
         # for spring force term and energy constraint energy in nudged elastic band (NEB) algorithm
         "spring_k":(
             InputValue,

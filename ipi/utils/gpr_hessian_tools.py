@@ -1107,21 +1107,7 @@ class GPModelWithHessiansWrapper:
         )
         new_noise_covar_factor_with_hessian_array = torch.from_numpy(
             new_noise_covar_factor_with_hessian_array
-        )
-        # update the mean function if mean function is still constant mean
-        # if self.constant_mean_func_bool:
-        #     self.constant_mean_func_bool = False 
-
-        #     (ref_mean_q_tensor, ref_mean_V_tensor,
-        #      ref_mean_grad_q_tensor, ref_mean_hessian_q_triu_tensor) = self.compute_mean_function_param(
-        #          new_train_x[0], np.array([new_train_V[0]]), 
-        #          new_train_grad_x[0], new_train_hessian_x[0]
-        #      )
-
-        #     self.update_mean_function(ref_mean_q_tensor, 
-        #                               ref_mean_V_tensor,
-        #                               ref_mean_grad_q_tensor,
-        #                               ref_mean_hessian_q_triu_tensor)       
+        )    
 
         # update the Gaussian Process Regression model with new data.
         ipi.utils.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(
@@ -1157,21 +1143,6 @@ class GPModelWithHessiansWrapper:
 
         return free_moving_beads_internal_coordinate
 
-    def update_mean_function(self,
-                             ref_mean_coordinate,
-                             ref_mean_pot,
-                             ref_mean_grad,
-                             ref_mean_hessian,):
-        '''
-        update the mean function as Taylor expansion around a reference point
-        '''
-        self.gpr_model.update_mean_function(ref_mean_coordinate,
-                                            ref_mean_pot,
-                                            ref_mean_grad,
-                                            ref_mean_hessian)
-        
-        if self.constant_mean_func_bool:
-            self.constant_mean_func_bool = False
 
     # ------ output information -------
     def check_gpr_lengthscale(self):

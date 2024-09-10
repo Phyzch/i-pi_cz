@@ -322,29 +322,6 @@ def dydt_inverted_pot(y, t, param):
     return dydt
 
 
-def bisect_dt(dt_right, dt_left, old_y, t, param, target_dr):
-    """
-    using bisection search method to find the appropriate dt value to go to end beads.
-    """
-    old_x = np.copy(old_y[0])
-    dr = 1000
-
-    while abs(target_dr - dr) > 0.0005:
-        dt = (dt_left + dt_right) / 2
-        new_y = RK4(np.copy(old_y), t, dydt_inverted_pot, param, dt)
-        new_x = np.copy(new_y[0])
-        dr = np.linalg.norm(new_x - old_x)
-
-        if dr > target_dr:
-            # dt is too large. make dt smaller.
-            dt_right = dt
-        else:
-            # dt is too small. make dt larger.
-            dt_left = dt
-
-    return dt, new_y
-
-
 def print_instanton_hess(prefix, hessian, output_maker):
     """Print physical part of the instanton hessian"""
     hessian_file_name = prefix + ".hess"

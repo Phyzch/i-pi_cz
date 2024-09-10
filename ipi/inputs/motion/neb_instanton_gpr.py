@@ -155,16 +155,6 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
-        # for MD along minimum actioin path.
-        "path_interpolation_bead_number":(
-            InputValue,
-            {
-                "dtype": int,
-                "default": 20,
-                "help": "the number of interpolation point along the minimum action path to compute imaginary time t = beta * hbar"
-            }
-        ),
-
         # for spring force term and energy constraint energy in nudged elastic band (NEB) algorithm
         "spring_k":(
             InputValue,
@@ -439,7 +429,6 @@ class InputNebInstGPR(InputDictionary):
 
         self.instanton_path_energy.store(optarrays["instanton_path_energy"])
         self.instanton_bead_number.store(optarrays["instanton_bead_number"])
-        self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
 
         # store parameters about gaussian process regression
         self.gpr_relative_force_error_criterion.store(optarrays["gpr_relative_force_error_criterion"])

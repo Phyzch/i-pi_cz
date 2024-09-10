@@ -63,7 +63,6 @@ class MAPNEBMover(Motion):
         instanton_bead_q=np.zeros(0, float),
         instanton_bead_pot=np.zeros(0, float),
         instanton_hessian=np.eye(0, 0, 0, float),
-        path_interpolation_bead_number=20,
         spring_k=0.1,
         kappa={"left": 50, "right": 50},
         variable_spring_constant=False,
@@ -106,11 +105,6 @@ class MAPNEBMover(Motion):
 
         self.optarrays["time_step"] = time_step
         self.optarrays["instanton_time_step"] = instanton_time_step
-
-        # number of beads to interpolate MAP path to generate instanton beads.
-        self.optarrays["path_interpolation_bead_number"] = (
-            path_interpolation_bead_number
-        )
 
         # input variable for instanton
         self.optarrays["instanton_path_energy"] = instanton_path_energy
@@ -1011,11 +1005,6 @@ class RP_MAP(object):
 
         self.energy_shift = nebmover.optarrays["energy_shift"]
         self.output_maker = nebmover.output_maker
-
-        self.path_interpolation_bead_number = nebmover.optarrays[
-            "path_interpolation_bead_number"
-        ]  # bead number for cubic interpolation of neb beads along minimum action path.
-        # for cubic interpolation of neb_beads
 
         self.neb_beads = nebmover.beads.copy()
         self.dcell = nebmover.cell.copy()
