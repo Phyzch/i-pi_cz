@@ -97,10 +97,10 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
     neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
     neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
     # make the variable in the range of [0, 1]
-    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] 
+    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1]
 
     cs = CubicSpline(
-        neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type= "natural"
+        neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type="natural"
     )  # object for cubic spline interpolation. interpolate along axis 0.
 
     cs1 = CubicSpline(np.arange(neb_bead_number), neb_bead_path_r_scaled)
@@ -119,6 +119,7 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
 
     return bead_path_x, bead_path_r
 
+
 def path_cubic_spline_function(neb_bead_q):
     """
     return cubic spline function of minimum action path using the location of neb beads.
@@ -132,20 +133,21 @@ def path_cubic_spline_function(neb_bead_q):
     neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
     neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
     # make the variable in the range of [0, 1]
-    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] 
+    neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1]
 
     cs = CubicSpline(
-        neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type= "natural"
+        neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type="natural"
     )
 
     return cs
 
+
 def path_equal_distance_interpolation(neb_bead_q, interpolation_bead_number):
-    '''
+    """
     interpolate the path to find points spaced with equal distance along the path.
     :param: neb_bead_q:  coordinate of nudged elastic band bead.
     :param: interpolation_bead_number: number of point to interpolate beads.
-    '''
+    """
     neb_bead_q_array = np.array(neb_bead_q)
     neb_bead_number = len(neb_bead_q)
     neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
@@ -153,21 +155,22 @@ def path_equal_distance_interpolation(neb_bead_q, interpolation_bead_number):
     # make the variable in the range of [0, neb_bead_number]
     neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1] * neb_bead_number
 
-    cs = CubicSpline(
-        neb_bead_path_r_scaled, neb_bead_q_array, axis= 0
+    cs = CubicSpline(neb_bead_path_r_scaled, neb_bead_q_array, axis=0)
+
+    interpolate_r_scaled = np.linspace(
+        0, neb_bead_number, num=interpolation_bead_number
     )
 
-    interpolate_r_scaled = np.linspace(0, neb_bead_number, num= interpolation_bead_number)
-
     bead_path_q = cs(interpolate_r_scaled)
-    
-    bead_distance = np.linalg.norm(bead_path_q[1:] - bead_path_q[:-1], axis= 1)
+
+    bead_distance = np.linalg.norm(bead_path_q[1:] - bead_path_q[:-1], axis=1)
 
     bead_path_r = np.concatenate(
         [[0], np.cumsum(bead_distance)]
     )  # distance from initial beads.
 
     return bead_path_q, bead_path_r
+
 
 def interpolate_ring_polymer_beads(
     period, t_list, x_list, v_list, instanton_bead_number
@@ -245,44 +248,43 @@ def RK4(y, t, dydt, param, h):
     return new_y
 
 
-
 def compute_r_acceleration_along_path(
-    negative_f: np.ndarray, 
-    jacobian: np.ndarray, 
+    negative_f: np.ndarray,
+    jacobian: np.ndarray,
     jacobian_rate: np.ndarray,
     m3_matrix: np.ndarray,
-    v_r: np.ndarray
+    v_r: np.ndarray,
 ):
-    '''
+    """
     :param: negative_f: negative force.
-    :param: jacobian: dx/dr 
-    :param: jacobian_rate: d(dx/dr)/dt 
+    :param: jacobian: dx/dr
+    :param: jacobian_rate: d(dx/dr)/dt
     :param: m3_matrix: diagonal matrix. diagonal element is m3.
     :param: v_r: dr/dt. velocity for r.
-    '''
+    """
     jacobian_transpose = np.transpose(jacobian)
     term1 = np.dot(jacobian, negative_f)
-    term2 = np.matmul(np.matmul(jacobian_transpose, m3_matrix), jacobian_rate) * v_r 
+    term2 = np.matmul(np.matmul(jacobian_transpose, m3_matrix), jacobian_rate) * v_r
 
-    denominator = np.matmul(np.matmul(jacobian_transpose, m3_matrix), jacobian) 
+    denominator = np.matmul(np.matmul(jacobian_transpose, m3_matrix), jacobian)
 
-    a_r = (term1 - term2) / denominator 
+    a_r = (term1 - term2) / denominator
 
-    return a_r 
+    return a_r
 
 
 def dydt_inverted_pot(y, t, param):
     """
     y = [r, v_r].
     r is normalized distance along the path.
-    y[0] = r,  y[1] = v_r 
+    y[0] = r,  y[1] = v_r
     dydt[0] = v_r,  dydt[1] = a_r  (acceleration of r on inverted potential)
     param = [cl_bead, cl_forces, m3_matrix, cubic_spline]
-    here cl_bead is the bead for classical dynamics. 
+    here cl_bead is the bead for classical dynamics.
          cl_forces is force engine for classical dynamics.
          set cl_bead.q[0] = x. Then we can call force engine to get potential and force.
 
-         m3_matrix: mass. 2d diagonal matrix. size: [3 * natoms, 3* natoms]. 
+         m3_matrix: mass. 2d diagonal matrix. size: [3 * natoms, 3* natoms].
                     The diagonal element is m3.
         cubic_spline: cubic spline function that return coordinate x(r).
 
@@ -297,24 +299,26 @@ def dydt_inverted_pot(y, t, param):
     m3_matrix = param[2]
     cubic_spline = param[3]
 
-    x = cubic_spline(r_distance , nu = 0)  # coordinate of the system from cubic spline (vector)
-    dx_dr = cubic_spline(r_distance, nu= 1)  # jacobian dx/dr (vector)
-    dx_dr_second_deriv = cubic_spline(r_distance, nu= 2) # second derivative d^2 x/ dr^2 (vector)
+    x = cubic_spline(
+        r_distance, nu=0
+    )  # coordinate of the system from cubic spline (vector)
+    dx_dr = cubic_spline(r_distance, nu=1)  # jacobian dx/dr (vector)
+    dx_dr_second_deriv = cubic_spline(
+        r_distance, nu=2
+    )  # second derivative d^2 x/ dr^2 (vector)
 
-    dx_dr_rate = dx_dr_second_deriv * v_r # d(dx/dr)/dt: rate of change for the jacobian (vector)
+    dx_dr_rate = (
+        dx_dr_second_deriv * v_r
+    )  # d(dx/dr)/dt: rate of change for the jacobian (vector)
 
     # compute the negative force on the up-side down potential.
-    cl_bead.q[0] = x 
+    cl_bead.q[0] = x
     forces = cl_forces.f[0]
-    negative_f = - forces 
+    negative_f = -forces
 
     # compute acceleration of r.
     a_r = compute_r_acceleration_along_path(
-        negative_f,
-        dx_dr,
-        dx_dr_rate,
-        m3_matrix,
-        v_r
+        negative_f, dx_dr, dx_dr_rate, m3_matrix, v_r
     )
 
     dydt = np.array([v_r, a_r])
@@ -329,12 +333,11 @@ def print_instanton_hess(prefix, hessian, output_maker):
         os.rename(hessian_file_name, hessian_file_name + "#")
     with open(hessian_file_name, "w") as f:
         hessian_1d = hessian.flatten()
-        hessian_size = hessian.size 
+        hessian_size = hessian.size
         for i in range(hessian_size):
             f.write(str(hessian_1d[i]) + " ")
-        
-        f.write("\n")
 
+        f.write("\n")
 
 
 def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001):

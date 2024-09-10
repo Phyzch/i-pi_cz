@@ -20,69 +20,67 @@ Classes:
       writing the checkpoints.
 """
 
-import numpy as np 
+import numpy as np
 from ipi.utils.inputvalue import *
 
+
 class InputNebInstGPR(InputDictionary):
-    """ Use nudged elastic band to find minimum action path (MAP). The nudged elastic band method is accelerated by Gaussian Process Regression.
+    """Use nudged elastic band to find minimum action path (MAP). The nudged elastic band method is accelerated by Gaussian Process Regression.
     Adopted from neb_instanton module.
     Contains options related with neb path optimization algorithm, spring force for neb etc.
     """
+
     attribs = {
-        "mode" : (
-            InputAttribute, 
+        "mode": (
+            InputAttribute,
             {
-                "dtype" : str,
-                "default" : "verlet",
-                "help" : "Defines the method to evolve the nudged elastic band",
-                "options": ["verlet"]
+                "dtype": str,
+                "default": "verlet",
+                "help": "Defines the method to evolve the nudged elastic band",
+                "options": ["verlet"],
             },
         )
     }
 
     fields = {
-        "tolerances":(
+        "tolerances": (
             InputDictionary,
             {
                 "dtype": float,
                 "options": ["gradient", "gradient_end_bead"],
-                 "default": [5e-3, 1e-2],
-                 "help": "Convergence criteria for neb optimization",
-                 "dimension": ["undefined", "undefined"]
+                "default": [5e-3, 1e-2],
+                "help": "Convergence criteria for neb optimization",
+                "dimension": ["undefined", "undefined"],
             },
         ),
-
-        "energy_shift":(
+        "energy_shift": (
             InputValue,
             {
                 "dtype": float,
-                "default": 0.000,  
+                "default": 0.000,
                 "help": "Set the zero of energy (unit Hatree). Choose it for energy of reactant state.",
-                "dimension": "energy"
-            }
+                "dimension": "energy",
+            },
         ),
-
-        "time_step":(
+        "time_step": (
             InputValue,
             {
                 "dtype": float,
-                "default" : 4.00,  # = 0.1 fs
+                "default": 4.00,  # = 0.1 fs
                 "help": "time step for evolve neb beads",
-                "dimension": "time"
-            }
-        ), 
-
-        "instanton_time_step":(
+                "dimension": "time",
+            },
+        ),
+        "instanton_time_step": (
             InputValue,
             {
                 "dtype": float,
                 "default": 4.00,  # = 0.1 fs
                 "help": "time step to evolve dynamics along Minimum action path to generate ring-polymer instanton",
-                "dimension": "time"
-            }
+                "dimension": "time",
+            },
         ),
-
-        "stage":(
+        "stage": (
             InputValue,
             {
                 "dtype": str,
@@ -90,73 +88,66 @@ class InputNebInstGPR(InputDictionary):
                 "options": ["neb", "instanton", "converged", "test_gpr_hessian"],
                 "help": """stage for neb pipline for finding instanton path.
                 neb: using nudged elastic band to find minimum action path
-                instanton: evolve dynamics to find the temperature of the found minimum action path and output ring polymer"""
-            }
+                instanton: evolve dynamics to find the temperature of the found minimum action path and output ring polymer""",
+            },
         ),
-
         # for instanton that we got from minimum action path doing MD along the path.
         "instanton_bead_number": (
             InputValue,
             {
-               "dtype": int,
-               "default": 20,
-                "help": "number of ring polymers for instanton at the instanton stage of calculation." 
-            }
+                "dtype": int,
+                "default": 20,
+                "help": "number of ring polymers for instanton at the instanton stage of calculation.",
+            },
         ),
-
-        "instanton_path_energy":(
+        "instanton_path_energy": (
             InputValue,
             {
                 "dtype": float,
                 "default": 0.00,
                 "help": "the end beads energy for minimum action path. with respect to the energy shift.",
-                "dimension": "energy"
-            }
+                "dimension": "energy",
+            },
         ),
-
-        "instanton_temperature":(
+        "instanton_temperature": (
             InputValue,
             {
                 "dtype": float,
                 "default": 1.00,
                 "help": """ the final calculated temperature for minimum action path: inverse of period (beta hbar) for periodic motion. 
                 (Used for saving result in RESTART) """,
-                "dimension": "temperature"
-            }
+                "dimension": "temperature",
+            },
         ),
-
-        "instanton_bead_q":(
+        "instanton_bead_q": (
             InputArray,
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
                 "help": """the bead coordinate for instanton beads (spaced equally along imaginary time)
                 on the minimum action path. (Used for recording result in RESTART)""",
-                "dimension": "length"
-            }
+                "dimension": "length",
+            },
         ),
-
-        "instanton_bead_pot":(
+        "instanton_bead_pot": (
             InputArray,
             {
                 "dtype": float,
-                "default" : input_default(factory=np.zeros, args=(0,)),
+                "default": input_default(factory=np.zeros, args=(0,)),
                 "help": """the potential energy for instanton beads (spaced equally along imaginary time) 
-                on the minimum action path. (Used for recording result in RESTART)"""
-            }
+                on the minimum action path. (Used for recording result in RESTART)""",
+            },
         ),
-        
-        "instanton_hessian":(
+        "instanton_hessian": (
             InputArray,
             {
                 "dtype": float,
-                "default" : input_default(factory=np.eye, args=(0,)),
-                "help": "the calculated Hessian for instanton beads. (Used for recording result in RESTART)"
-            }
+                "default": input_default(factory=np.eye, args=(0,)),
+                "help": "the calculated Hessian for instanton beads. (Used for recording result in RESTART)",
+            },
         ),
-
         # for spring force term and energy constraint energy in nudged elastic band (NEB) algorithm
-        "spring_k":(
+        "spring_k": (
             InputValue,
             {
                 "dtype": float,
@@ -165,15 +156,14 @@ class InputNebInstGPR(InputDictionary):
                         the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2). 
                         Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)
                         Therefore, we do not need this specify this value. The value will be used for restarting the algorithm.
-                        """
-            }
+                        """,
+            },
         ),
-
-        "kappa":(
+        "kappa": (
             InputDictionary,
             {
                 "dtype": float,
-                "options":["left", "right"], 
+                "options": ["left", "right"],
                 "default": [50, 50],
                 "help": """the energy constraint term for beads at two ends to confine beads at iso-energy contour. 
                 unit: (eV^(-1) angstrom^(-1) * atomic_mass^-1/2)
@@ -183,80 +173,68 @@ class InputNebInstGPR(InputDictionary):
                 Two kappa values will be updated accordingly during the simulation using the force information |dV/dx|. 
                 So, we do not need to specify this value.
                 |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value). The value will be used for restarting the algorithm. 
-                        """
+                        """,
             },
         ),
-
-        "final_hessian_bool":(
+        "final_hessian_bool": (
             InputValue,
             {
                 "dtype": bool,
                 "default": False,
-                "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory."
-            }
+                "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory.",
+            },
         ),
-
-        "ab_initio_hessian_bool":(
+        "ab_initio_hessian_bool": (
             InputValue,
             {
                 "dtype": bool,
                 "default": False,
-                "help": "Bool variable. if True, compute hessians of all beads ab initio. If false, use GPR to predict hessians."
-            }
+                "help": "Bool variable. if True, compute hessians of all beads ab initio. If false, use GPR to predict hessians.",
+            },
         ),
-
-        "alt_out":(
+        "alt_out": (
             InputValue,
             {
                 "dtype": int,
-                "default" : 5,
-                "help": "output instanton bead energy and geometry every alt_out step"
-            }
+                "default": 5,
+                "help": "output instanton bead energy and geometry every alt_out step",
+            },
         ),
-        "prefix":(
+        "prefix": (
             InputValue,
-            {
-                "dtype": str,
-                "default": "neb_instanton",
-                "help": "prefix of output file"
-            }
+            {"dtype": str, "default": "neb_instanton", "help": "prefix of output file"},
         ),
-        
-        "gpr_relative_force_error_criterion":(
+        "gpr_relative_force_error_criterion": (
             InputValue,
             {
                 "dtype": float,
                 "default": 0.05,
                 "help": "convergence criterion for gpr outer loop. \
                 |f^GPR - f|/|f| < gpr_relative_force_error_criterion means GPR prediction is reliable for force is reliable. \
-                Stop the outer loop."
-            }
-
+                Stop the outer loop.",
+            },
         ),
-
-        "gpr_absolute_force_error_criterion":(
+        "gpr_absolute_force_error_criterion": (
             InputValue,
             {
                 "dtype": float,
-                "default": 0.0002, 
+                "default": 0.0002,
                 "help": "convergence criterion for gpr outer loop. \
                 When |f^GPR - f| < gpr_absolute_force_error_criterion, \
-                this means the GPR prediction is already reliable for that bead."
-            }
+                this means the GPR prediction is already reliable for that bead.",
+            },
         ),
-
-        "gpr_trust_region":(
+        "gpr_trust_region": (
             InputValue,
             {
                 "dtype": float,
                 "default": 0.1,
                 "help": "trust region for Gaussian Process Regression r_max = gpr_trust_region. \
                   If the distance between NEB beads and nearest GPR point exceed r_max, \
-                  we stop the NEB inner loop and evaluate ab-initio force on that point."
-            }
+                  we stop the NEB inner loop and evaluate ab-initio force on that point.",
+            },
         ),
-        
-        "gpr_kernel_outputscale":(
+        "gpr_kernel_outputscale": (
             InputArray,
             {
                 "dtype": float,
@@ -264,11 +242,10 @@ class InputNebInstGPR(InputDictionary):
                 "help": "Gaussian Process Regression hyperparameter. \
                   Each element corresponds to one Squared Exponential kernel we use to construct covariance function. \
                   Mean value for output scale prior of Gaussian process regression kernel. \
-                  Typically it is the variance of potential energy"
-            }
+                  Typically it is the variance of potential energy",
+            },
         ),
-
-        "gpr_kernel_lengthscale_ratio":(
+        "gpr_kernel_lengthscale_ratio": (
             InputArray,
             {
                 "dtype": float,
@@ -277,100 +254,94 @@ class InputNebInstGPR(InputDictionary):
                   Each element corresponds to one Squared Exponential kernel we use to construct covariance function. \
                     Ratio of the mean value for the prior of the lengthscale of Gaussian Process regression model / length of bead in non-redundant internal coordinate. \
                       Typically this should be in the same order of the range of input data.",
-                "dimension": "length"
-            }
+                "dimension": "length",
+            },
         ),
-
-        "gpr_noise_std":(
+        "gpr_noise_std": (
             InputDictionary,
             {
                 "dtype": float,
-                "options": [ "pot_noise_prior", "force_noise_prior", "hessian_noise_prior"],
-                 "default": [1e-6, 1e-4, 1e-3],
-                 "help": "constraint for the variance of noise in the Gaussian Process Regression",
+                "options": [
+                    "pot_noise_prior",
+                    "force_noise_prior",
+                    "hessian_noise_prior",
+                ],
+                "default": [1e-6, 1e-4, 1e-3],
+                "help": "constraint for the variance of noise in the Gaussian Process Regression",
             },
         ),
-
-        "gpr_SE_kernel_number":(
+        "gpr_SE_kernel_number": (
             InputValue,
             {
                 "dtype": int,
                 "default": 1,
-                "help" : "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. "
-            }
+                "help": "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. ",
+            },
         ),
-
-        "read_initial_gpr_training_data":(
+        "read_initial_gpr_training_data": (
             InputValue,
             {
                 "dtype": bool,
                 "default": False,
-                "help" : "Bool variable to decide whether to read the stored training data."
-            }
+                "help": "Bool variable to decide whether to read the stored training data.",
+            },
         ),
-
-        "read_gpr_hessian_folder":(
+        "read_gpr_hessian_folder": (
             InputValue,
             {
-                "dtype": str, 
+                "dtype": str,
                 "default": "None",
-                "help": "Provide the name of folder. Read coordinate, potential, gradient & hessians for the gpr_hessian model from a given folder."
-            }
+                "help": "Provide the name of folder. Read coordinate, potential, gradient & hessians for the gpr_hessian model from a given folder.",
+            },
         ),
-
-        "add_new_hessian_data_bool":(
+        "add_new_hessian_data_bool": (
             InputValue,
             {
                 "dtype": bool,
                 "default": False,
-                "help": "Bool variable to decide whether we will add new hessian training data in the training set."
-            }
+                "help": "Bool variable to decide whether we will add new hessian training data in the training set.",
+            },
         ),
-
-        "candidate_hessian_data_number":(
+        "candidate_hessian_data_number": (
             InputValue,
             {
                 "dtype": int,
                 "default": 20,
                 "help": "number of ab initio hessian data we can potentially compute along the path. \
-                    we can choose indices from these data points and use them to construct gpr_hessian model."
-            }
+                    we can choose indices from these data points and use them to construct gpr_hessian model.",
+            },
         ),
-
-        "new_hessian_data_index":(
+        "new_hessian_data_index": (
             InputArray,
             {
                 "dtype": int,
-                "default": input_default(factory= np.zeros, args=(0,)),
+                "default": input_default(factory=np.zeros, args=(0,)),
                 "help": "The index for new data point which we will compute hessian. \
-                  These hessian data will be added to the gpr_hessian model."
-            }
+                  These hessian data will be added to the gpr_hessian model.",
+            },
         ),
-
-         "variable_spring_constant":(
+        "variable_spring_constant": (
             InputValue,
             {
                 "dtype": bool,
                 "default": False,
                 "help": "Bool variable. Enable variable spring constant. \
                 Make the spring constant near the end bead region larger, \
-                to have a higher resolution near the instanton path end."
-            }
+                to have a higher resolution near the instanton path end.",
+            },
         ),
-
-        "VSC_E_ref":(
+        "VSC_E_ref": (
             InputValue,
             {
-                "dtype": float, 
+                "dtype": float,
                 "default": 0.000,
                 "help": "reference energy E_ref for variable spring constant (VSC). \
                 For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
                 The spring constant between beads at lower energy has larger spring constant. ",
-                "dimension": "energy"
-            }
+                "dimension": "energy",
+            },
         ),
-
-        "VSC_spring_k_max_ratio":(
+        "VSC_spring_k_max_ratio": (
             InputValue,
             {
                 "dtype": float,
@@ -378,10 +349,9 @@ class InputNebInstGPR(InputDictionary):
                 "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). \
                   For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
                     The spring constant between beads at lower energy has larger spring constant. \
-                    k_max specify the spring constant at two end beads"
-            }
-        )
-
+                    k_max specify the spring constant at two end beads",
+            },
+        ),
     }
 
     dynamic = {}
@@ -390,15 +360,15 @@ class InputNebInstGPR(InputDictionary):
     default_label = "NEB_INSTANTON_GPR"
 
     def store(self, geop):
-        '''
+        """
         this function corresponds to how we name variables in neb_instanton.py
-        '''
+        """
         if geop == {}:
-            return 
-        
+            return
+
         options = geop.options
         optarrays = geop.optarrays
-        
+
         # options
         self.mode.store(options["mode"])
         self.stage.store(options["stage"])
@@ -409,11 +379,15 @@ class InputNebInstGPR(InputDictionary):
         self.ab_initio_hessian_bool.store(options["ab_initio_hessian_bool"])
         # options for GPR kernel
         self.gpr_SE_kernel_number.store(options["gpr_SE_kernel_number"])
-        self.read_initial_gpr_training_data.store(options["read_initial_gpr_training_data"])
+        self.read_initial_gpr_training_data.store(
+            options["read_initial_gpr_training_data"]
+        )
         # about computing hessian for gpr model & rate calculation.
         self.read_gpr_hessian_folder.store(options["read_gpr_hessian_folder"])
         self.add_new_hessian_data_bool.store(options["add_new_hessian_data_bool"])
-        self.candidate_hessian_data_number.store(options["candidate_hessian_data_number"])
+        self.candidate_hessian_data_number.store(
+            options["candidate_hessian_data_number"]
+        )
 
         # optarrays
         self.energy_shift.store(optarrays["energy_shift"])
@@ -431,25 +405,29 @@ class InputNebInstGPR(InputDictionary):
         self.instanton_bead_number.store(optarrays["instanton_bead_number"])
 
         # store parameters about gaussian process regression
-        self.gpr_relative_force_error_criterion.store(optarrays["gpr_relative_force_error_criterion"])
-        self.gpr_absolute_force_error_criterion.store(optarrays["gpr_absolute_force_error_criterion"])
+        self.gpr_relative_force_error_criterion.store(
+            optarrays["gpr_relative_force_error_criterion"]
+        )
+        self.gpr_absolute_force_error_criterion.store(
+            optarrays["gpr_absolute_force_error_criterion"]
+        )
         self.gpr_trust_region.store(optarrays["gpr_trust_region"])
         self.gpr_kernel_outputscale.store(optarrays["gpr_kernel_outputscale"])
-        self.gpr_kernel_lengthscale_ratio.store(optarrays["gpr_kernel_lengthscale_ratio"])
+        self.gpr_kernel_lengthscale_ratio.store(
+            optarrays["gpr_kernel_lengthscale_ratio"]
+        )
         self.gpr_noise_std.store(optarrays["gpr_noise_std"])
-
 
         # store result of instanton calculation
         self.instanton_temperature.store(optarrays["instanton_temperature"])
-        self.instanton_bead_q.store(optarrays["instanton_bead_q"]) 
+        self.instanton_bead_q.store(optarrays["instanton_bead_q"])
         self.instanton_bead_pot.store(optarrays["instanton_bead_pot"])
         self.instanton_hessian.store(optarrays["instanton_hessian"])
 
         # about computing hessian for gpr model & rate calculation.
         self.new_hessian_data_index.store(optarrays["new_hessian_data_index"])
-        
 
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()
         rv["mode"] = self.mode.fetch()
-        return rv 
+        return rv

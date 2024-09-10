@@ -20,70 +20,67 @@ Classes:
       writing the checkpoints.
 """
 
-import numpy as np 
+import numpy as np
 from ipi.utils.inputvalue import *
 
+
 class InputNebInst(InputDictionary):
-    """ Use nudged elastic band to find minimum action path (MAP)
+    """Use nudged elastic band to find minimum action path (MAP)
     Adopted from neb module & instanton module
     Contains options related with neb path optimization algorithm, spring force for neb etc.
     """
 
     attribs = {
-        "mode" : (
-            InputAttribute, 
+        "mode": (
+            InputAttribute,
             {
-                "dtype" : str,
-                "default" : "verlet",
-                "help" : "Defines the method to evolve the nudged elastic band",
-                "options": ["verlet"]
+                "dtype": str,
+                "default": "verlet",
+                "help": "Defines the method to evolve the nudged elastic band",
+                "options": ["verlet"],
             },
         )
     }
 
     fields = {
-        "tolerances":(
+        "tolerances": (
             InputDictionary,
             {
                 "dtype": float,
                 "options": ["gradient"],
-                 "default": [5e-3],
-                 "help": "Convergence criteria for neb optimization",
-                 "dimension": ["undefined"]
+                "default": [5e-3],
+                "help": "Convergence criteria for neb optimization",
+                "dimension": ["undefined"],
             },
         ),
-
-        "energy_shift":(
+        "energy_shift": (
             InputValue,
             {
                 "dtype": float,
-                "default": 0.000,  
+                "default": 0.000,
                 "help": "Set the zero of energy (unit Hatree). Choose it for energy of reactant state.",
-                "dimension": "energy"
-            }
+                "dimension": "energy",
+            },
         ),
-
-        "time_step":(
+        "time_step": (
             InputValue,
             {
                 "dtype": float,
-                "default" : 4.00,  # = 0.1 fs
+                "default": 4.00,  # = 0.1 fs
                 "help": "time step for evolve neb beads",
-                "dimension": "time"
-            }
+                "dimension": "time",
+            },
         ),
-
-        "instanton_time_step":(
+        "instanton_time_step": (
             InputValue,
             {
                 "dtype": float,
                 "default": 4.00,  # = 0.1 fs
                 "help": "time step to evolve dynamics along Minimum action path to generate ring-polymer instanton",
-                "dimension": "time"
-            }
+                "dimension": "time",
+            },
         ),
-
-        "stage":(
+        "stage": (
             InputValue,
             {
                 "dtype": str,
@@ -91,87 +88,79 @@ class InputNebInst(InputDictionary):
                 "options": ["neb", "instanton", "converged"],
                 "help": """stage for neb pipline for finding instanton path.
                 neb: using nudged elastic band to find minimum action path
-                instanton: evolve dynamics to find the temperature of the found minimum action path and output ring polymer"""
-            }
+                instanton: evolve dynamics to find the temperature of the found minimum action path and output ring polymer""",
+            },
         ),
-
         # for instanton that we got from minimum action path doing MD along the path.
         "instanton_bead_number": (
             InputValue,
             {
-               "dtype": int,
-               "default": 20,
-                "help": "number of ring polymers for instanton at the instanton stage of calculation." 
-            }
+                "dtype": int,
+                "default": 20,
+                "help": "number of ring polymers for instanton at the instanton stage of calculation.",
+            },
         ),
-
-        "instanton_path_energy":(
+        "instanton_path_energy": (
             InputValue,
             {
                 "dtype": float,
                 "default": 0.00,
                 "help": "the end beads energy for minimum action path. with respect to the energy shift.",
-                "dimension": "energy"
-            }
+                "dimension": "energy",
+            },
         ),
-
-        "instanton_temperature":(
+        "instanton_temperature": (
             InputValue,
             {
                 "dtype": float,
                 "default": 1.00,
                 "help": "the final calculated temperature for minimum action path: inverse of period (beta hbar) for periodic motion. \
                   (Used for saving result in RESTART)",
-                "dimension": "temperature"
-            }
+                "dimension": "temperature",
+            },
         ),
-
-        "instanton_bead_q":(
+        "instanton_bead_q": (
             InputArray,
             {
                 "dtype": float,
                 "default": input_default(factory=np.zeros, args=(0,)),
                 "help": "the bead coordinate for instanton beads (spaced equally along imaginary time) on the minimum action path. \
                   (Used for recording result in RESTART)",
-                "dimension": "length"
-            }
+                "dimension": "length",
+            },
         ),
-
-        "instanton_bead_pot":(
+        "instanton_bead_pot": (
             InputArray,
             {
                 "dtype": float,
-                "default" : input_default(factory=np.zeros, args=(0,)),
+                "default": input_default(factory=np.zeros, args=(0,)),
                 "help": "the potential energy for instanton beads (spaced equally along imaginary time) on the minimum action path. \
-                  (Used for recording result in RESTART)"
-            }
+                  (Used for recording result in RESTART)",
+            },
         ),
-        
-        "instanton_hessian":(
+        "instanton_hessian": (
             InputArray,
             {
                 "dtype": float,
-                "default" : input_default(factory=np.eye, args=(0,)),
-                "help": "the calculated Hessian for instanton beads. (Used for recording result in RESTART)"
-            }
+                "default": input_default(factory=np.eye, args=(0,)),
+                "help": "the calculated Hessian for instanton beads. (Used for recording result in RESTART)",
+            },
         ),
-
         # for spring force term and energy constraint energy in nudged elastic band (NEB) algorithm
-        "spring_k":(
+        "spring_k": (
             InputValue,
             {
                 "dtype": float,
                 "default": 0.1,
                 "help": "the spring constant for internal beads k(|r'' - r| - |r - r'|). unit (angstrom^-2 * atomic_mass^-1/2). \
-                  Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)"
-            }
+                  Spring_k term will be adjusted according to time step dt: spring_k * dt^2 = 0.25 (empirical choice.)",
+            },
         ),
-
-        "kappa":(
+        "kappa": (
             InputDictionary,
             {
                 "dtype": float,
-                "options":["left", "right"], 
+                "options": ["left", "right"],
                 "default": [50, 50],
                 "help": """the energy constraint term for beads at two ends to confine beads at iso-energy contour. 
                 unit: (eV^(-1) angstrom^(-1) * atomic_mass^-1/2)
@@ -181,59 +170,50 @@ class InputNebInst(InputDictionary):
                 Two kappa values will be updated accordingly during the simulation using force information |dV/dx|. 
                 So, choosing the value here is not that important.
                         |dV/dx| * kappa / sqrt(m_H) * dt^2 = 0.5 (empirical value)
-                        """
+                        """,
             },
         ),
-
-        "final_hessian_bool":(
+        "final_hessian_bool": (
             InputValue,
             {
-                "dtype" : bool,
+                "dtype": bool,
                 "default": False,
-                "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory."
-            }
+                "help": "Bool variable. whether to compute final hessian when we get the instanton trajectory.",
+            },
         ),
-
-        "alt_out":(
+        "alt_out": (
             InputValue,
             {
                 "dtype": int,
-                "default" : 5,
-                "help": "output instanton bead energy and geometry every alt_out step"
-            }
+                "default": 5,
+                "help": "output instanton bead energy and geometry every alt_out step",
+            },
         ),
-        "prefix":(
+        "prefix": (
             InputValue,
-            {
-                "dtype": str,
-                "default": "neb_instanton",
-                "help": "prefix of output file"
-            }
+            {"dtype": str, "default": "neb_instanton", "help": "prefix of output file"},
         ),
-
-        "variable_spring_constant":(
+        "variable_spring_constant": (
             InputValue,
             {
                 "dtype": bool,
                 "default": False,
                 "help": "Bool variable. Enable variable spring constant. Make the spring constant near the end bead region larger, \
-                to have a higher resolution near the instanton path end."
-            }
+                to have a higher resolution near the instanton path end.",
+            },
         ),
-
-        "VSC_E_ref":(
+        "VSC_E_ref": (
             InputValue,
             {
-                "dtype": float, 
+                "dtype": float,
                 "default": 0.000,
                 "help": "reference energy E_ref for variable spring constant (VSC). For E_min < E < E_ref, \
                 we have linear interpolation between k_max and k_ref. \
                 The spring constant between beads at lower energy has larger spring constant. ",
-                "dimension": "energy"
-            }
+                "dimension": "energy",
+            },
         ),
-
-        "VSC_spring_k_max_ratio":(
+        "VSC_spring_k_max_ratio": (
             InputValue,
             {
                 "dtype": float,
@@ -241,10 +221,9 @@ class InputNebInst(InputDictionary):
                 "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). \
                 For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
                 The spring constant between beads at lower energy has larger spring constant. \
-                  k_max specify the spring constant at two end beads"
-            }
-        )
-
+                  k_max specify the spring constant at two end beads",
+            },
+        ),
     }
 
     dynamic = {}
@@ -253,15 +232,15 @@ class InputNebInst(InputDictionary):
     default_label = "NEB_INSTANTON"
 
     def store(self, geop):
-        '''
+        """
         this function corresponds to how we name variables in neb_instanton.py
-        '''
+        """
         if geop == {}:
-            return 
-        
+            return
+
         options = geop.options
         optarrays = geop.optarrays
-        
+
         # options
         self.mode.store(options["mode"])
         self.stage.store(options["stage"])
@@ -278,21 +257,20 @@ class InputNebInst(InputDictionary):
         self.variable_spring_constant.store(optarrays["variable_spring_constant"])
         self.VSC_E_ref.store(optarrays["VSC_E_ref"])
         self.VSC_spring_k_max_ratio.store(optarrays["VSC_spring_k_max_ratio"])
-        
+
         self.time_step.store(optarrays["time_step"])
         self.instanton_time_step.store(optarrays["instanton_time_step"])
 
         self.instanton_path_energy.store(optarrays["instanton_path_energy"])
         self.instanton_bead_number.store(optarrays["instanton_bead_number"])
-        self.path_interpolation_bead_number.store(optarrays["path_interpolation_bead_number"]) 
 
         # store result of instanton calculation
         self.instanton_temperature.store(optarrays["instanton_temperature"])
-        self.instanton_bead_q.store(optarrays["instanton_bead_q"]) 
+        self.instanton_bead_q.store(optarrays["instanton_bead_q"])
         self.instanton_bead_pot.store(optarrays["instanton_bead_pot"])
         self.instanton_hessian.store(optarrays["instanton_hessian"])
 
     def fetch(self):
         rv = super(InputNebInst, self).fetch()
         rv["mode"] = self.mode.fetch()
-        return rv 
+        return rv

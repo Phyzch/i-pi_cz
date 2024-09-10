@@ -394,7 +394,7 @@ class MAPNEBMover(Motion):
         )
         print(
             "inner product between tangent and force direction: "
-            + str(self.nebgm.f_tau_inner_product[1: self.beads.nbeads - 1])
+            + str(self.nebgm.f_tau_inner_product[1 : self.beads.nbeads - 1])
         )
         print(
             "beads optimization gradient: "
@@ -508,7 +508,9 @@ class LINEBGradientMapper(object):
         self.spring_k = None  # spring constants for internal beads
         self.kappa = None  # spring constants for beads at two ends.
 
-        self.init_allpots = None  # initial potential for all beads. This potential will not be updated.
+        self.init_allpots = (
+            None  # initial potential for all beads. This potential will not be updated.
+        )
         self.action_forces = None  # minus gradient of abbreviated action
         self.action = None  # abbreviated action.
         self.neb_optimization_force = (
@@ -673,8 +675,8 @@ class LINEBGradientMapper(object):
 
         # sqrt(2 (V - E))
         action_each_bead = np.zeros([nimage])
-        action_each_bead[1: nimage - 1] = np.sqrt(
-            2 * (beads_energy[1: nimage - 1] - self.instanton_path_energy)
+        action_each_bead[1 : nimage - 1] = np.sqrt(
+            2 * (beads_energy[1 : nimage - 1] - self.instanton_path_energy)
         )
         if beads_energy[0] > self.instanton_path_energy:
             action_each_bead[0] = np.sqrt(
@@ -725,8 +727,8 @@ class LINEBGradientMapper(object):
 
         # sqrt(2 (V - E))
         action_each_bead = np.zeros([nimage])
-        action_each_bead[1: nimage - 1] = np.sqrt(
-            2 * (beads_energy[1: nimage - 1] - self.instanton_path_energy)
+        action_each_bead[1 : nimage - 1] = np.sqrt(
+            2 * (beads_energy[1 : nimage - 1] - self.instanton_path_energy)
         )  # sqrt(2 (V - E))
         if beads_energy[0] > self.instanton_path_energy:
             action_each_bead[0] = np.sqrt(
@@ -968,7 +970,8 @@ class LINEBGradientMapper(object):
             mscaled_f, btau, nimage
         )
 
-        # evaluate the nudged elastic band forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
+        # evaluate the nudged elastic band forces for perpendicular action forces and the spring force. 
+        # (on mass scaled coordinate for free moving atoms.)
         neb_optimization_force = self.compute_neb_optimization_force(
             nimage, natom, btau, mscaled_q, beads_energy, mscaled_f
         )
@@ -1060,7 +1063,9 @@ class RP_MAP(object):
         )
 
         # Cubic spline interpolation of neb beads to enable accurate dynamics evolution.
-        self.cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(np.copy(self.neb_beads.q))
+        self.cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(
+            np.copy(self.neb_beads.q)
+        )
 
         self.final_step = neb_final_step
 
@@ -1072,10 +1077,10 @@ class RP_MAP(object):
                   v_list: a list of velocity of trajectories.
                   x_list: a list of coordinate of trajectories.
         """
-        t, r_distance = 0, 0 
-        x = np.copy(self.neb_beads.q[0]) # coordinate
-        v = np.zeros([3 * self.neb_beads.natoms]) # velocity
-        v_r = 0 # dr/dt. rate of change for r. 
+        t, r_distance = 0, 0
+        x = np.copy(self.neb_beads.q[0])  # coordinate
+        v = np.zeros([3 * self.neb_beads.natoms])  # velocity
+        v_r = 0  # dr/dt. rate of change for r.
 
         x_list = [x]
         v_list = [v]
@@ -1092,7 +1097,7 @@ class RP_MAP(object):
             t_list.append(t)
             r_list.append(r_distance)
             v_r_list.append(v_r)
-        
+
         x_list = np.array(x_list)
         v_list = np.array(v_list)
         t_list = np.array(t_list)
@@ -1102,21 +1107,21 @@ class RP_MAP(object):
         self.analyze_classical_dynamics_along_MAP(t_list)
 
         return t_list, v_list, x_list
-    
+
     def analyze_classical_dynamics_along_MAP(self, t_list):
-        '''
+        """
         compute the temperature of the instanton path from period of the path.
-        '''
+        """
         # compute the temperature from imaginary time.
         self.imag_time_period = (
             2 * t_list[-1]
         )  # the period of periodic motion is twice the time move from one end to another end.
-        self.instanton_temp = (
-            1 / self.imag_time_period
-        )
+        self.instanton_temp = 1 / self.imag_time_period
 
         info(
-            "finish evolution of dynamics along Minimum Action path, the period of motion is: {}".format(self.imag_time_period)
+            "finish evolution of dynamics along Minimum Action path, the period of motion is: {}".format(
+                self.imag_time_period
+            )
         )
 
         temp_kelvin = units.unit_to_user(
@@ -1132,22 +1137,22 @@ class RP_MAP(object):
             f.write(str(temp_kelvin) + "\n")
 
     def classical_dynamics_step(self, t, r_distance, v_r):
-        '''
-        evolve dynamics for one time step with dt = self.time_step 
-        :param:  t: time 
+        """
+        evolve dynamics for one time step with dt = self.time_step
+        :param:  t: time
                  r: normalized cumulative distance along the path.
                  v_r: rate of change for r.
-        
+
         :return: t: new time.
                  r: new normalized cumulative distance along the path.
                  v_r: new rate of change for r.
                  x: new coordinate.
                  v: new velocity.
-        '''
+        """
         # parameter for Runge Kuta 4th order algorithm
         m3_matrix = np.diag(self.m3)
         param = [self.cl_bead, self.cl_forces, m3_matrix, self.cubic_spline]
-        dt = self.time_step 
+        dt = self.time_step
 
         y = np.array([r_distance, v_r])
 
@@ -1155,9 +1160,9 @@ class RP_MAP(object):
         r_distance = new_y[0]
         v_r = new_y[1]
 
-        t = t + dt 
+        t = t + dt
         x = self.cubic_spline(r_distance)
-        v = self.cubic_spline(r_distance, nu= 1) * v_r 
+        v = self.cubic_spline(r_distance, nu=1) * v_r
 
         return t, r_distance, v_r, x, v
 
@@ -1211,7 +1216,6 @@ class RP_MAP(object):
                 self.rp_beads.nbeads,
                 self.fixatoms,
             )
-
 
     def generate_ring_polymer_beads(self, neb_beads, neb_forces, neb_final_step):
         """

@@ -12,6 +12,7 @@ import ipi.utils.nebinstool
 from ipi.utils.gpr_hessian_tools import GPModelWithHessiansWrapper
 import shutil
 
+
 def check_neb_early_stop(
     beads_x,
     trust_region_distance,
@@ -210,7 +211,7 @@ def store_training_data(cartesian_coordinate_x, V, forces, prefix):
     # create folder with prefix
     if os.path.exists("#" + prefix):
         shutil.rmtree("#" + prefix)
-        
+
     if os.path.exists(prefix):
         shutil.move(prefix, "#" + prefix)
 
@@ -258,10 +259,13 @@ def store_training_data(cartesian_coordinate_x, V, forces, prefix):
                 f.write(str(forces[i, j]) + " ")
             f.write("\n")
 
-def store_training_data_with_hessian(cartesian_coordinate_x, V, forces, hessian_index_list, hessians, prefix):
-    '''
+
+def store_training_data_with_hessian(
+    cartesian_coordinate_x, V, forces, hessian_index_list, hessians, prefix
+):
+    """
     store the training data (coord, pot, grad) + hessian
-    '''
+    """
     ndofs = np.shape(cartesian_coordinate_x)[1]
 
     store_training_data(cartesian_coordinate_x, V, forces, prefix)
@@ -281,18 +285,21 @@ def store_training_data_with_hessian(cartesian_coordinate_x, V, forces, hessian_
             f.write(str(hessian_index_list[i]) + "   ")
             for j in range(ndofs):
                 for k in range(ndofs):
-                    f.write(str(hessians[i,j,k]) + " ")
-            
+                    f.write(str(hessians[i, j, k]) + " ")
+
             f.write("\n")
 
-def store_candidate_hessian_data_coordinate(candidate_hessian_point_x, used_hessian_index_in_candidate_list, prefix):
-    '''
-    store the information about which data point we have used hessian in gpr model and 
+
+def store_candidate_hessian_data_coordinate(
+    candidate_hessian_point_x, used_hessian_index_in_candidate_list, prefix
+):
+    """
+    store the information about which data point we have used hessian in gpr model and
     what are the potential (candidate) data points we can compute hessians and add to gpr model.
     :param: candidate_hessian_point_x: coordinate of candidate data points that we can compute hessians.
     :param: hessian_index_in_candidate_list: the index of data point that we have already computed hessians.
     :param: prefix: name of folders that we will store info
-    '''
+    """
     assert os.path.exists(prefix), "the prefix folder should have already been created."
     candidate_point_number = len(candidate_hessian_point_x)
     ndofs = np.shape(candidate_hessian_point_x)[1]
@@ -313,12 +320,13 @@ def store_candidate_hessian_data_coordinate(candidate_hessian_point_x, used_hess
             f.write("\n")
 
     # write the index of data point that we have already computed hessian information.
-    hessian_index_file_name = os.path.join(prefix, 
-                                           "hessian_index_in_candidate_point_list.txt")
-    
+    hessian_index_file_name = os.path.join(
+        prefix, "hessian_index_in_candidate_point_list.txt"
+    )
+
     if os.path.exists(hessian_index_file_name):
         os.rename(hessian_index_file_name, hessian_index_file_name + "#")
-    
+
     used_hessian_point_num = len(used_hessian_index_in_candidate_list)
     with open(hessian_index_file_name, "w") as f:
         f.write("Index for data point that we have computed hessians. \n")
@@ -401,10 +409,11 @@ def read_training_data(prefix):
 
     return cartesian_coordinate_x, training_V, training_forces
 
+
 def read_training_data_with_hessian(prefix):
-    '''
+    """
     read coordinate, potential V, force f and hessian h from training data
-    '''
+    """
     cartesian_coordinate_x, training_V, training_forces = read_training_data(prefix)
 
     ndofs = np.shape(training_forces)[1]
@@ -422,30 +431,37 @@ def read_training_data_with_hessian(prefix):
         bead_with_hessian_number = int(extract_number_from_line(lines[1])[0])
         start_line_index = 3
         for index in range(bead_with_hessian_number):
-            line_index = start_line_index + index 
-            line = extract_number_from_line(
-                lines[line_index]
-            )
-            
+            line_index = start_line_index + index
+            line = extract_number_from_line(lines[line_index])
+
             bead_with_hessian_index = int(float(line[0]))
             hessian_index_list.append(bead_with_hessian_index)
 
-            hessian_data = np.array(list(map(float, line[1:]))) 
-            assert len(hessian_data) == np.power(ndofs, 2), "the length of hessian data read from file is wrong."
+            hessian_data = np.array(list(map(float, line[1:])))
+            assert len(hessian_data) == np.power(
+                ndofs, 2
+            ), "the length of hessian data read from file is wrong."
             hessian_data = np.reshape(hessian_data, (ndofs, ndofs))
             hessian_data_list.append(hessian_data)
-    
+
     hessian_index_list = np.array(hessian_index_list)
     hessian_data_list = np.array(hessian_data_list)
 
-    return cartesian_coordinate_x, training_V, training_forces, hessian_index_list, hessian_data_list
+    return (
+        cartesian_coordinate_x,
+        training_V,
+        training_forces,
+        hessian_index_list,
+        hessian_data_list,
+    )
+
 
 def read_candidate_hessian_data_coordinate(prefix):
-    '''
-    read the information about which data point we have used hessian in gpr model and 
+    """
+    read the information about which data point we have used hessian in gpr model and
     what are the potential (candidate) data points we can compute hessians and add to gpr model.
     :param: prefix: name of folders that we will load info
-    '''
+    """
     assert os.path.exists(prefix), "the prefix folder should have already been created."
 
     # read candidate hessian coordinate
@@ -467,27 +483,29 @@ def read_candidate_hessian_data_coordinate(prefix):
     candidate_hessian_point_x = np.array(candidate_hessian_point_x)
 
     # read the index of used point in candidate list.
-    hessian_index_file_name = os.path.join(prefix, 
-                                           "hessian_index_in_candidate_point_list.txt")
-    
+    hessian_index_file_name = os.path.join(
+        prefix, "hessian_index_in_candidate_point_list.txt"
+    )
+
     with open(hessian_index_file_name, "r") as f:
         lines = f.readlines()
         line = extract_number_from_line(lines[1])
         used_hessian_index_in_candidate_list = np.array(list(map(int, line)))
-    
+
     return candidate_hessian_point_x, used_hessian_index_in_candidate_list
+
 
 def dydt_inverted_pot_gpr(y, t, param):
     """
-    y = [r, v_r]. 
+    y = [r, v_r].
     That is y[0] = r, y[1] = v_r = dr/dt.
     dydt[0] = v_r, dydt[1] = a (acceleration of r on inverted potential.)
     param = [gpr_model, m3, cubic_spline]
-    here gpr_model: gaussian process regression model 
+    here gpr_model: gaussian process regression model
          m3_matrix: mass. 2d diagonal matrix. size: [3 * natoms, 3* natoms]. The diagonal element is m3.
          cubic_spline: cubic spline function that return x(r).
-    
-    acceleration: d^2 r/ dt^2 is from constrained dynamics. 
+
+    acceleration: d^2 r/ dt^2 is from constrained dynamics.
     See eq.(13) in Witkin, A. (1997). Computer graphics, 9, 27
     """
     r_distance = y[0]
@@ -495,13 +513,19 @@ def dydt_inverted_pot_gpr(y, t, param):
 
     gpr_model = param[0]
     m3_matrix = param[1]
-    cubic_spline = param[2] 
+    cubic_spline = param[2]
 
-    x = cubic_spline(r_distance, nu= 0)  # coordinate of the system from cubic spline (vector)
-    dx_dr = cubic_spline(r_distance, nu= 1)  # jacobian dx/dr (vector)
-    dx_dr_second_deriv = cubic_spline(r_distance, nu= 2) # second derivative d^2 x/ dr^2 (vector)
+    x = cubic_spline(
+        r_distance, nu=0
+    )  # coordinate of the system from cubic spline (vector)
+    dx_dr = cubic_spline(r_distance, nu=1)  # jacobian dx/dr (vector)
+    dx_dr_second_deriv = cubic_spline(
+        r_distance, nu=2
+    )  # second derivative d^2 x/ dr^2 (vector)
 
-    dx_dr_rate = dx_dr_second_deriv * v_r # d(dx/dr)/dt: rate of change for the jacobian (vector)
+    dx_dr_rate = (
+        dx_dr_second_deriv * v_r
+    )  # d(dx/dr)/dt: rate of change for the jacobian (vector)
 
     # compute the negative force in upside down potential.
     _, grad_V, _, _ = gpr_model.predict_latent_function(np.array([x]))
@@ -509,15 +533,11 @@ def dydt_inverted_pot_gpr(y, t, param):
 
     # compute the acceleration of r.
     a_r = ipi.utils.nebinstool.compute_r_acceleration_along_path(
-        negative_f,
-        dx_dr, 
-        dx_dr_rate,
-        m3_matrix,
-        v_r
+        negative_f, dx_dr, dx_dr_rate, m3_matrix, v_r
     )
 
     dydt = np.array([v_r, a_r])
-    
+
     return dydt
 
 
@@ -951,33 +971,32 @@ def add_hessian_data_to_model(
     )
 
 
-def store_training_data_in_gpr_hessian_model(gpr_hessian_model: GPModelWithHessiansWrapper,
-                                             energy_shift):
-    '''
+def store_training_data_in_gpr_hessian_model(
+    gpr_hessian_model: GPModelWithHessiansWrapper, energy_shift
+):
+    """
     store coordinate, potential, gradient & hessian data into folder: named by prefix.
     :param: gpr_hessian_model:  the gpr model that is capable of predicting hessian information.
     :param: prefix: the prefix of the folder.
-    '''
+    """
     cartesian_x = np.copy(gpr_hessian_model.train_cartesian_input)
-    pots = np.copy(gpr_hessian_model.train_V) + energy_shift 
+    pots = np.copy(gpr_hessian_model.train_V) + energy_shift
     gradients = np.copy(gpr_hessian_model.train_cartesian_gradient)
-    forces = - gradients 
+    forces = -gradients
 
-    hessian_index_list = np.copy(gpr_hessian_model.training_data_hessian_data_point_index)
+    hessian_index_list = np.copy(
+        gpr_hessian_model.training_data_hessian_data_point_index
+    )
     hessians = np.copy(gpr_hessian_model.train_cartesian_hessian)
 
-    # prefix for the folder 
+    # prefix for the folder
     gradients_num = len(gradients)
     hessians_num = len(hessian_index_list)
 
-    prefix= "grad# " + str(gradients_num) + " hessian# " + str(hessians_num)
+    prefix = "grad# " + str(gradients_num) + " hessian# " + str(hessians_num)
 
-    store_training_data_with_hessian(cartesian_x, 
-                                     pots,
-                                     forces,
-                                     hessian_index_list,
-                                     hessians,
-                                     prefix= prefix)
-    
-    return prefix 
-    
+    store_training_data_with_hessian(
+        cartesian_x, pots, forces, hessian_index_list, hessians, prefix=prefix
+    )
+
+    return prefix

@@ -9,8 +9,7 @@ from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian
 from .RBFHessian_prediction_strategy import RBFHessianPredictionStrategy
 from .RBFHessian_gaussian_likelihood import RBFHessianGaussianLikelihood
 from .RBFHessian_marginal_log_likelihood import CustomMarginalLogLikelihood
-from .RBFHessian_utils import \
-      transform_1d_train_targets_into_pots_grads_hessians
+from .RBFHessian_utils import transform_1d_train_targets_into_pots_grads_hessians
 import torch
 import gpytorch
 import numpy as np
@@ -53,43 +52,43 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         :param: training_data_hessian_data_point_index:
                 the indices of data points that contain hessian information.
         :param: hessian_fixdofs:
-                the index of hessian dofs that need to be excluded from modeling. 
+                the index of hessian dofs that need to be excluded from modeling.
                 (In current implementation, it is empty)
         :param: gpr_SE_kernel_number: number of squared exponential kernel for GPR model.
-        :param: kernel_outputscale: 
+        :param: kernel_outputscale:
                 shape: [gpr_SE_kernel_number]   Estimation of the output scale of kernel
-        :param: kernel_lengthscale_ratio: 
-                shape: [gpr_SE_kernel_number, ard_num_dims]   
+        :param: kernel_lengthscale_ratio:
+                shape: [gpr_SE_kernel_number, ard_num_dims]
                 Estimation of the ratio between length scale of kernel and range of input data.
-        :param: likelihood_pot_noise_var: 
+        :param: likelihood_pot_noise_var:
                 shape: [1]. Estimation of the variance of the potential noise.
-        :param: likelihood_force_noise_var: 
+        :param: likelihood_force_noise_var:
                 shape: [ard_num_dims]: Estimation of the variance of the force noise.
-        :param: likelihood_hessian_noise_var: 
-                shape: [hessian_triu_size]. 
+        :param: likelihood_hessian_noise_var:
+                shape: [hessian_triu_size].
                 Estimation of the variance of the hessian noise.
-        :param: likelihood_force_noise_rank: 
-                The rank of covar factor of force noises. 
+        :param: likelihood_force_noise_rank:
+                The rank of covar factor of force noises.
                 This is equal to number of degrees of freedoms of force in Cartesian coordinate.
-        :param: likelihood_hessian_noise_rank: 
-                The rank of covar factor of hessian noises. 
+        :param: likelihood_hessian_noise_rank:
+                The rank of covar factor of hessian noises.
                 This is equal to the number of upper triangle components of hessian matrix in Cartesian coordinate.
         :param: noise_covar_factor_pot_grad_array:
-                shape: [M, 1 + ard_num_dims, 1 + force_noise_rank] 
-                the covariance factor matrix that transform noise in Cartesian coordinate into internal coordiante. 
+                shape: [M, 1 + ard_num_dims, 1 + force_noise_rank]
+                the covariance factor matrix that transform noise in Cartesian coordinate into internal coordiante.
                 (only transform gradient noise).
-        :param: noise_covar_factor_with_hessian_array: 
+        :param: noise_covar_factor_with_hessian_array:
                 shape: [M_H, 1 + ard_num_dims + hessian_triu_size, 1 + force_noise_rank + hessian_noise_rank]
                 the covariance factor matrix that transform noise in Cartesian coordinate into internal coordinate
                 (include gradient and hessian noise).
-        :param: kernel_lengthscale_initio_value:  
+        :param: kernel_lengthscale_initio_value:
                 If set, we will initialize the length scale of kernel as this value.
-        :param: kernel_outputscale_initio_value:  
+        :param: kernel_outputscale_initio_value:
                 If set, we will initialize the output scale of kernel as this value.
-        :param: constant_mean_func_bool: 
-                If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians. 
+        :param: constant_mean_func_bool:
+                If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians.
                 Otherwise, it will be Taylor expansion around ref point to second order.
-        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  
+        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:
                 this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         """
         # the data point index that contains the hessian information.
@@ -98,28 +97,22 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         )
 
         # dofs that we will not include in hessian calculations.
-        self.hessian_fixdofs = (
-            hessian_fixdofs  
-        )
+        self.hessian_fixdofs = hessian_fixdofs
         ard_num_dims = train_inputs.shape[-1]
         data_num = train_inputs.shape[-2]
 
         self.ard_num_dims = ard_num_dims
 
         # number of active degrees of freedom.
-        nactive = ard_num_dims - len(
-            hessian_fixdofs
-        )  
+        nactive = ard_num_dims - len(hessian_fixdofs)
         # the number of upper triangle components in hessian matrices.
-        hessian_triu_size = int(
-            nactive * (nactive + 1) / 2
-        )  
+        hessian_triu_size = int(nactive * (nactive + 1) / 2)
 
         self.hessian_triu_size = hessian_triu_size
         # the length of target data.
         target_len = data_num * (ard_num_dims + 1) + hessian_triu_size * len(
             training_data_hessian_data_point_index
-        )  
+        )
         assert len(train_targets) == target_len, "the length of target data is wrong."
 
         # set the likelihood function for Gaussian Process Regression model. Likelihood function describe the noise in data.
@@ -795,14 +788,14 @@ def update_model_with_new_data_GPHessian(
     M_H = len(train_data_hessian_data_point_index)
     new_M_H = len(new_train_data_hessian_data_point_index)
 
-    assert (
-        isinstance(new_train_inputs, torch.Tensor)
+    assert isinstance(
+        new_train_inputs, torch.Tensor
     ), "the data type of new_train_inputs need to be torch.Tensor"
-    assert (
-        isinstance(new_train_inputs, torch.Tensor)
+    assert isinstance(
+        new_train_inputs, torch.Tensor
     ), "the data type of new train targets need to be torch.Tensor"
-    assert (
-        isinstance(new_train_data_hessian_data_point_index, torch.Tensor)
+    assert isinstance(
+        new_train_data_hessian_data_point_index, torch.Tensor
     ), "the data type of new_train_data_hessian_data_point_index need to be torch.Tensor"
 
     # new hessian data point index
@@ -833,9 +826,9 @@ def update_model_with_new_data_GPHessian(
     )
     full_targets_grads = torch.cat(
         (
-            train_targets[..., train_data_num: train_data_num * (ard_num_dim + 1)],
+            train_targets[..., train_data_num : train_data_num * (ard_num_dim + 1)],
             new_train_targets[
-                ..., new_train_data_num: new_train_data_num * (ard_num_dim + 1)
+                ..., new_train_data_num : new_train_data_num * (ard_num_dim + 1)
             ],
         ),
         dim=-1,
@@ -844,13 +837,13 @@ def update_model_with_new_data_GPHessian(
         (
             train_targets[
                 ...,
-                train_data_num * (ard_num_dim + 1): train_data_num * (ard_num_dim + 1)
+                train_data_num * (ard_num_dim + 1) : train_data_num * (ard_num_dim + 1)
                 + hessian_triu_size * M_H,
             ],
             new_train_targets[
                 ...,
                 new_train_data_num
-                * (ard_num_dim + 1): new_train_data_num
+                * (ard_num_dim + 1) : new_train_data_num
                 * (ard_num_dim + 1)
                 + hessian_triu_size * new_M_H,
             ],

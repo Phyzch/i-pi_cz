@@ -1003,7 +1003,7 @@ class GPModelWithHessiansWrapper:
 
         else:
             new_train_hessian_q = np.array([])
-        
+
         # number of training data before adding data into model.
         training_data_num = np.shape(self.train_cartesian_input)[0]
 
@@ -1107,7 +1107,7 @@ class GPModelWithHessiansWrapper:
         )
         new_noise_covar_factor_with_hessian_array = torch.from_numpy(
             new_noise_covar_factor_with_hessian_array
-        )    
+        )
 
         # update the Gaussian Process Regression model with new data.
         ipi.utils.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(
@@ -1119,7 +1119,6 @@ class GPModelWithHessiansWrapper:
             new_noise_covar_factor_with_hessian_array,
             retrain_bool=retrain_bool,
         )
-
 
     def train_model(self, output_training_info=False):
         """
@@ -1142,7 +1141,6 @@ class GPModelWithHessiansWrapper:
         )
 
         return free_moving_beads_internal_coordinate
-
 
     # ------ output information -------
     def check_gpr_lengthscale(self):

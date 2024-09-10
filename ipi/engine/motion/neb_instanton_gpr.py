@@ -28,7 +28,7 @@ import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
 import ipi.utils.nebinstool
 import ipi.utils.gpr_hessian_tools
-import os 
+import os
 from timeit import default_timer as timer
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
@@ -1689,7 +1689,6 @@ class LINEBGradientMapper(object):
                 - npnorm(mscaled_q[ii] - mscaled_q[ii - 1]) * spring_k_list[ii - 1]
             ) * btau[ii]
 
-
         # spring force for end bead 0
         unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(
             mscaled_q[1] - mscaled_q[0]
@@ -1902,7 +1901,6 @@ class RP_MAP(object):
         ]
         self.new_hessian_data_index = nebmover.optarrays["new_hessian_data_index"]
 
-
     def initialize(self, neb_beads, neb_final_step):
         """
         initialize the RP_MAP dynamics. This should be called after beads have converged to minimum action path using line integral nudged elastic band method.
@@ -1913,11 +1911,11 @@ class RP_MAP(object):
         self.neb_beads.q[:] = neb_beads.q[:]  # initialize neb beads position.
 
         # Cubic interpolation of neb beads to enable accurate dynamics evolution.
-        self.cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(np.copy(self.neb_beads.q))
-
-        print(
-            "use cubic interpolation to generate MAP path"
+        self.cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(
+            np.copy(self.neb_beads.q)
         )
+
+        print("use cubic interpolation to generate MAP path")
 
         self.final_step = neb_final_step
 
@@ -1926,23 +1924,21 @@ class RP_MAP(object):
             pass
 
     def classical_dynamics_along_MAP(self):
-        '''
+        """
         classical dynamics on the inverted potential -V(x)
         the final time will be 1/2 of the imaginary period.
         :return:  t_list: a list of time of trajectories.
                   v_list: a list of velocity of trajectories.
                   x_list: a list of coordinate of trajectories.
-        '''
+        """
         t, r_distance = 0, 0  # time & normalized distance along path.
-        x = np.copy(self.neb_beads.q[0]) # coordinate
-        v = np.zeros([3 * self.neb_beads.natoms]) # velocity
-        v_r = 0 # dr/dt. rate of change for r. 
+        x = np.copy(self.neb_beads.q[0])  # coordinate
+        v = np.zeros([3 * self.neb_beads.natoms])  # velocity
+        v_r = 0  # dr/dt. rate of change for r.
 
-        shifted_V, _, _, _ = self.gpr_model.predict_latent_function(
-                np.array([x]) 
-            )
-        pot = shifted_V[0] + self.energy_shift 
-        
+        shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+        pot = shifted_V[0] + self.energy_shift
+
         x_list = [x]
         v_list = [v]
         t_list = [t]
@@ -1959,10 +1955,8 @@ class RP_MAP(object):
 
             dr = r_distance - old_r_distance
             # check energy conservation
-            shifted_V, _, _, _ = self.gpr_model.predict_latent_function(
-                np.array([x]) 
-            )
-            pot = shifted_V[0] + self.energy_shift 
+            shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+            pot = shifted_V[0] + self.energy_shift
 
             x_list.append(x)
             v_list.append(v)
@@ -1970,7 +1964,7 @@ class RP_MAP(object):
             r_list.append(r_distance)
             v_r_list.append(v_r)
             pot_list.append(pot)
-        
+
         x_list = np.array(x_list)
         v_list = np.array(v_list)
         t_list = np.array(t_list)
@@ -1979,53 +1973,51 @@ class RP_MAP(object):
         pot_list = np.array(pot_list)
 
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)
-        
+
         return t_list, v_list, x_list
 
     def classical_dynamics_step(self, t, r_distance, v_r):
-        '''
-        evolve dynamics for one time step with dt = self.time_step 
-        :param:  t: time 
+        """
+        evolve dynamics for one time step with dt = self.time_step
+        :param:  t: time
                  r: normalized cumulative distance along the path.
                  v_r: rate of change for r.
-        
+
         :return: t: new time.
                  r: new normalized cumulative distance along the path.
                  v_r: new rate of change for r.
                  x: new coordinate.
                  v: new velocity.
-        '''
+        """
         # parameter for Runge Kutta 4th order algorithm
         m3_matrix = np.diag(self.m3)
-        param = [self.gpr_model, m3_matrix , self.cubic_spline]
-        dt = self.time_step 
+        param = [self.gpr_model, m3_matrix, self.cubic_spline]
+        dt = self.time_step
 
         y = np.array([r_distance, v_r])
 
-        new_y  = RK4(y, t, ipi.utils.nebinstgprtool.dydt_inverted_pot_gpr, param, dt)
+        new_y = RK4(y, t, ipi.utils.nebinstgprtool.dydt_inverted_pot_gpr, param, dt)
         r_distance = new_y[0]
         v_r = new_y[1]
 
-        t = t + dt 
+        t = t + dt
         x = self.cubic_spline(r_distance)
-        v = self.cubic_spline(r_distance, nu= 1) * v_r 
+        v = self.cubic_spline(r_distance, nu=1) * v_r
 
         return t, r_distance, v_r, x, v
-    
-    def analyze_classical_dynamics_along_MAP(
-            self,  v_list, t_list, pot_list
-    ):
+
+    def analyze_classical_dynamics_along_MAP(self, v_list, t_list, pot_list):
         """
         compute the temperature of the instanton path from period of motion.
         Optional: monitor the potential, total energy & kinetic energy.
         """
         # compute the kinetic energy & total energy. check energy conservation.
-        pot_list = pot_list - self.energy_shift 
+        pot_list = pot_list - self.energy_shift
 
         kinetic_energy_list = 0.5 * np.sum(
-            np.array(self.m3) * np.power(v_list, 2), axis= 1
+            np.array(self.m3) * np.power(v_list, 2), axis=1
         )
-        total_energy_list = kinetic_energy_list - pot_list # total_E = K -V.
+        total_energy_list = kinetic_energy_list - pot_list  # total_E = K -V.
         pot_list = units.unit_to_user(
             "energy", "electronvolt", pot_list
         )  # convert to eV unit.
@@ -2040,15 +2032,15 @@ class RP_MAP(object):
         self.imag_time_period = (
             2 * t_list[-1]
         )  # the period of periodic motion is twice the time move from one end to another end.
-        self.instanton_temp = (
-            1 / self.imag_time_period
-        )
+        self.instanton_temp = 1 / self.imag_time_period
 
         info(
-            "finish evolution of dynamics along Minimum Action path, the period of motion is: {}".format(self.imag_time_period)
+            "finish evolution of dynamics along Minimum Action path, the period of motion is: {}".format(
+                self.imag_time_period
+            )
         )
 
-        # print temperature 
+        # print temperature
         temp_kelvin = units.unit_to_user(
             "temperature", "kelvin", self.instanton_temp
         )  # temperature in "kelvin" unit
@@ -2060,7 +2052,6 @@ class RP_MAP(object):
         with open(file_name, "w") as f:
             f.write("temperature for instanton path : (K) \n")
             f.write(str(temp_kelvin) + "\n")
-
 
     def construct_gpr_model_use_training_data_end_of_neb_stage(self):
         """
@@ -2084,7 +2075,6 @@ class RP_MAP(object):
             kernel_lengthscale_ratio=self.gpr_kernel_lengthscale_ratio,
             noise_std=self.gpr_noise_std,
         )
-
 
     def interpolate_ring_polymer_beads(self, t_list, v_list, x_list):
         """
@@ -2269,7 +2259,6 @@ class RP_MAP(object):
         print("The force error along LI-NEB path is small. Pass the test.")
         print("\n")
 
-
     def construct_gpr_hessian_model(self):
         """
         construct the gpr_hessian model, which will predict hessian information using Gaussian Process Regression.
@@ -2355,13 +2344,15 @@ class RP_MAP(object):
         (3) store the updated data set into new folder.
         """
         self.data_destination_folder = self.read_gpr_hessian_folder
-        
-        if (not self.add_new_hessian_data_bool) and self.read_gpr_hessian_folder == "None":
-            raise(
+
+        if (
+            not self.add_new_hessian_data_bool
+        ) and self.read_gpr_hessian_folder == "None":
+            raise (
                 "Error. You must provide hessian data for gpr_hessian training. \
                   Either add new hessian data (add_new_hessian_data_bool= True) or read hessian data \
                   from read_gpr_hessian_folder"
-            ) 
+            )
 
         if self.add_new_hessian_data_bool:
             # find the location of data point we can compute hessian & the index of data point that we have already computed hessians.
@@ -2473,18 +2464,18 @@ class RP_MAP(object):
             coord, hessian_data_point_index, internal_coordinate_bool=False
         )
 
-        # reshape hessians ([nbeads, 3 * natoms, 3 * natoms]) 
+        # reshape hessians ([nbeads, 3 * natoms, 3 * natoms])
         # to fit the shape of self.rp_hessian: [3 * natoms, nbeads * 3 * natoms]
         self.rp_hessian = np.reshape(
             np.transpose(hessians, (1, 0, 2)), [3 * natoms, nbeads * 3 * natoms]
         )
 
         # store computed hessians.
-        prefix = os.path.join(self.data_destination_folder, "nbeads=" + str(int(nbeads)))
+        prefix = os.path.join(
+            self.data_destination_folder, "nbeads=" + str(int(nbeads))
+        )
         ipi.utils.nebinstool.print_instanton_hess(
-            prefix,
-            self.rp_hessian,
-            self.output_maker
+            prefix, self.rp_hessian, self.output_maker
         )
 
     def generate_ring_polymer_beads(self, neb_beads, neb_final_step):
