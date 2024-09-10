@@ -349,9 +349,6 @@ class MAPNEBGPRMover(Motion):
             self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
 
         elif self.options["stage"] == "instanton":
-            # check the angle of end beads
-            self.check_end_beads_angle()
-
             # generate instanton ring polymer beads from minimum action path found by NEB.
             info(
                 "Now generate instanton path from Minimum Action Path (MAP) found by NEB."
@@ -1097,35 +1094,6 @@ class MAPNEBGPRMover(Motion):
         ipi.utils.nebinstgprtool.store_training_data(
             train_x, train_V_to_store, train_f_to_store, prefix="neb_final_gpr_training"
         )
-
-    def check_end_beads_angle(self):
-        '''
-        check the angle of end beads force & spring connecting inner beads and end bead.
-        Use the ab initio force of end beads to check the angle.
-        '''    
-        end_beads = Beads(self.beads.natoms, 2)
-        end_beads.q[0] = self.beads.q[0]
-        end_beads.q[1] = self.beads.q[-1]
-
-        end_bead_forces = self.forces.copy(
-            end_beads, self.cell 
-        )
-
-        end_bead_f = end_bead_forces.f 
-        mscaled_end_bead_f = end_bead_f / np.sqrt(self.beads.m3[0]) 
-        mscaled_end_bead_q1 = (self.beads.q[1] - self.beads.q[0]) * np.sqrt(self.beads.m3[0])
-        mscaled_end_bead_q2 = (self.beads.q[-2] - self.beads.q[-1]) * np.sqrt(self.beads.m3[0])
-        end_bead_tangent1 = mscaled_end_bead_q1 / np.linalg.norm(mscaled_end_bead_q1)
-        end_bead_tangent2 = mscaled_end_bead_q2 / np.linalg.norm(mscaled_end_bead_q2)
-
-        # compute the inner product of tangent vector with force.
-        overlap1 = np.dot(mscaled_end_bead_f[0], end_bead_tangent1) / np.linalg.norm(mscaled_end_bead_f[0])
-        overlap2 = np.dot(mscaled_end_bead_f[1], end_bead_tangent2) / np.linalg.norm(mscaled_end_bead_f[1])
-
-        print("the inner product for end bead 0: " + str(overlap1))
-        print("the inner product for end bead 1: " + str(overlap2))
-
-        pass
 
     # ------ code below is for auxiliary functions --------------
     def check_spring_k_kappa(self):
