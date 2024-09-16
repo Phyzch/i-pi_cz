@@ -218,10 +218,14 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.0002,
-                "help": "convergence criterion for gpr outer loop. \
-                When |f^GPR - f| < gpr_absolute_force_error_criterion, \
-                this means the GPR prediction is already reliable for that bead.",
+                "default": 0.001,
+                "help": """
+                convergence criterion for gpr outer loop. 
+                When |f^GPR - f| < gpr_absolute_force_error_criterion, 
+                this means the GPR prediction is already reliable for that bead.
+                This value should be larger or equal to the noise of force_noise_prior * sqrt(d) in the GPR model.
+                here d is degrees of freedom in the model.
+                """,
             },
         ),
         "gpr_trust_region": (
@@ -234,6 +238,32 @@ class InputNebInstGPR(InputDictionary):
                   we stop the NEB inner loop and evaluate ab-initio force on that point.",
             },
         ),
+
+
+        "minimum_trust_region": (
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.05,
+                "help": """ The trust region will be adjusted when we find the current trust region is too 
+                large to make the optimization algorithm unstable. The minimum trust region avoids we makes
+                the trust region too small.
+                 """
+            }
+        ),
+
+        "distance_cutoff_for_training_data": (
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.05,
+                "help": """ To avoid ill-conditioning of covariance matrix in the Gaussian Process Regression 
+                model, we have to avoid adding data points too close to existing training data points in the 
+                model. This distance cutoff will throw away data points too close to existing data. 
+                """
+            }
+        ),
+
         "gpr_kernel_outputscale": (
             InputArray,
             {
@@ -387,6 +417,15 @@ class InputNebInstGPR(InputDictionary):
         self.add_new_hessian_data_bool.store(options["add_new_hessian_data_bool"])
         self.candidate_hessian_data_number.store(
             options["candidate_hessian_data_number"]
+        )
+
+        # for stability of gaussian process regression model
+        self.minimum_trust_region.store(
+            options["minimum_trust_region"]
+        )
+
+        self.distance_cutoff_for_training_data.store(
+            options["distance_cutoff_for_training_data"]
         )
 
         # optarrays

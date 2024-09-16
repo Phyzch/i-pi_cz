@@ -289,6 +289,9 @@ class MAPNEBMover(Motion):
             else:
                 self.velocity_mscaled = v_f_inner_product * f_unit_vector
 
+        elif self.options["mode"] == "CG":
+            # use conjugate gradient method to optimize the beads.
+            raise(NotImplementedError)
         else:
             softexit.trigger(
                 status="bad",

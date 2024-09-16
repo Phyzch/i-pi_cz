@@ -79,8 +79,10 @@ class MAPNEBGPRMover(Motion):
         VSC_spring_k_max_ratio=3.00,
         alt_out=5,
         gpr_relative_force_error_criterion=0.05,
-        gpr_absolute_force_error_criterion=0.0002,
+        gpr_absolute_force_error_criterion=0.001,
         gpr_trust_region=0.1,
+        minimum_trust_region= 0.05,
+        distance_cutoff_for_training_data= 0.05,
         gpr_kernel_outputscale=np.zeros(0, float),
         gpr_kernel_lengthscale_ratio=np.zeros(0, float),
         gpr_noise_std={
@@ -122,6 +124,14 @@ class MAPNEBGPRMover(Motion):
         self.options["read_gpr_hessian_folder"] = read_gpr_hessian_folder
         self.options["add_new_hessian_data_bool"] = add_new_hessian_data_bool
         self.options["candidate_hessian_data_number"] = candidate_hessian_data_number
+
+        # minimum value for allowed trust region ratio.
+        # This is to prevent the algorithm making the trust region ratio too small.
+        self.options["minimum_trust_region"] = minimum_trust_region
+
+        # The cutoff for the scaled internal coordinate distnace for training data.
+        # The training data is not allowed to be too close to each other, which will make the kernel matrix ill-conditioned.
+        self.options["distance_cutoff_for_training_data"] = distance_cutoff_for_training_data
 
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
@@ -216,14 +226,6 @@ class MAPNEBGPRMover(Motion):
         self.trust_region_distance_cutoff = (
             0  # the distance cutoff for the trust region in internal coordinate system.
         )
-
-        # minimum value for allowed trust region ratio.
-        # This is to prevent the algorithm making the trust region ratio too small.
-        self.minimum_trust_region = 0.02
-
-        # The cutoff for the scaled internal coordinate distnace for training data.
-        # The training data is not allowed to be too close to each other, which will make the kernel matrix ill-conditioned.
-        self.distance_cutoff_for_training_data = 0.01
 
         self.start_time = timer()  # used to record the time for the calculation.
 
@@ -760,8 +762,8 @@ class MAPNEBGPRMover(Motion):
             )
 
         # neb move using gradient of LINEBGradient
-        # use projected verlet algorithm.
         if self.options["mode"] == "verlet":
+            # use projected damped verlet algorithm.
             dx_mscaled = dt * self.velocity_mscaled + 0.5 * self.f_mscaled * np.power(
                 dt, 2
             )
@@ -794,7 +796,9 @@ class MAPNEBGPRMover(Motion):
                 )
             else:
                 self.velocity_mscaled = v_f_inner_product * f_unit_vector
-
+        elif self.options["mode"] == "CG":
+            # use conjugate gradient method 
+            pass 
         else:
             softexit.trigger(
                 status="bad",
@@ -842,7 +846,7 @@ class MAPNEBGPRMover(Motion):
             training_x,
             ab_initio_beads_shifted_energy,
             ab_initio_beads_grad,
-            self.distance_cutoff_for_training_data,
+            self.options["distance_cutoff_for_training_data"],
         )
         self.nebgm.gpr_model = self.gpr_model
 
@@ -920,7 +924,7 @@ class MAPNEBGPRMover(Motion):
                 ):
                     if (
                         self.optarrays["gpr_trust_region"]
-                        > self.minimum_trust_region * 2
+                        > self.options["minimum_trust_region"] * 2
                     ):
                         self.optarrays["gpr_trust_region"] = (
                             self.optarrays["gpr_trust_region"] / 2
@@ -959,7 +963,7 @@ class MAPNEBGPRMover(Motion):
             training_x,
             ab_initio_shifted_energy,
             ab_initio_grad_x,
-            self.distance_cutoff_for_training_data,
+            self.options["distance_cutoff_for_training_data"],
         )
         self.nebgm.gpr_model = self.gpr_model
 
@@ -1888,7 +1892,7 @@ class RP_MAP(object):
 
         # bind the distance cutoff for training data for the gpr model
         self.distance_cutoff_for_training_data = (
-            nebmover.distance_cutoff_for_training_data
+            nebmover.options["distance_cutoff_for_training_data"]
         )
 
         # bind the file that we use to read hessian data
@@ -2486,7 +2490,7 @@ class RP_MAP(object):
 
         # optimize GPR model to make sure it will give accurate force for dynamics.
         # Separate point as test set and training set, add training set until the generalization error is small.
-        # self.optimize_GPR_model_for_dynamics_evolution()
+        self.optimize_GPR_model_for_dynamics_evolution()
 
         # start classical dynamics along minimum action path (MEP) on the inverted potential.
         t_list, v_list, x_list = self.classical_dynamics_along_MAP()
