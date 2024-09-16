@@ -9,10 +9,8 @@ import torch
 from gpytorch.models.exact_prediction_strategies import DefaultPredictionStrategy
 from gpytorch import settings
 from gpytorch.utils.memoize import (
-    add_to_cache,
     cached,
     clear_cache_hook,
-    pop_from_cache,
 )
 import functools
 
