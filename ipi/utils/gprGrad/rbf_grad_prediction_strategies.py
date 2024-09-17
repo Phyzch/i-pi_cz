@@ -19,7 +19,7 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
     
     @property 
     @cached(name="mean_cache")
-    def mean_cache(self, singular_value_cutoff = pow(10.0, -8)):
+    def mean_cache(self, singular_value_cutoff = pow(10.0, -4)):
         """
         compute cache for the prediction of the mean value. 
         use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-defined.
@@ -52,7 +52,7 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
 
     @property
     @cached(name="covar_cache")
-    def covar_cache(self, singular_value_cutoff = pow(10.0, -8)):
+    def covar_cache(self, singular_value_cutoff = pow(10.0, -4)):
         """
         compute cache for the prediction of the covariance matrix. Which is (K(x,x) + sigma^2 I)^{-1/2}
         use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-conditioned

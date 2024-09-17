@@ -270,7 +270,6 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
         return V_noises, force_noises
 
-
     # __call__ function in Gpytorch code. 
     # We need to change the prediction strategy to use pseudo-inverse when inverse the covariance matrix. 
     # This will help when the covariance matrix becomes ill-conditioned. 
@@ -292,13 +291,13 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                     torch.equal(train_input, input) for train_input, input in length_safe_zip(train_inputs, inputs)
                 ):
                     raise RuntimeError("You must train on the training inputs!")
-            res = super().__call__(*inputs, **kwargs)
+            res = super(gpytorch.models.ExactGP, self).__call__(*inputs, **kwargs)
             return res
 
         # Prior mode
         elif settings.prior_mode.on() or self.train_inputs is None or self.train_targets is None:
             full_inputs = args
-            full_output = super(GPModelWithDerivatives, self).__call__(*full_inputs, **kwargs)
+            full_output = super(gpytorch.models.ExactGP, self).__call__(*full_inputs, **kwargs)
             if settings.debug().on():
                 if not isinstance(full_output, MultivariateNormal):
                     raise RuntimeError("ExactGP.forward must return a MultivariateNormal")
@@ -315,17 +314,18 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
             # Get the terms that only depend on training data
             if self.prediction_strategy is None:
-                train_output = super().__call__(*train_inputs, **kwargs)
+                train_output = super(gpytorch.models.ExactGP, self).__call__(*train_inputs, **kwargs)
 
                 # Create the prediction strategy for
-                # self.prediction_strategy = RBFGradPredictionStrategies(
+                # self.prediction_strategy = prediction_strategy(
                 #     train_inputs=train_inputs,
                 #     train_prior_dist=train_output,
                 #     train_labels=self.train_targets,
                 #     likelihood=self.likelihood,
                 # )
 
-                self.prediction_strategy = prediction_strategy(
+                # Create the prediction strategy using psuedo-inverse
+                self.prediction_strategy = RBFGradPredictionStrategies(
                     train_inputs=train_inputs,
                     train_prior_dist=train_output,
                     train_labels=self.train_targets,
@@ -347,7 +347,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                 full_inputs.append(torch.cat([train_input, input], dim=-2))
 
             # Get the joint distribution for training/test data
-            full_output = super(GPModelWithDerivatives, self).__call__(*full_inputs, **kwargs)
+            full_output = super(gpytorch.models.ExactGP, self).__call__(*full_inputs, **kwargs)
             if settings.debug().on():
                 if not isinstance(full_output, MultivariateNormal):
                     raise RuntimeError("ExactGP.forward must return a MultivariateNormal")
@@ -392,8 +392,8 @@ def train_gpr(model: GPModelWithDerivatives, training_error_cutoff=np.power(10.0
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     
     # TODO: debug this one.
-    # mll = RBFGradMarginalLogLikelihood(likelihood, model)
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    mll = RBFGradMarginalLogLikelihood(likelihood, model)
+    # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
     train_inputs = model.train_inputs[
         0
