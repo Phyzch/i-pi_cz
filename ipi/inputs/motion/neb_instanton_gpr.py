@@ -37,7 +37,7 @@ class InputNebInstGPR(InputDictionary):
                 "dtype": str,
                 "default": "verlet",
                 "help": "Defines the method to evolve the nudged elastic band",
-                "options": ["verlet"],
+                "options": ["verlet", "cg"],
             },
         )
     }

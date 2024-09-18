@@ -19,7 +19,7 @@ from ipi.engine.normalmodes import NormalModes
 from ipi.engine.motion import Motion
 from ipi.utils.depend import dstrip
 from ipi.utils.softexit import softexit
-from ipi.utils.messages import verbosity, info
+from ipi.utils.messages import verbosity, info, warning
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
 from ipi.utils.nebinstool import RK4
@@ -782,8 +782,8 @@ class MAPNEBGPRMover(Motion):
         if self.options["mode"] == "verlet":
             self.neb_step_projected_verlet(dt)
         elif self.options["mode"] == "cg":
-            # use conjugate gradient method 
-            pass 
+            # move one step using conjugate gradient method 
+            self.neb_step_cg()
         else:
             softexit.trigger(
                 status="bad",
@@ -831,6 +831,34 @@ class MAPNEBGPRMover(Motion):
         self.f_mscaled = -self.grad_mscaled
 
         # update new position
+        self.x = x_mscaled / np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.beads.q[:, self.fixatoms_mask] = self.x
+
+    def neb_step_cg(self):
+        """
+        use the conjugate gradient algorithm to optimize the bead position.
+        """
+        self.old_x = np.copy(self.x)
+        self.old_f_mscaled = np.copy(self.f_mscaled)
+        self.old_action = self.action 
+
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
+        x_mscaled, self.action, self.grad_mscaled, self.conjugate_search_direction= \
+            ipi.utils.nebinstool.conjugate_gradient(
+                x_mscaled,
+                (self.action, self.grad_mscaled),
+                self.nebgm,
+                self.conjugate_search_direction,
+                self.optarrays["cg_big_step"]
+            )
+        self.f_mscaled = -self.grad_mscaled 
+
+        # update new position 
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
@@ -1651,7 +1679,8 @@ class LINEBGradientMapper(object):
                 action_each_bead[i] = np.sqrt(
                     2 * (beads_energy[i] - self.instanton_path_energy)
                 )
-
+        
+        action_max = np.max(action_each_bead)
         action_force = np.zeros([nimage, 3 * natom])
         for j in range(1, nimage - 1):
             dj1 = bead_distance[j - 1]  # |r_{j} - r_{j-1}|.  d_{j}
@@ -1660,7 +1689,16 @@ class LINEBGradientMapper(object):
             dj2_unit_vector = bead_displs_unit_vector[j]  # \hat{d}_{j+1}
             fj = mscaled_f[j]
 
-            gj_force_component = 0.5 * (1 / action_each_bead[j] * (dj1 + dj2) * fj)
+            if action_each_bead[j] == 0:
+                # when energy of beads is smaller than the path energy.
+                # we make the negative gradient for optimization along the gradient direction, to make bead moves to higher energy.
+                gj_force_component = - 0.5 * (1/action_max) * (dj1 + dj2) * fj * 10
+                
+                warning("the energy of bead " + str(j) + " is  " + str(beads_energy[j]) + \
+                         " which is smaller than the end bead energy we choose: " + \
+                              str(self.instanton_path_energy) )
+            else:
+                gj_force_component = 0.5 * (1/action_each_bead[j] * (dj1 + dj2) * fj)
 
             gj_curvature_component = 0.5 * (
                 -(action_each_bead[j] + action_each_bead[j - 1]) * dj1_unit_vector

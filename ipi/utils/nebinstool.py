@@ -479,8 +479,12 @@ def projected_verlet(x0, v0, fdf0, fdf,  dt):
 
     return x, v, func, g 
 
-def conjugate_gradient(x0, fdf0, fdf, search_direction, big_step, backtrack_ratio= 1.5):
+def conjugate_gradient(x0, fdf0, fdf, initial_search_direction, big_step, 
+                       line_search_cutoff = 0.1,
+                       ):
     """
+    TODO: This CG method doesn't converge for neb code.
+
     Use conjugate gradient method to find local minimum for neb algorithm.
     The function to optimize of neb method is ill-defined, because we perform the projection of gradient.
     Therefore, we use the simpliest criterion for line search: 
@@ -495,18 +499,88 @@ def conjugate_gradient(x0, fdf0, fdf, search_direction, big_step, backtrack_rati
     :param: fdf: mapper function.  func, gradient = fdf(x)
     :param: big_step: biggest step for cg method. Used to perform backtracking.
     :param: backtrack_ratio: ratio to scale the step for line search backtracking.
+    :param: restart_check: value to restart the cg search direction as negative gradient direction.
     """
-    _, g0 = fdf0
+    action0, g0 = fdf0
     g0_norm = np.linalg.norm(g0)
     
-    # line search along search direction using backtracking:
-    step = big_step 
-    while (1):
-        x = x0 + search_direction * step 
-        _, new_g = fdf(x)
-        if np.linalg.norm(new_g) < g0_norm:
-            break 
-        else:
-            step = step / backtrack_ratio
+    # notation in Nocedal & Wright
+    p0 = initial_search_direction 
+    if np.inner(p0.flatten(), g0.flatten()) > 0:
+        # the conjugate search direction is no longer the descent direction, refresh the p0 as -g0.
+        p0 = -g0
     
+    p0_norm = np.linalg.norm(p0)
+    g0_component = np.inner(g0.flatten(), p0.flatten()) / p0_norm
+
+    search_step = big_step 
+
+    # bisect search using gradient along search direction.
+    x_end = x0 + p0 * search_step 
+    action_end , g_end = fdf(x_end)
+    g_end_component = np.inner(g_end.flatten(), p0.flatten())/ p0_norm
+    while g_end_component < 0:
+        # increase the searach step until we can make sure that there is one minimum between x_end and x0.
+        search_step = search_step * 2
+        x_end = x0 + p0 * search_step 
+        action_end , g_end = fdf(x_end)
+        g_end_component = np.inner(g_end.flatten(), p0.flatten())/ p0_norm
+
+    x_low = x0    # the point with negative gradient along p0.
+    x_high = x_end  # the point with positive gradient along p0.
+    g_low = g0 
+    g_high = g_end
+
+    while(1):
+        g_low_component = np.inner(g_low.flatten(), p0.flatten()) / p0_norm
+        g_high_component = np.inner(g_high.flatten(), p0.flatten()) / p0_norm
+        
+        if abs(g_low_component) < line_search_cutoff * abs(g0_component):
+            x = x_low 
+            break 
+        
+        if abs(g_high_component) < line_search_cutoff * abs(g0_component):
+            x = x_high 
+            break
+
+        # bisect 
+        x_middle = (x_low + x_high) / 2
+        action_middle , g_middle = fdf(x_middle)
+        g_middle_component = np.inner(g_middle.flatten(), p0.flatten())/ p0_norm 
+
+        if g_middle_component < 0:
+            x_low = x_middle 
+            g_low = g_middle 
+        else:
+            x_high = x_middle
+            g_high = g_middle
+
+
+    step_size = np.linalg.norm(x - x0) / np.linalg.norm(p0)
+    action, g = fdf(x)
     # update search direction
+    # check if we need to refresh the search direction as negative gradient.
+    g0_flatten = g0.flatten()
+    g_flatten = g.flatten() 
+
+    # Polak Ribere version of conjugate gradient
+    beta = np.inner(
+        g_flatten, ( g_flatten - g0_flatten ) 
+        )/ np.inner(
+            g0_flatten, g0_flatten
+        )
+    
+    # update search direction.
+    p = beta * p0 - g
+
+    # restart the search direction if it degrades.
+    check = np.abs(np.inner(g_flatten, g0_flatten))/ np.power(np.linalg.norm(g0) , 2)
+    if check > 0.1:
+        p = -g
+
+    search_direction = p 
+
+    return x, action, g, search_direction
+    
+    
+    
