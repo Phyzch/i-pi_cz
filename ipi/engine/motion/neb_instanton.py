@@ -124,6 +124,7 @@ class MAPNEBMover(Motion):
         self.x = None
         self.action = None
         self.f_mscaled = None
+        self.g_mscaled = None
 
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
@@ -282,15 +283,16 @@ class MAPNEBMover(Motion):
             self.beads.m3[:, self.fixatoms_mask]
         ) 
 
-        mscaled_x, self.velocity_mscaled, self.action, self.f_mscaled = \
+        mscaled_x, self.velocity_mscaled, self.action, self.g_mscaled = \
             ipi.utils.nebinstool.projected_verlet(
                 mscaled_x,
                 self.velocity_mscaled,
-                (self.action, self.f_mscaled),
+                (self.action, self.g_mscaled),
                 self.nebgm,
                 dt
             )
-        
+        self.f_mscaled = -self.g_mscaled
+
         # update new position
         self.x = mscaled_x / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
@@ -368,9 +370,10 @@ class MAPNEBMover(Motion):
         mscaled_x = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
-        self.action, self.f_mscaled = self.nebgm(
+        self.action, self.g_mscaled = self.nebgm(
             mscaled_x
         )  # forces at current step on mass scaled coordinate
+        self.f_mscaled = -self.g_mscaled
 
     def neb_instanton_exit(self, step, grad_max):
         """
@@ -904,25 +907,24 @@ class LINEBGradientMapper(object):
 
         return neb_optimization_force
 
-    def __call__(self, mscaled_x):
-        """Returns the potential for all beads and the gradient.
+    def __call__(self, mscaled_q):
+        """Return the projected gradient for neb optimization.
         update reduced bead coordinates (&dbeads coordinate) (sticly speaking the free-moving atom parts) with x.
-        x = q[:, self.fixatoms_mask] : new coordinates for updated freely moving particles.
+        mscaled_q : new mass scaled coordinates for updated freely moving particles.
 
         rbf: physical forces for reduced beads
         rbq: position for reduced beads
         btau: tangent vector directions.
         """
-        x = mscaled_x * np.sqrt(
+        q = mscaled_q * np.sqrt(
             self.dbeads.m3[:, self.fixatoms_mask]
         )
         # Bead positions
         # Touch positions only if they have changed (to avoid triggering forces)
-        if (self.rbeads.q[:, self.fixatoms_mask] != x).any():
-            self.rbeads.q[:, self.fixatoms_mask] = x
+        if (self.rbeads.q[:, self.fixatoms_mask] != q).any():
+            self.rbeads.q[:, self.fixatoms_mask] = q
         rbq = np.copy(self.rbeads.q[:, self.fixatoms_mask])
 
-        mscaled_q = mscaled_x  # mass scaled coordinates.
         self.mscaled_q = mscaled_q
 
         # initialize self.rforces with forces and pots from self.dbeads.
@@ -974,7 +976,9 @@ class LINEBGradientMapper(object):
 
         self.neb_optimization_force = np.copy(neb_optimization_force)
 
-        return self.action ,neb_optimization_force
+        neb_optimization_grad = -neb_optimization_force
+
+        return self.action, neb_optimization_grad
 
 
 class RP_MAP(object):

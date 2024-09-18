@@ -64,6 +64,7 @@ class MAPNEBGPRMover(Motion):
         tolerances={"gradient": 5e-3, "gradient_end_bead": 1e-2},
         energy_shift=0.00,
         time_step=4.0,
+        cg_big_step= 1.0,
         instanton_time_step=4.0,
         stage="neb",
         instanton_bead_number=20,
@@ -146,6 +147,7 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["VSC_spring_k_max_ratio"] = VSC_spring_k_max_ratio
 
         self.optarrays["time_step"] = time_step
+        self.optarrays["cg_big_step"] = cg_big_step
         self.optarrays["instanton_time_step"] = instanton_time_step
 
         # input variable for instanton
@@ -169,6 +171,7 @@ class MAPNEBGPRMover(Motion):
         self.x = None
         self.action = None
         self.f_mscaled = None
+        self.grad_mscaled = None
 
         # variable below is for Gaussian Process Regression.
         if np.shape(gpr_kernel_outputscale) == (0,):
@@ -672,9 +675,10 @@ class MAPNEBGPRMover(Motion):
         mscaled_x = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
-        self.action, self.f_mscaled = self.nebgm(
+        self.action, self.grad_mscaled = self.nebgm(
             mscaled_x
         )
+        self.f_mscaled = -self.grad_mscaled
 
         if self.options["mode"] == "verlet":
             # use projected velocity verlet algorithm. In this case, we need the velocity.
@@ -684,8 +688,9 @@ class MAPNEBGPRMover(Motion):
             )
         elif self.options["mode"] == "cg":
             # use conjugate gradient method. 
-            f = self.f_mscaled * np.sqrt(self.beads.m3[:, self.fixatoms_mask])
-            self.cg_search_direction = f 
+            # The search is performed in the mass scaled coordinate.
+            # initialize the search direction as gradient direction.
+            self.conjugate_search_direction = self.f_mscaled
 
 
     def neb_instanton_step_info(
@@ -815,15 +820,16 @@ class MAPNEBGPRMover(Motion):
             self.beads.m3[:, self.fixatoms_mask]
         )
 
-        x_mscaled, self.velocity_mscaled, self.action, self.f_mscaled = \
+        x_mscaled, self.velocity_mscaled, self.action, self.grad_mscaled = \
             ipi.utils.nebinstool.projected_verlet(
             x_mscaled, 
             self.velocity_mscaled,
-            (self.action, self.f_mscaled),
+            (self.action, self.grad_mscaled),
             self.nebgm,
             dt
         )
-        
+        self.f_mscaled = -self.grad_mscaled
+
         # update new position
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
@@ -1466,11 +1472,11 @@ class LINEBGradientMapper(object):
         self.ab_initio_pot = np.zeros([self.dbeads.nbeads])
         self.ab_initio_force = np.zeros([self.dbeads.nbeads, 3 * self.dbeads.natoms])
 
-    def initialize_force(self, x):
+    def initialize_force(self, q):
         """
         initialize rbf & energy. This will enable us to use check_spring_k_kappa in the initialization() step of neb gm in MAPNEBGPRMover
         """
-        self.rbeads.q[:, self.fixatoms_mask] = x
+        self.rbeads.q[:, self.fixatoms_mask] = q
 
         # use Gaussian Process Regression to get the potential and forces for beads.
         self.beads_energy, beads_forces = self.get_gpr_potential_and_forces()
@@ -1478,8 +1484,8 @@ class LINEBGradientMapper(object):
         # Forces for free moving dofs.
         self.rbf = beads_forces.copy()[:, self.fixatoms_mask]
 
-    def __call__(self, mscaled_x):
-        """Returns the LI-NEB gradient for all beads.
+    def __call__(self, mscaled_q):
+        """Returns the projection for neb optimization.
         update reduced bead coordinates (&dbeads coordinate) (sticly speaking the free-moving atom parts) with x.
         :param: msacled_x: new mass scaled coordinates for updated freely moving particles.
 
@@ -1488,14 +1494,14 @@ class LINEBGradientMapper(object):
         btau: tangent vector directions.
         """
         # coordinate q.
-        x = mscaled_x / np.sqrt(
+        q = mscaled_q / np.sqrt(
             self.dbeads.m3[:, self.fixatoms_mask]
         )
         
-        self.initialize_force(x)
+        self.initialize_force(q)
 
         # mass scaled coordinate.
-        self.mscaled_q = mscaled_x
+        self.mscaled_q = mscaled_q
 
         # mass weighted force
         mscaled_f = self.rbf / np.sqrt(
@@ -1510,27 +1516,29 @@ class LINEBGradientMapper(object):
 
         self.spring_forces = np.zeros([nimage, 3 * natom])
         self.end_bead_energy_constraint_forces = np.zeros([2, 3 * natom])
-        self.beads_mscaled_distance = npnorm(mscaled_x[1:] - mscaled_x[:-1], axis=1)
+        self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
 
         # abbreviated action for the ring polymer instanton path.
-        self.action = self.compute_neb_action(nimage, mscaled_x)
+        self.action = self.compute_neb_action(nimage, mscaled_q)
 
         # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
         self.action_forces = self.compute_neb_action_force(
-            nimage, natom, mscaled_x, mscaled_f
+            nimage, natom, mscaled_q, mscaled_f
         )
 
         # compute direction of tangent vector, using either improved methods.
-        btau = self.compute_tangent_vector(nimage, natom, mscaled_x)
+        btau = self.compute_tangent_vector(nimage, natom, mscaled_q)
 
         # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
         neb_optimization_force = self.compute_neb_optimization_force(
-            nimage, natom, btau, mscaled_x, mscaled_f
+            nimage, natom, btau, mscaled_q, mscaled_f
         )
 
         self.neb_optimization_force = np.copy(neb_optimization_force)
 
-        return self.action, neb_optimization_force
+        neb_optimization_gradient = -neb_optimization_force
+
+        return self.action, neb_optimization_gradient
 
     def compute_tangent_vector(self, nimage, natom, mscaled_q):
         """

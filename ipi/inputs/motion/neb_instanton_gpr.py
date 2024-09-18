@@ -67,13 +67,24 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 4.00,  # = 0.1 fs
-                "help": """"time step for evolve neb beads. 
+                "help": """"time step for evolve neb beads with projected velocity verlet. 
                 If mode == "verlet": this is the time step for projected velocity verlet algorithm.
-                If mode == "cg",  this is the maximum time step for backtracking line searching algorithm.
                 """,
                 "dimension": "time",
             },
         ),
+
+        "cg_big_step": (
+            InputValue,
+            {
+                "dtype": float,
+                "default": 1.0,
+                "help": """ time step for conjugate gradient search.
+                If mode == "cg", this is the largest time step for line search using conjugate gradient method.
+                """,
+            }
+        ),
+
         "instanton_time_step": (
             InputValue,
             {
@@ -441,6 +452,7 @@ class InputNebInstGPR(InputDictionary):
         self.VSC_spring_k_max_ratio.store(optarrays["VSC_spring_k_max_ratio"])
 
         self.time_step.store(optarrays["time_step"])
+        self.cg_big_step.store(optarrays["cg_big_step"])
         self.instanton_time_step.store(optarrays["instanton_time_step"])
 
         self.instanton_path_energy.store(optarrays["instanton_path_energy"])

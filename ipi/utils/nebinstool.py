@@ -450,9 +450,10 @@ def projected_verlet(x0, v0, fdf0, fdf,  dt):
     :param: fdf: gradient mapper. func, grad = fdf(x_mscaled)
     :param: dt: time step
     """
-    _, g0 = fdf0  # g0_mscaled: initial gradient.
+    _, g0 = fdf0  # g0: initial gradient.
+    negative_g0 = -g0
     # update new position 
-    dx = dt * v0 + 0.5 * g0 * np.power(
+    dx = dt * v0 + 0.5 * negative_g0 * np.power(
         dt, 2
     )
     x = x0 + dx 
@@ -460,19 +461,52 @@ def projected_verlet(x0, v0, fdf0, fdf,  dt):
     func , g = fdf(
         x
     )
+    negative_g = -g
 
-    v = v0 + dt * (g0 + g) / 2 
+    v = v0 + dt * (negative_g0 + negative_g) / 2 
 
     # project the velocity along the direction of the current force.
-    g_unit_vector = g / np.linalg.norm(g)
+    negative_g_unit_vector = negative_g / np.linalg.norm(g)
 
     v_g_inner_product = np.inner(
-        g_unit_vector.flatten(), v.flatten()
+        negative_g_unit_vector.flatten(), v.flatten()
     )
 
     if v_g_inner_product < 0:
         v = np.zeros(v.shape)
     else:
-        v = v_g_inner_product * g_unit_vector 
+        v = v_g_inner_product * negative_g_unit_vector 
 
     return x, v, func, g 
+
+def conjugate_gradient(x0, fdf0, fdf, search_direction, big_step, backtrack_ratio= 1.5):
+    """
+    Use conjugate gradient method to find local minimum for neb algorithm.
+    The function to optimize of neb method is ill-defined, because we perform the projection of gradient.
+    Therefore, we use the simpliest criterion for line search: 
+    the gradient at new location is smaller than the gradient at old location.
+
+    We use the Polak Ribere version of conjugate gradient method to update search direction.
+    We restart the search direction as gradient direction when |df * df0|/|df0|^2 > 0.1. 
+    This algorithm perform one step of CG method. Do line search and then update search direction. 
+
+    :param: x0: initial coordinate.
+    :param: fdf0: (func, gradient)
+    :param: fdf: mapper function.  func, gradient = fdf(x)
+    :param: big_step: biggest step for cg method. Used to perform backtracking.
+    :param: backtrack_ratio: ratio to scale the step for line search backtracking.
+    """
+    _, g0 = fdf0
+    g0_norm = np.linalg.norm(g0)
+    
+    # line search along search direction using backtracking:
+    step = big_step 
+    while (1):
+        x = x0 + search_direction * step 
+        _, new_g = fdf(x)
+        if np.linalg.norm(new_g) < g0_norm:
+            break 
+        else:
+            step = step / backtrack_ratio
+    
+    # update search direction
