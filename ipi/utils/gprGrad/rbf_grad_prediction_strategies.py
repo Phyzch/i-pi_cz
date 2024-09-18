@@ -19,10 +19,10 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
     
     @property 
     @cached(name="mean_cache")
-    def mean_cache(self, singular_value_cutoff = pow(10.0, -4)):
+    def mean_cache(self, singular_value_cutoff = pow(10.0, -6)):
         """
         compute cache for the prediction of the mean value. 
-        use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-defined.
+        use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-defined. (smallest eigenvalue close to 0)
         """
         mvn = self.likelihood(self.train_prior_dist, self.train_inputs)
         train_mean, train_train_covar = mvn.loc, mvn.lazy_covariance_matrix  # covariance matrix of y(x) (likelihood) : K(X,X) + sigma^2 I
@@ -52,10 +52,10 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
 
     @property
     @cached(name="covar_cache")
-    def covar_cache(self, singular_value_cutoff = pow(10.0, -4)):
+    def covar_cache(self, singular_value_cutoff = pow(10.0, -6)):
         """
         compute cache for the prediction of the covariance matrix. Which is (K(x,x) + sigma^2 I)^{-1/2}
-        use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-conditioned
+        use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-conditioned. (smallest eigenvalue close to 0)
         """
         train_train_covar = self.lik_train_train_covar 
 

@@ -255,40 +255,7 @@ class MAPNEBMover(Motion):
 
         if self.options["mode"] == "verlet":
             # Only initialize velocity for fresh start, not for RESTART
-            dx_mscaled = dt * self.velocity_mscaled + 0.5 * self.f_mscaled * np.power(
-                dt, 2
-            )
-            dx = dx_mscaled / np.sqrt(self.beads.m3[:, self.fixatoms_mask])
-
-            # update position
-            self.old_x = np.copy(self.x)
-            self.x = self.x + dx
-            self.beads.q[:, self.fixatoms_mask] = self.x
-
-            self.old_f_mscaled = np.copy(self.f_mscaled)  # record old force
-            self.old_action = self.action
-            self.f_mscaled, self.action = self.nebgm(
-                self.x
-            )  # evaluate the force & action using the updated position
-
-            self.velocity_mscaled = (
-                self.velocity_mscaled + dt * (self.old_f_mscaled + self.f_mscaled) / 2
-            )
-
-            # project velocity along the direction of the current force
-            f_unit_vector = self.f_mscaled / np.linalg.norm(self.f_mscaled)
-
-            v_f_inner_product = np.inner(
-                f_unit_vector.flatten(), self.velocity_mscaled.flatten()
-            )
-
-            if v_f_inner_product < 0:
-                self.velocity_mscaled = np.zeros(
-                    [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
-                )
-            else:
-                self.velocity_mscaled = v_f_inner_product * f_unit_vector
-
+            self.step_neb_projected_verlet(dt)
         elif self.options["mode"] == "CG":
             # use conjugate gradient method to optimize the beads.
             raise(NotImplementedError)
@@ -298,17 +265,39 @@ class MAPNEBMover(Motion):
                 message="Only projected velocity verlet is implemented. set mode == 'verlet' ",
             )
 
-        # check convergence of calculation.
-        # # transverse gradient for interior beads.
-        # grad_interior_beads_max = np.amax(np.abs(self.nebgm.neb_transverse_force))
-        # # optimization gradient at end beads.
-        # grad_end_beads_max = np.amax(np.abs([self.nebgm.neb_optimization_force[0], self.nebgm.neb_optimization_force[nbeads - 1]]))
-        # grad_max = np.max([grad_end_beads_max, grad_interior_beads_max])
-
         grad_max = np.amax(npnorm(self.nebgm.neb_optimization_force, axis=1))
 
         self.neb_instanton_exit(step, grad_max)
 
+    def step_neb_projected_verlet(self, dt):
+        """
+        use the projected velocity verlet algorithm to optimize the bead position 
+        """
+        # record old position
+        self.old_x = np.copy(self.x)
+        self.old_f_mscaled = np.copy(self.f_mscaled)  # record old force
+        self.old_action = self.action
+        
+        mscaled_x = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        ) 
+
+        mscaled_x, self.velocity_mscaled, self.action, self.f_mscaled = \
+            ipi.utils.nebinstool.projected_verlet(
+                mscaled_x,
+                self.velocity_mscaled,
+                (self.action, self.f_mscaled),
+                self.nebgm,
+                dt
+            )
+        
+        # update new position
+        self.x = mscaled_x / np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.beads.q[:, self.fixatoms_mask] = self.x
+
+    
     def check_spring_k_kappa(self):
         """
         check the amplitude of spring k and kappa. to see if it is appropriate. If not, update it.
@@ -375,8 +364,12 @@ class MAPNEBMover(Motion):
         self.old_x = None
         self.action = None  # current action
         self.old_action = None  # action at previous step
-        self.f_mscaled, self.action = self.nebgm(
-            self.x
+
+        mscaled_x = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.action, self.f_mscaled = self.nebgm(
+            mscaled_x
         )  # forces at current step on mass scaled coordinate
 
     def neb_instanton_exit(self, step, grad_max):
@@ -911,7 +904,7 @@ class LINEBGradientMapper(object):
 
         return neb_optimization_force
 
-    def __call__(self, x):
+    def __call__(self, mscaled_x):
         """Returns the potential for all beads and the gradient.
         update reduced bead coordinates (&dbeads coordinate) (sticly speaking the free-moving atom parts) with x.
         x = q[:, self.fixatoms_mask] : new coordinates for updated freely moving particles.
@@ -920,16 +913,16 @@ class LINEBGradientMapper(object):
         rbq: position for reduced beads
         btau: tangent vector directions.
         """
+        x = mscaled_x * np.sqrt(
+            self.dbeads.m3[:, self.fixatoms_mask]
+        )
         # Bead positions
         # Touch positions only if they have changed (to avoid triggering forces)
-        # I need both dbeads and rbeads because of the endpoint tangents.
         if (self.rbeads.q[:, self.fixatoms_mask] != x).any():
             self.rbeads.q[:, self.fixatoms_mask] = x
         rbq = np.copy(self.rbeads.q[:, self.fixatoms_mask])
 
-        mscaled_q = rbq * np.sqrt(
-            self.dbeads.m3[:, self.fixatoms_mask]
-        )  # mass scaled coordinates.
+        mscaled_q = mscaled_x  # mass scaled coordinates.
         self.mscaled_q = mscaled_q
 
         # initialize self.rforces with forces and pots from self.dbeads.
@@ -981,7 +974,7 @@ class LINEBGradientMapper(object):
 
         self.neb_optimization_force = np.copy(neb_optimization_force)
 
-        return neb_optimization_force, self.action
+        return self.action ,neb_optimization_force
 
 
 class RP_MAP(object):

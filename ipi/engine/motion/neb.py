@@ -278,7 +278,7 @@ class NEBClimbGrMapper(object):
         rbf = dstrip(self.rforces.f)[:, self.fixatoms_mask].flatten()
 
         # I think here it's better to use plain tangents.
-        # Then we don't need energies of the neighboring beads.  FIXME: Have this idea been tested?
+        # Then we don't need energies of the neighboring beads.  
         d1 = rbq - self.q_prev  # tau minus
         d2 = self.q_next - rbq  # tau plus
         tau = d1 / npnorm(d1) + d2 / npnorm(d2)

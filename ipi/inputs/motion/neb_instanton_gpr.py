@@ -67,7 +67,10 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "default": 4.00,  # = 0.1 fs
-                "help": "time step for evolve neb beads",
+                "help": """"time step for evolve neb beads. 
+                If mode == "verlet": this is the time step for projected velocity verlet algorithm.
+                If mode == "cg",  this is the maximum time step for backtracking line searching algorithm.
+                """,
                 "dimension": "time",
             },
         ),

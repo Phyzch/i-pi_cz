@@ -390,10 +390,8 @@ def train_gpr(model: GPModelWithDerivatives, training_error_cutoff=np.power(10.0
 
     # define loss function for GPs. -- we choose the marginal log likelihood
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
-    
-    # TODO: debug this one.
+    # use our own version of marginal log likelihood function to perform the pseudo-inverse of covariance matrix.
     mll = RBFGradMarginalLogLikelihood(likelihood, model)
-    # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
     train_inputs = model.train_inputs[
         0

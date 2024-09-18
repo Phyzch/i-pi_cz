@@ -8,7 +8,7 @@ import math
 class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
     """
     simple extension of ExactMarginalLogLikelihood class.
-    We change the __forward__() function since num_data is different for our case (not function_dist.event_shape.numel() in ExactMarginalLogLikelihood)
+    We change the forward() function since we want to change the way we compute logarithm of probability.
     """
 
     def __init__(self, likelihood, model):
@@ -30,14 +30,16 @@ class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
         # Get the log prob of the marginal distribution
         output = self.likelihood(function_dist, *params)  # output is the multitaskmultivariate normal distribution with noise var add to variance.
         res = self.log_prob_likelihood(output, target)
-        # res1 = output.log_prob(target)   # old code
+        
+        # old code:
+        # res = output.log_prob(target)   
         res = self._add_other_terms(res, params)
 
         # Scale by the amount of data we have
         num_data = function_dist.event_shape.numel()
         return res.div_(num_data)
     
-    def log_prob_likelihood(self, normal_dist: MultitaskMultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -4)):
+    def log_prob_likelihood(self, normal_dist: MultitaskMultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -6)):
         """
         compute the log probability of observable (target).
         Perform the pseudo-inverse when the covariance matrix is ill-conditioned.

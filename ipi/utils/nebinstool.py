@@ -437,3 +437,42 @@ def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001)
             pass
 
     return h
+
+def projected_verlet(x0, v0, fdf0, fdf,  dt):
+    """
+    projected velocity verlet algorithm.
+    velocity verlet & project the velocity along force direction. 
+    This is one type of steepest descent algorithm.
+
+    :param: x0: initial coordinate
+    :param: v0: initial velocity 
+    :param: fdf0: (func, gradient): initial function and gradient values
+    :param: fdf: gradient mapper. func, grad = fdf(x_mscaled)
+    :param: dt: time step
+    """
+    _, g0 = fdf0  # g0_mscaled: initial gradient.
+    # update new position 
+    dx = dt * v0 + 0.5 * g0 * np.power(
+        dt, 2
+    )
+    x = x0 + dx 
+
+    func , g = fdf(
+        x
+    )
+
+    v = v0 + dt * (g0 + g) / 2 
+
+    # project the velocity along the direction of the current force.
+    g_unit_vector = g / np.linalg.norm(g)
+
+    v_g_inner_product = np.inner(
+        g_unit_vector.flatten(), v.flatten()
+    )
+
+    if v_g_inner_product < 0:
+        v = np.zeros(v.shape)
+    else:
+        v = v_g_inner_product * g_unit_vector 
+
+    return x, v, func, g 

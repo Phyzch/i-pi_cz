@@ -652,11 +652,6 @@ class MAPNEBGPRMover(Motion):
             " @NEB: start inner loop neb for step {}".format(step),
             verbosity.debug,
         )
-        # velocity of free moving particles on mass scaled coordinate.
-        self.velocity_mscaled = np.zeros(
-            [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
-        )
-
         # coordinate of free moving atoms
         self.x = np.copy(self.beads.q[:, self.fixatoms_mask])
         self.old_x = None
@@ -674,7 +669,24 @@ class MAPNEBGPRMover(Motion):
         self.nebgm.initialize_force(self.x)
         self.check_spring_k_kappa()
 
-        self.f_mscaled, self.action = self.nebgm(self.x)
+        mscaled_x = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.action, self.f_mscaled = self.nebgm(
+            mscaled_x
+        )
+
+        if self.options["mode"] == "verlet":
+            # use projected velocity verlet algorithm. In this case, we need the velocity.
+            # velocity of free moving particles on mass scaled coordinate.
+            self.velocity_mscaled = np.zeros(
+                [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
+            )
+        elif self.options["mode"] == "cg":
+            # use conjugate gradient method. 
+            f = self.f_mscaled * np.sqrt(self.beads.m3[:, self.fixatoms_mask])
+            self.cg_search_direction = f 
+
 
     def neb_instanton_step_info(
         self, outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead
@@ -763,46 +775,14 @@ class MAPNEBGPRMover(Motion):
 
         # neb move using gradient of LINEBGradient
         if self.options["mode"] == "verlet":
-            # use projected damped verlet algorithm.
-            dx_mscaled = dt * self.velocity_mscaled + 0.5 * self.f_mscaled * np.power(
-                dt, 2
-            )
-            dx = dx_mscaled / np.sqrt(self.beads.m3[:, self.fixatoms_mask])
-
-            # update position
-            self.old_x = np.copy(self.x)
-            self.x = self.x + dx
-            self.beads.q[:, self.fixatoms_mask] = self.x
-
-            self.old_f_mscaled = np.copy(self.f_mscaled)  # record old force
-            self.old_action = self.action
-            # evaluate the force & action using the updated position. LI-NEB algorithm.
-            self.f_mscaled, self.action = self.nebgm(self.x)
-
-            self.velocity_mscaled = (
-                self.velocity_mscaled + dt * (self.old_f_mscaled + self.f_mscaled) / 2
-            )
-
-            # project the velocity along the direction of the current force
-            f_unit_vector = self.f_mscaled / np.linalg.norm(self.f_mscaled)
-
-            v_f_inner_product = np.inner(
-                f_unit_vector.flatten(), self.velocity_mscaled.flatten()
-            )
-
-            if v_f_inner_product < 0:
-                self.velocity_mscaled = np.zeros(
-                    [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
-                )
-            else:
-                self.velocity_mscaled = v_f_inner_product * f_unit_vector
-        elif self.options["mode"] == "CG":
+            self.neb_step_projected_verlet(dt)
+        elif self.options["mode"] == "cg":
             # use conjugate gradient method 
             pass 
         else:
             softexit.trigger(
                 status="bad",
-                message="Only projected velocity verlet is currently implemented. set mode == 'verlet' ",
+                message="Only projected velocity verlet (verlet) and conjugate gradient (cg) are currently implemented. set mode == 'verlet' ",
             )
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
@@ -821,6 +801,40 @@ class MAPNEBGPRMover(Motion):
             early_stop_bool,
             outrange_bead_index_list,
         )
+
+    def neb_step_projected_verlet(self, dt):
+        """
+        use the projected velocity verlet algorithm to optimize the bead position 
+        """
+        # record old position
+        self.old_x = np.copy(self.x)
+        self.old_f_mscaled = np.copy(self.f_mscaled)  # record old force
+        self.old_action = self.action
+
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
+        x_mscaled, self.velocity_mscaled, self.action, self.f_mscaled = \
+            ipi.utils.nebinstool.projected_verlet(
+            x_mscaled, 
+            self.velocity_mscaled,
+            (self.action, self.f_mscaled),
+            self.nebgm,
+            dt
+        )
+        
+        # update new position
+        self.x = x_mscaled / np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.beads.q[:, self.fixatoms_mask] = self.x
+
+    def neb_step_conjugate_gradient(self, dt):
+        """
+        use the conjugate gradient method to optimize the bead position
+        """
+        # linear search along the search direction 
 
     def update_GPR_model_one_bead_subroutine(
         self, training_x, bead_index_for_update, training_bead_forces
@@ -1401,9 +1415,6 @@ class LINEBGradientMapper(object):
         # Create reduced bead and force object (excluding the fixed atoms. But including the beads at two ends that also moves)
         self.rbeads = Beads(ens.beads.natoms, ens.beads.nbeads)
         self.rbeads.q[:] = ens.beads.q[:]
-        self.rforces = ens.forces.copy(
-            self.rbeads, self.dcell
-        )  # this will bind rbeads with rforces.
 
         self.spring_k = ens.optarrays[
             "spring_k"
@@ -1467,22 +1478,24 @@ class LINEBGradientMapper(object):
         # Forces for free moving dofs.
         self.rbf = beads_forces.copy()[:, self.fixatoms_mask]
 
-    def __call__(self, x):
+    def __call__(self, mscaled_x):
         """Returns the LI-NEB gradient for all beads.
         update reduced bead coordinates (&dbeads coordinate) (sticly speaking the free-moving atom parts) with x.
-        :param: x = q[:, self.fixatoms_mask] : new coordinates for updated freely moving particles.
+        :param: msacled_x: new mass scaled coordinates for updated freely moving particles.
 
         rbf: physical forces for reduced beads
         rbq: position for reduced beads
         btau: tangent vector directions.
         """
+        # coordinate q.
+        x = mscaled_x / np.sqrt(
+            self.dbeads.m3[:, self.fixatoms_mask]
+        )
+        
         self.initialize_force(x)
 
         # mass scaled coordinate.
-        mscaled_q = np.copy(x) * np.sqrt(
-            self.dbeads.m3[:, self.fixatoms_mask]
-        )  # mass scaled coordinates.
-        self.mscaled_q = mscaled_q
+        self.mscaled_q = mscaled_x
 
         # mass weighted force
         mscaled_f = self.rbf / np.sqrt(
@@ -1497,27 +1510,27 @@ class LINEBGradientMapper(object):
 
         self.spring_forces = np.zeros([nimage, 3 * natom])
         self.end_bead_energy_constraint_forces = np.zeros([2, 3 * natom])
-        self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
+        self.beads_mscaled_distance = npnorm(mscaled_x[1:] - mscaled_x[:-1], axis=1)
 
         # abbreviated action for the ring polymer instanton path.
-        self.action = self.compute_neb_action(nimage, mscaled_q)
+        self.action = self.compute_neb_action(nimage, mscaled_x)
 
         # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
         self.action_forces = self.compute_neb_action_force(
-            nimage, natom, mscaled_q, mscaled_f
+            nimage, natom, mscaled_x, mscaled_f
         )
 
         # compute direction of tangent vector, using either improved methods.
-        btau = self.compute_tangent_vector(nimage, natom, mscaled_q)
+        btau = self.compute_tangent_vector(nimage, natom, mscaled_x)
 
         # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
         neb_optimization_force = self.compute_neb_optimization_force(
-            nimage, natom, btau, mscaled_q, mscaled_f
+            nimage, natom, btau, mscaled_x, mscaled_f
         )
 
         self.neb_optimization_force = np.copy(neb_optimization_force)
 
-        return neb_optimization_force, self.action
+        return self.action, neb_optimization_force
 
     def compute_tangent_vector(self, nimage, natom, mscaled_q):
         """
