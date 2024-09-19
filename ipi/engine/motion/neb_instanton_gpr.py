@@ -1163,7 +1163,7 @@ class MAPNEBGPRMover(Motion):
 
         # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
         val1 = spring_k * np.power(dt, 2)
-        spring_k_scale = 0.25 / val1
+        spring_k_scale = 0.1 / val1
         self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
         self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
         self.nebgm.VSC_k_max = self.nebgm.spring_k
@@ -1176,7 +1176,7 @@ class MAPNEBGPRMover(Motion):
             np.abs(self.nebgm.rbf[0])
         )  # maximum gradient of left end bead.
         val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
-        left_kappa_scale = 0.5 / val2
+        left_kappa_scale = 0.2 / val2
         self.optarrays["kappa"]["left"] = (
             self.optarrays["kappa"]["left"] * left_kappa_scale
         )
@@ -1186,7 +1186,7 @@ class MAPNEBGPRMover(Motion):
             np.abs(self.nebgm.rbf[-1])
         )  # maximum gradient of right end bead
         val3 = max_force3 * np.power(dt, 2) * right_kappa / np.sqrt(m_H)
-        right_kappa_scale = 0.5 / val3
+        right_kappa_scale = 0.2 / val3
         self.optarrays["kappa"]["right"] = (
             self.optarrays["kappa"]["right"] * right_kappa_scale
         )
