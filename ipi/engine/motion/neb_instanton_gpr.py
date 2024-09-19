@@ -73,6 +73,8 @@ class MAPNEBGPRMover(Motion):
         instanton_bead_q=np.zeros(0, float),
         instanton_bead_pot=np.zeros(0, float),
         instanton_hessian=np.eye(0, 0, 0, float),
+        neb_inner_loop_step_for_scale = 20,
+        neb_inner_loop_step_max = 100,
         spring_k=0.1,
         kappa={"left": 50, "right": 50},
         variable_spring_constant=False,
@@ -138,6 +140,8 @@ class MAPNEBGPRMover(Motion):
         self.optarrays = {}
         self.optarrays["energy_shift"] = energy_shift
 
+        self.optarrays["neb_inner_loop_step_for_scale"] = neb_inner_loop_step_for_scale 
+        self.optarrays["neb_inner_loop_step_max"] = neb_inner_loop_step_max
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
 
@@ -749,15 +753,22 @@ class MAPNEBGPRMover(Motion):
         nbeads = self.beads.nbeads
         dt = self.optarrays["time_step"]
 
-        neb_step_max = 20 
-        if neb_step < neb_step_max:
+        neb_inner_loop_step_max = self.optarrays["neb_inner_loop_step_max"]
+        neb_inner_loop_step_for_scale = self.optarrays["neb_inner_loop_step_for_scale"]
+        if neb_step < neb_inner_loop_step_for_scale:
             # scale the spring_k term in LI-NEB relative to time step.
             # scale the kappa (energy constraint term for two end beads) in LI-NEB relative to the force at end beads. Using stability criterion.
             self.check_spring_k_kappa()
         else:
-            if neb_step % neb_step_max == 0:
+            if neb_step % neb_inner_loop_step_for_scale == 0:
                 print("scale down the spring constant and energy constraint term. After failing to converge in inner loop step: " + str(neb_step))
                 self.scale_down_spring_constant_and_kappa()
+
+        if neb_step > neb_inner_loop_step_max:
+            softexit.trigger(
+                status= "bad",
+                message= "The neb inner loop fails to converge after reaching the maximum optimization steps: " + str(neb_inner_loop_step_max),
+            )
 
         grad_max_inner_bead = 0
         grad_max_end_bead = 0

@@ -483,8 +483,6 @@ def conjugate_gradient(x0, fdf0, fdf, initial_search_direction, big_step,
                        line_search_cutoff = 0.1,
                        ):
     """
-    TODO: This CG method doesn't converge for neb code.
-
     Use conjugate gradient method to find local minimum for neb algorithm.
     The function to optimize of neb method is ill-defined, because we perform the projection of gradient.
     Therefore, we use the simpliest criterion for line search: 
@@ -514,50 +512,21 @@ def conjugate_gradient(x0, fdf0, fdf, initial_search_direction, big_step,
     g0_component = np.inner(g0.flatten(), p0.flatten()) / p0_norm
 
     search_step = big_step 
-
-    # bisect search using gradient along search direction.
-    x_end = x0 + p0 * search_step 
-    action_end , g_end = fdf(x_end)
-    g_end_component = np.inner(g_end.flatten(), p0.flatten())/ p0_norm
-    while g_end_component < 0:
-        # increase the searach step until we can make sure that there is one minimum between x_end and x0.
-        search_step = search_step * 2
-        x_end = x0 + p0 * search_step 
-        action_end , g_end = fdf(x_end)
-        g_end_component = np.inner(g_end.flatten(), p0.flatten())/ p0_norm
-
-    x_low = x0    # the point with negative gradient along p0.
-    x_high = x_end  # the point with positive gradient along p0.
-    g_low = g0 
-    g_high = g_end
-
-    while(1):
-        g_low_component = np.inner(g_low.flatten(), p0.flatten()) / p0_norm
-        g_high_component = np.inner(g_high.flatten(), p0.flatten()) / p0_norm
-        
-        if abs(g_low_component) < line_search_cutoff * abs(g0_component):
-            x = x_low 
-            break 
-        
-        if abs(g_high_component) < line_search_cutoff * abs(g0_component):
-            x = x_high 
-            break
-
-        # bisect 
-        x_middle = (x_low + x_high) / 2
-        action_middle , g_middle = fdf(x_middle)
-        g_middle_component = np.inner(g_middle.flatten(), p0.flatten())/ p0_norm 
-
-        if g_middle_component < 0:
-            x_low = x_middle 
-            g_low = g_middle 
-        else:
-            x_high = x_middle
-            g_high = g_middle
-
+    
+    # implement a simple Newton's step 
+    # a finite difference is used to estimate g'(x) (hessian along search direction)
+    dx = 0.01 
+    x_fd = x0 + dx * p0 
+    _, g_fd = fdf(x_fd)
+    g_fd_component = np.inner(g_fd.flatten(), p0.flatten()) / p0_norm 
+    dg0 = (g_fd_component - g0_component) / dx 
+    
+    # newton's step x = x0 + g(x0) / g'(x0)
+    x = x0 - p0 * g0_component / dg0 
 
     step_size = np.linalg.norm(x - x0) / np.linalg.norm(p0)
     action, g = fdf(x)
+    g_component = np.inner(g.flatten(), p0.flatten())/ p0_norm
     # update search direction
     # check if we need to refresh the search direction as negative gradient.
     g0_flatten = g0.flatten()
@@ -572,11 +541,6 @@ def conjugate_gradient(x0, fdf0, fdf, initial_search_direction, big_step,
     
     # update search direction.
     p = beta * p0 - g
-
-    # restart the search direction if it degrades.
-    check = np.abs(np.inner(g_flatten, g0_flatten))/ np.power(np.linalg.norm(g0) , 2)
-    if check > 0.1:
-        p = -g
 
     search_direction = p 
 

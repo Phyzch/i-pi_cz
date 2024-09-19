@@ -160,6 +160,31 @@ class InputNebInstGPR(InputDictionary):
                 "help": "the calculated Hessian for instanton beads. (Used for recording result in RESTART)",
             },
         ),
+
+        "neb_inner_loop_step_for_scale": (
+            InputValue,
+            {
+                "dtype": int,
+                "default": 20,
+                "help": """
+                The maximum step number in the inner loop before 
+                we scale down the spring constant and energy constraint term.
+                After such step, every step_max we will scale down the spring constant and energy constraint term by 2.
+                """
+            }
+        ),
+
+        "neb_inner_loop_step_max": (
+            InputValue,
+            {
+                "dtype": int,
+                "default": 100, 
+                "help" : """
+                The maximum step number in the inner loop before we claim the algorithm fails to converge.
+                """
+            }
+        ),
+
         # for spring force term and energy constraint energy in nudged elastic band (NEB) algorithm
         "spring_k": (
             InputValue,
@@ -446,7 +471,8 @@ class InputNebInstGPR(InputDictionary):
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
         self.kappa.store(optarrays["kappa"])
-
+        self.neb_inner_loop_step_for_scale.store(optarrays["neb_inner_loop_step_for_scale"])
+        self.neb_inner_loop_step_max.store(optarrays["neb_inner_loop_step_max"])
         self.variable_spring_constant.store(optarrays["variable_spring_constant"])
         self.VSC_E_ref.store(optarrays["VSC_E_ref"])
         self.VSC_spring_k_max_ratio.store(optarrays["VSC_spring_k_max_ratio"])
