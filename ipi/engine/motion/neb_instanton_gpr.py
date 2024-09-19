@@ -749,9 +749,15 @@ class MAPNEBGPRMover(Motion):
         nbeads = self.beads.nbeads
         dt = self.optarrays["time_step"]
 
-        # scale the spring_k term in LI-NEB relative to time step.
-        # scale the kappa (energy constraint term for two end beads) in LI-NEB relative to the force at end beads. Using stability criterion.
-        self.check_spring_k_kappa()
+        neb_step_max = 20 
+        if neb_step < neb_step_max:
+            # scale the spring_k term in LI-NEB relative to time step.
+            # scale the kappa (energy constraint term for two end beads) in LI-NEB relative to the force at end beads. Using stability criterion.
+            self.check_spring_k_kappa()
+        else:
+            if neb_step % neb_step_max == 0:
+                print("scale down the spring constant and energy constraint term. After failing to converge in inner loop step: " + str(neb_step))
+                self.scale_down_spring_constant_and_kappa()
 
         grad_max_inner_bead = 0
         grad_max_end_bead = 0
@@ -1189,6 +1195,24 @@ class MAPNEBGPRMover(Motion):
         right_kappa_scale = 0.2 / val3
         self.optarrays["kappa"]["right"] = (
             self.optarrays["kappa"]["right"] * right_kappa_scale
+        )
+
+    def scale_down_spring_constant_and_kappa(self):
+        """
+        When the inner loop code fails to converge after several steps, we keep scaling down the spring force and kappa term.
+        """
+        scale = 0.5
+        self.optarrays["spring_k"] = self.optarrays["spring_k"] * scale
+        self.nebgm.spring_k = self.nebgm.spring_k * scale 
+        self.nebgm.VSC_k_max = self.nebgm.spring_k 
+        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
+
+        self.optarrays["kappa"]["left"] = (
+            self.optarrays["kappa"]["left"] * scale 
+        )
+
+        self.optarrays["kappa"]["right"] = (
+            self.optarrays["kappa"]["right"] * scale
         )
 
     def print_geometry(self, step):
