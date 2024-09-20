@@ -1071,7 +1071,7 @@ def FIRE(
 
     p = np.vdot(force, v)
     # downhill
-    if p > 0.0:
+    if p >= 0.0:
         N_dn += 1
         N_up = 0
         if N_dn > Ndelay:

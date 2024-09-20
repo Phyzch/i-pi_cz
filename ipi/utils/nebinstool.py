@@ -12,7 +12,7 @@ import ipi.utils.mathtools as mt
 import os
 from ipi.utils.depend import dstrip
 import ipi
-
+from ipi.utils.softexit import softexit
 
 def print_neb_instanton_geo(
     prefix, step, nbeads, natoms, names, q, pots, cell, shift, output_maker
@@ -512,7 +512,7 @@ def conjugate_gradient(x0, fdf0, fdf, initial_search_direction, big_step,
     g0_component = np.inner(g0.flatten(), p0.flatten()) / p0_norm
 
     search_step = big_step 
-    
+
     # implement a simple Newton's step 
     # a finite difference is used to estimate g'(x) (hessian along search direction)
     dx = 0.01 
@@ -547,4 +547,101 @@ def conjugate_gradient(x0, fdf0, fdf, initial_search_direction, big_step,
     return x, action, g, search_direction
     
     
-    
+def FIRE_NEB(
+    x0,
+    fdf,
+    fdf0,
+    v=None,
+    a=0.1,
+    N_dn=0,
+    N_up=0,
+    dt=0.1,
+    maxstep=0.5,
+    dtmax=1.0,
+    dtmin=1e-5,
+    Ndelay=5,
+    Nmax=2000,
+    finc=1.1,
+    fdec=0.5,
+    astart=0.1,
+    fa=0.99,
+):
+    """
+    Adapted from FIRE in mintool.py.
+    Delete the time adaption feature.
+    FIRE algorithm based on
+    Bitzek et al, Phys. Rev. Lett. 97, 170201 (2006) and
+    Guénolé, J. et al.  Comp. Mat. Sci. 175, 109584 (2020).
+    Semi-implicit Euler integration used.
+    Done by Guoyuan Liu <liuthepro@outlook.com>, May 2021.
+
+    FIRE does not rely on energy, therefore it is suitable for NEB calculation, where
+    the energy is not conservative. Basic principle: accelerate towards force gradient
+    (downhill direction) and stop immediately when going uphill.
+    Try adjusting dt, dtmax, dtmin for optimal performance.
+
+    Arguments:
+        x0: initial beads positions
+        fdf: energy and function mapper. call fdf(x) to update beads position and froces
+        fdf0: initial value of energy and gradient
+        v: current velocity
+        a: velocity mixing factor, in the paper it is called alpha
+        fa: a decrement factor
+        astart: initial a value
+        N_dn: number of steps since last downhill direction
+        N_up: number of steps since last uphill direction
+        dt: time interval
+        dtmax: max dt (increase when uphill)
+        dtmin: min dt (decrease when downhill)
+        finc: dt increment factor
+        fdec: dt decrement factor
+        Ndelay: min steps required to be in one direction before adjust dt and a
+        Nmax: max consecutive steps in uphill direction before trigger exit
+
+    Returns:
+        v, a, N, dt since they are dynamically adjusted
+    """
+    info(" @FIRE being called", verbosity.debug)
+    _, g0 = fdf0
+    force = -g0
+
+    p = np.vdot(force, v)
+    # downhill
+    if p >= 0.0:
+        N_dn += 1
+        N_up = 0
+        if N_dn > Ndelay:
+            dt = min(dt * finc, dtmax)
+            a = a * fa
+    # uphill
+    else:
+        N_dn = 0
+        N_up += 1
+        if N_up > Nmax:
+            softexit.trigger("@FIRE is stuck for %d steps. We stop here." % N_up)
+        dt = max(dt * fdec, dtmin)
+        a = astart
+        # correct uphill motion
+        x0 -= 0.5 * dt * v
+        # stop moving in uphill direction
+        v = np.zeros(v.shape)
+
+    # accelerate
+    v += dt * force
+    # change velocity direction with inertia
+    if p > 0.0:
+        f_unit = force / np.linalg.norm(force)
+        v = (1 - a) * v + a * np.linalg.norm(v) * f_unit
+    # update posistion
+    dx = dt * v
+    # check max dx
+    normdx = np.linalg.norm(dx)
+    if normdx > maxstep:
+        dx = maxstep * dx / normdx
+    x0 += dx
+
+    info(" @FIRE: calling a gradient mapper to update position", verbosity.debug)
+    fdf(x0)
+
+    return v, a, N_dn, N_up, dt
+

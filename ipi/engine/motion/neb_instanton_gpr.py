@@ -64,10 +64,11 @@ class MAPNEBGPRMover(Motion):
         prefix="neb_instanton",
         tolerances={"gradient": 5e-3, "gradient_end_bead": 1e-2},
         energy_shift=0.00,
-        FIRE={"tmax": 10.0, "tmin": 0.05, 
+        FIRE={"tmax": 10.0, "tmin": 0.02, 
               "Ndelay": 5, "finc": 1.1, "fdec": 0.5, 
               "alpha0": 0.15, "alpha_shrink": 0.99, 
-              "Nmax": 100, "maxstep": 100},
+              "Nmax": 100, "maxstep": 100,
+              "neb_step_update_kappa": 20},
         time_step=4.0,
         cg_big_step= 1.0,
         instanton_time_step=4.0,
@@ -82,6 +83,9 @@ class MAPNEBGPRMover(Motion):
         neb_inner_loop_step_max = 100,
         spring_k=0.1,
         kappa={"left": 50, "right": 50},
+        dynamical_adjust_ratio= {"spring_k": 0.1,
+                                 "kappa": 0.2},
+        end_bead_energy_converge_value = 1e-4,
         variable_spring_constant=False,
         VSC_E_ref=0.00,
         VSC_spring_k_max_ratio=3.00,
@@ -149,6 +153,8 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["neb_inner_loop_step_max"] = neb_inner_loop_step_max
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
+        self.optarrays["dynamical_adjust_ratio"] = dynamical_adjust_ratio
+        self.optarrays["end_bead_energy_converge_value"] = end_bead_energy_converge_value
 
         # option to vary the spring constant term
         self.optarrays["variable_spring_constant"] = variable_spring_constant
@@ -673,7 +679,7 @@ class MAPNEBGPRMover(Motion):
         
         # adjust the spring constant k and energy constraint term.
         self.nebgm.initialize_force(self.x)
-        self.check_spring_k_kappa()
+        self.update_spring_k_kappa()
 
         mscaled_x = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
@@ -690,6 +696,8 @@ class MAPNEBGPRMover(Motion):
             [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
         )
 
+        self.time_step = self.optarrays["time_step"]
+        
         if self.options["mode"] == "cg":
             # use conjugate gradient method. 
             # The search is performed in the mass scaled coordinate.
@@ -715,7 +723,7 @@ class MAPNEBGPRMover(Motion):
             self.Ndn = 0  # number of steps going down hill
             self.Nup = 0  # number of steps going up hill.
             
-            self.dt = self.optarrays["time_step"]
+
 
     def neb_instanton_step_info(
         self, outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead
@@ -774,10 +782,16 @@ class MAPNEBGPRMover(Motion):
 
         neb_inner_loop_step_max = self.optarrays["neb_inner_loop_step_max"]
         neb_inner_loop_step_for_scale = self.optarrays["neb_inner_loop_step_for_scale"]
+
         if neb_step < neb_inner_loop_step_for_scale:
             # scale the spring_k term in LI-NEB relative to time step.
             # scale the kappa (energy constraint term for two end beads) in LI-NEB relative to the force at end beads. Using stability criterion.
-            self.check_spring_k_kappa()
+            if self.options["mode"] == "FIRE":
+                if neb_step % self.optarrays["FIRE"]["neb_step_update_kappa"] == 0:
+                    self.update_spring_k_kappa()
+            else:
+                self.update_spring_k_kappa()
+        
         else:
             if neb_step % neb_inner_loop_step_for_scale == 0:
                 print("scale down the spring constant and energy constraint term. After failing to converge in inner loop step: " + str(neb_step))
@@ -788,6 +802,13 @@ class MAPNEBGPRMover(Motion):
                 status= "bad",
                 message= "The neb inner loop fails to converge after reaching the maximum optimization steps: " + str(neb_inner_loop_step_max),
             )
+
+        # We have changed spring constant, so, we have to recompute neb optimization force.
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.action, self.grad_mscaled = self.nebgm(x_mscaled)
+        self.f_mscaled = -self.grad_mscaled
 
         grad_max_inner_bead = 0
         grad_max_end_bead = 0
@@ -862,7 +883,7 @@ class MAPNEBGPRMover(Motion):
             self.velocity_mscaled,
             (self.action, self.grad_mscaled),
             self.nebgm,
-            self.dt
+            self.time_step
         )
         self.f_mscaled = -self.grad_mscaled
 
@@ -906,15 +927,15 @@ class MAPNEBGPRMover(Motion):
         fdf0 = (self.action, self.grad_mscaled)
         # one step using FIRE. 
         # the x_mscaled will be updated in the mintools.FIRE() code.
-        self.velocity_mscaled, self.alpha, self.Ndn, self.Nup, self.dt  = \
-              ipi.utils.mintools.FIRE(x_mscaled,
+        self.velocity_mscaled, self.alpha, self.Ndn, self.Nup, self.time_step  = \
+              ipi.utils.nebinstool.FIRE_NEB(x_mscaled,
                                 self.nebgm,
                                 fdf0,
                                 self.velocity_mscaled,
                                 self.alpha,
                                 self.Ndn,
                                 self.Nup,
-                                self.dt,
+                                self.time_step,
                                 self.maxstep,
                                 self.dtmax,
                                 self.dtmin,
@@ -934,6 +955,8 @@ class MAPNEBGPRMover(Motion):
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
+
+        self.beads.q[:, self.fixatoms_mask] = self.x
 
 
     def update_GPR_model_one_bead_subroutine(
@@ -1214,7 +1237,7 @@ class MAPNEBGPRMover(Motion):
         )
 
     # ------ code below is for auxiliary functions --------------
-    def check_spring_k_kappa(self):
+    def update_spring_k_kappa(self):
         """
         check the amplitude of spring k and kappa. to see if it is appropriate. If not, update it.
         """
@@ -1227,14 +1250,20 @@ class MAPNEBGPRMover(Motion):
             "right"
         ]  # energy constraint constant for right end bead
 
+        end_bead_energy_converge_value = self.optarrays["end_bead_energy_converge_value"]
+        end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
+
         # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
         val1 = spring_k * np.power(dt, 2)
-        spring_k_scale = 0.1 / val1
+        spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
+        spring_k_scale = spring_k_ratio / val1
         self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
         self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
         self.nebgm.VSC_k_max = self.nebgm.spring_k
         self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
+        kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
+        
         # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2. We use stability criterion to set it as 0.5 (empirical value).
         m_H = 1837  # mass of hydrogen in atomic unit.
         # check the left end bead.
@@ -1242,20 +1271,30 @@ class MAPNEBGPRMover(Motion):
             np.abs(self.nebgm.rbf[0])
         )  # maximum gradient of left end bead.
         val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
-        left_kappa_scale = 0.2 / val2
+        left_kappa_scale = kappa_ratio / val2
         self.optarrays["kappa"]["left"] = (
             self.optarrays["kappa"]["left"] * left_kappa_scale
         )
+
+        # make sure the kappa value is not too large for the convergence
+        if abs(self.nebgm.beads_energy[0] - self.optarrays["instanton_path_energy"]) < end_bead_energy_converge_value:
+            left_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
+            self.optarrays["kappa"]["left"] = np.min([self.optarrays["kappa"]["left"] , left_kappa_for_converge])
 
         # check the right end bead.
         max_force3 = np.max(
             np.abs(self.nebgm.rbf[-1])
         )  # maximum gradient of right end bead
         val3 = max_force3 * np.power(dt, 2) * right_kappa / np.sqrt(m_H)
-        right_kappa_scale = 0.2 / val3
+        right_kappa_scale = kappa_ratio / val3
         self.optarrays["kappa"]["right"] = (
             self.optarrays["kappa"]["right"] * right_kappa_scale
         )
+
+        # make sure kappa value is not too large for the converge.
+        if abs(self.nebgm.beads_energy[-1] - self.optarrays["instanton_path_energy"]) < end_bead_energy_converge_value:
+            right_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
+            self.optarrays["kappa"]["right"] = np.min([self.optarrays["kappa"]["right"], right_kappa_for_converge])
 
     def scale_down_spring_constant_and_kappa(self):
         """

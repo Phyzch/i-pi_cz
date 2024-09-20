@@ -74,20 +74,22 @@ class InputNebInstGPR(InputDictionary):
                             "alpha0", 
                             "alpha_shrink",
                             "Nmax",
-                            "maxstep"],
+                            "maxstep",
+                            "neb_step_update_kappa"],
                 "default": [10.0,
-                            0.05,
+                            0.02,
                             5,
                             1.1,
                             0.5,
                             0.15,
                             0.99,
                             100,
-                            100
+                            100, 
+                            20
                             ],
                 "help":"""
                 Parameters for FIRE (Fast Inertial relaxation engine).
-                tmax: the maximum time step is : tmax * dt 
+                tmax: the maximum time step is : tmax * dt. Be careful about this tmax value, you have to make sure MD converge.
                 tmin: the minimum time step is : tmin * dt 
                 Ndelay: Number of steps to wait after P<0 before we accelerate downhill
                 finc: factor to increase dt when going downhill
@@ -96,6 +98,7 @@ class InputNebInstGPR(InputDictionary):
                 alpha_shrink: factor to decrease alpha when going downhill.
                 Nmax: maximum uphill step before we end the program.
                 maxstep: maximum dx (in mass scaled coordinate) for each FIRE step.
+                neb_step_update_kappa: number of neb steps until we refresh the energy constraint term kappa value.
                 """
             }
         ),
@@ -253,6 +256,36 @@ class InputNebInstGPR(InputDictionary):
                         """,
             },
         ),
+
+        "end_bead_energy_converge_value":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 1e-4,
+                "dimension": "energy",
+                "help": """
+                If energy of end beads is within the converge value around the instanton path energy, we then assume the end beads 
+                is close to converge. This is used to set the kappa (energy constraint term) value.
+            """
+            }
+        ),
+
+        "dynamical_adjust_ratio": (
+            InputDictionary,
+            {
+                "dtype": float,
+                "options": ["spring_k", "kappa"],
+                "default": [0.1, 0.2],
+                "help": """
+                The parameter that dynamically adjust the spring constant and energy constraint term (kappa) to make
+                sure the MD converges.
+                Adjust spring_k and kappa such that: 
+                spring_k * (dt)^2 = spring_k_dynamical_adjust_ratio,
+                kappa * (dt)^2 = kappa_dynamical_adjust_ratio.
+                """
+            }
+        ),
+
         "final_hessian_bool": (
             InputValue,
             {
@@ -509,6 +542,8 @@ class InputNebInstGPR(InputDictionary):
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
         self.kappa.store(optarrays["kappa"])
+        self.dynamical_adjust_ratio.store(optarrays["dynamical_adjust_ratio"])
+        self.end_bead_energy_converge_value.store(optarrays["end_bead_energy_converge_value"])
         self.neb_inner_loop_step_for_scale.store(optarrays["neb_inner_loop_step_for_scale"])
         self.neb_inner_loop_step_max.store(optarrays["neb_inner_loop_step_max"])
         self.variable_spring_constant.store(optarrays["variable_spring_constant"])
