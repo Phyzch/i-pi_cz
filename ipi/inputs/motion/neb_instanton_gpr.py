@@ -202,19 +202,6 @@ class InputNebInstGPR(InputDictionary):
             },
         ),
 
-        "neb_inner_loop_step_for_scale": (
-            InputValue,
-            {
-                "dtype": int,
-                "default": 20,
-                "help": """
-                The maximum step number in the inner loop before 
-                we scale down the spring constant and energy constraint term.
-                After such step, every step_max we will scale down the spring constant and energy constraint term by 2.
-                """
-            }
-        ),
-
         "neb_inner_loop_step_max": (
             InputValue,
             {
@@ -544,7 +531,6 @@ class InputNebInstGPR(InputDictionary):
         self.kappa.store(optarrays["kappa"])
         self.dynamical_adjust_ratio.store(optarrays["dynamical_adjust_ratio"])
         self.end_bead_energy_converge_value.store(optarrays["end_bead_energy_converge_value"])
-        self.neb_inner_loop_step_for_scale.store(optarrays["neb_inner_loop_step_for_scale"])
         self.neb_inner_loop_step_max.store(optarrays["neb_inner_loop_step_max"])
         self.variable_spring_constant.store(optarrays["variable_spring_constant"])
         self.VSC_E_ref.store(optarrays["VSC_E_ref"])

@@ -79,7 +79,6 @@ class MAPNEBGPRMover(Motion):
         instanton_bead_q=np.zeros(0, float),
         instanton_bead_pot=np.zeros(0, float),
         instanton_hessian=np.eye(0, 0, 0, float),
-        neb_inner_loop_step_for_scale = 20,
         neb_inner_loop_step_max = 100,
         spring_k=0.1,
         kappa={"left": 50, "right": 50},
@@ -149,7 +148,6 @@ class MAPNEBGPRMover(Motion):
         self.optarrays = {}
         self.optarrays["energy_shift"] = energy_shift
 
-        self.optarrays["neb_inner_loop_step_for_scale"] = neb_inner_loop_step_for_scale 
         self.optarrays["neb_inner_loop_step_max"] = neb_inner_loop_step_max
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
@@ -247,6 +245,8 @@ class MAPNEBGPRMover(Motion):
         )
 
         self.start_time = timer()  # used to record the time for the calculation.
+
+        self.neb_optimization_step = 0
 
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBGPRMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
@@ -369,11 +369,15 @@ class MAPNEBGPRMover(Motion):
             # update Gaussian Process Regression model with new training data
             self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
 
+            print("optimization step so far for neb stage: " + str(self.neb_optimization_step))
+
         elif self.options["stage"] == "instanton":
             # generate instanton ring polymer beads from minimum action path found by NEB.
             info(
                 "Now generate instanton path from Minimum Action Path (MAP) found by NEB."
             )
+            print("total optimization step for neb stage: " + str(self.neb_optimization_step))
+
             self.rp_map.generate_ring_polymer_beads(self.beads, step)
 
             # save the potential, q, temperature, hessian of instanton beads for RESTART.
@@ -660,6 +664,8 @@ class MAPNEBGPRMover(Motion):
         if not early_stop_bool:
             print("@LI-NEB converge on GPR PES.")
 
+        self.neb_optimization_step = self.neb_optimization_step + neb_step 
+
         return early_stop_bool, outrange_bead_index_list
 
     def neb_loop_initialize(self, step):
@@ -781,21 +787,15 @@ class MAPNEBGPRMover(Motion):
         nbeads = self.beads.nbeads
 
         neb_inner_loop_step_max = self.optarrays["neb_inner_loop_step_max"]
-        neb_inner_loop_step_for_scale = self.optarrays["neb_inner_loop_step_for_scale"]
 
-        if neb_step < neb_inner_loop_step_for_scale:
-            # scale the spring_k term in LI-NEB relative to time step.
-            # scale the kappa (energy constraint term for two end beads) in LI-NEB relative to the force at end beads. Using stability criterion.
-            if self.options["mode"] == "FIRE":
-                if neb_step % self.optarrays["FIRE"]["neb_step_update_kappa"] == 0:
-                    self.update_spring_k_kappa()
-            else:
+
+        if self.options["mode"] == "FIRE":
+            if neb_step % self.optarrays["FIRE"]["neb_step_update_kappa"] == 0:
                 self.update_spring_k_kappa()
-        
         else:
-            if neb_step % neb_inner_loop_step_for_scale == 0:
-                print("scale down the spring constant and energy constraint term. After failing to converge in inner loop step: " + str(neb_step))
-                self.scale_down_spring_constant_and_kappa()
+            self.update_spring_k_kappa()
+        
+
 
         if neb_step > neb_inner_loop_step_max:
             softexit.trigger(
