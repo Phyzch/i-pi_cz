@@ -37,7 +37,7 @@ class InputNebInstGPR(InputDictionary):
                 "dtype": str,
                 "default": "verlet",
                 "help": "Defines the method to evolve the nudged elastic band",
-                "options": ["verlet", "cg"],
+                "options": ["verlet", "cg", "FIRE"],
             },
         )
     }
@@ -62,6 +62,44 @@ class InputNebInstGPR(InputDictionary):
                 "dimension": "energy",
             },
         ),
+        "FIRE":(
+            InputDictionary,
+            {
+                "dtype": float,
+                "options": ["tmax",
+                            "tmin",
+                            "Ndelay",
+                            "finc",
+                            "fdec", 
+                            "alpha0", 
+                            "alpha_shrink",
+                            "Nmax",
+                            "maxstep"],
+                "default": [10.0,
+                            0.05,
+                            5,
+                            1.1,
+                            0.5,
+                            0.15,
+                            0.99,
+                            100,
+                            100
+                            ],
+                "help":"""
+                Parameters for FIRE (Fast Inertial relaxation engine).
+                tmax: the maximum time step is : tmax * dt 
+                tmin: the minimum time step is : tmin * dt 
+                Ndelay: Number of steps to wait after P<0 before we accelerate downhill
+                finc: factor to increase dt when going downhill
+                fdec: factor to decrease dt when going uphill
+                alpha0: initial coefficient for mixing velocity and force vectors.
+                alpha_shrink: factor to decrease alpha when going downhill.
+                Nmax: maximum uphill step before we end the program.
+                maxstep: maximum dx (in mass scaled coordinate) for each FIRE step.
+                """
+            }
+        ),
+
         "time_step": (
             InputValue,
             {

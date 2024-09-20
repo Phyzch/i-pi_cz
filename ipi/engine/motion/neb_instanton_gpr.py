@@ -28,6 +28,7 @@ import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
 import ipi.utils.nebinstool
 import ipi.utils.gpr_hessian_tools
+import ipi.utils.mintools
 import os
 from timeit import default_timer as timer
 
@@ -63,6 +64,10 @@ class MAPNEBGPRMover(Motion):
         prefix="neb_instanton",
         tolerances={"gradient": 5e-3, "gradient_end_bead": 1e-2},
         energy_shift=0.00,
+        FIRE={"tmax": 10.0, "tmin": 0.05, 
+              "Ndelay": 5, "finc": 1.1, "fdec": 0.5, 
+              "alpha0": 0.15, "alpha_shrink": 0.99, 
+              "Nmax": 100, "maxstep": 100},
         time_step=4.0,
         cg_big_step= 1.0,
         instanton_time_step=4.0,
@@ -150,6 +155,7 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["VSC_E_ref"] = VSC_E_ref
         self.optarrays["VSC_spring_k_max_ratio"] = VSC_spring_k_max_ratio
 
+        self.optarrays["FIRE"] = FIRE   # parameters for FIRE optimization algorithm.
         self.optarrays["time_step"] = time_step
         self.optarrays["cg_big_step"] = cg_big_step
         self.optarrays["instanton_time_step"] = instanton_time_step
@@ -661,17 +667,10 @@ class MAPNEBGPRMover(Motion):
         )
         # coordinate of free moving atoms
         self.x = np.copy(self.beads.q[:, self.fixatoms_mask])
-        self.old_x = None
 
         # action of LI-NEB beads
         self.action = None
-        self.old_action = None
-
-        # negative gradient of LI-NEB action for each bead on mass scaled coordinate
-        self.old_f_mscaled = np.zeros(
-            [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
-        )
-
+        
         # adjust the spring constant k and energy constraint term.
         self.nebgm.initialize_force(self.x)
         self.check_spring_k_kappa()
@@ -682,20 +681,41 @@ class MAPNEBGPRMover(Motion):
         self.action, self.grad_mscaled = self.nebgm(
             mscaled_x
         )
+        # negative gradient of LI-NEB action for each bead on mass scaled coordinate
         self.f_mscaled = -self.grad_mscaled
 
-        if self.options["mode"] == "verlet":
-            # use projected velocity verlet algorithm. In this case, we need the velocity.
-            # velocity of free moving particles on mass scaled coordinate.
-            self.velocity_mscaled = np.zeros(
-                [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
-            )
-        elif self.options["mode"] == "cg":
+        # mass scaled velocity. Used in dynamics optimizatioin algorithm,
+        # for example: projected velocity verlet or FIRE 
+        self.velocity_mscaled = np.zeros(
+            [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
+        )
+
+        if self.options["mode"] == "cg":
             # use conjugate gradient method. 
             # The search is performed in the mass scaled coordinate.
             # initialize the search direction as gradient direction.
             self.conjugate_search_direction = self.f_mscaled
 
+        if self.options["mode"] == "FIRE":
+            # initialize parameter for FIRE method.
+            self.alpha0 = self.optarrays["FIRE"]["alpha0"]
+            self.alpha = self.alpha0
+            self.alpha_shrink = self.optarrays["FIRE"]["alpha_shrink"]
+
+            self.dtmax = self.optarrays["time_step"] * self.optarrays["FIRE"]["tmax"]
+            self.dtmin = self.optarrays["time_step"] * self.optarrays["FIRE"]["tmin"]
+            
+            self.Ndelay = self.optarrays["FIRE"]["Ndelay"]
+            self.finc = self.optarrays["FIRE"]["finc"]
+            self.fdec = self.optarrays["FIRE"]["fdec"]
+
+            self.Nmax = self.optarrays["FIRE"]["Nmax"]
+            self.maxstep = self.optarrays["FIRE"]["maxstep"]
+
+            self.Ndn = 0  # number of steps going down hill
+            self.Nup = 0  # number of steps going up hill.
+            
+            self.dt = self.optarrays["time_step"]
 
     def neb_instanton_step_info(
         self, outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead
@@ -751,7 +771,6 @@ class MAPNEBGPRMover(Motion):
         LI-NEB move for one step.
         """
         nbeads = self.beads.nbeads
-        dt = self.optarrays["time_step"]
 
         neb_inner_loop_step_max = self.optarrays["neb_inner_loop_step_max"]
         neb_inner_loop_step_for_scale = self.optarrays["neb_inner_loop_step_for_scale"]
@@ -796,11 +815,16 @@ class MAPNEBGPRMover(Motion):
             )
 
         # neb move using gradient of LINEBGradient
+        # See: J. Chem. Phys. 128, 134106 (2008) for the performance of different optimization algorithms.
         if self.options["mode"] == "verlet":
-            self.neb_step_projected_verlet(dt)
+            # This is Quick-min algorithm in J. Chem. Phys. 128, 134106 (2008)
+            self.neb_step_projected_verlet()
         elif self.options["mode"] == "cg":
             # move one step using conjugate gradient method 
             self.neb_step_cg()
+        elif self.options["mode"] == "FIRE":
+            # move one step using FIRE method.
+            self.neb_step_FIRE()
         else:
             softexit.trigger(
                 status="bad",
@@ -824,15 +848,10 @@ class MAPNEBGPRMover(Motion):
             outrange_bead_index_list,
         )
 
-    def neb_step_projected_verlet(self, dt):
+    def neb_step_projected_verlet(self):
         """
         use the projected velocity verlet algorithm to optimize the bead position 
         """
-        # record old position
-        self.old_x = np.copy(self.x)
-        self.old_f_mscaled = np.copy(self.f_mscaled)  # record old force
-        self.old_action = self.action
-
         x_mscaled = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
@@ -843,7 +862,7 @@ class MAPNEBGPRMover(Motion):
             self.velocity_mscaled,
             (self.action, self.grad_mscaled),
             self.nebgm,
-            dt
+            self.dt
         )
         self.f_mscaled = -self.grad_mscaled
 
@@ -857,10 +876,6 @@ class MAPNEBGPRMover(Motion):
         """
         use the conjugate gradient algorithm to optimize the bead position.
         """
-        self.old_x = np.copy(self.x)
-        self.old_f_mscaled = np.copy(self.f_mscaled)
-        self.old_action = self.action 
-
         x_mscaled = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
@@ -881,11 +896,45 @@ class MAPNEBGPRMover(Motion):
         )
         self.beads.q[:, self.fixatoms_mask] = self.x
 
-    def neb_step_conjugate_gradient(self, dt):
+    def neb_step_FIRE(self):
         """
-        use the conjugate gradient method to optimize the bead position
+        use the FIRE (Fast Inertial Relaxation Engine) algorithm to optimize the bead position.
         """
-        # linear search along the search direction 
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        fdf0 = (self.action, self.grad_mscaled)
+        # one step using FIRE. 
+        # the x_mscaled will be updated in the mintools.FIRE() code.
+        self.velocity_mscaled, self.alpha, self.Ndn, self.Nup, self.dt  = \
+              ipi.utils.mintools.FIRE(x_mscaled,
+                                self.nebgm,
+                                fdf0,
+                                self.velocity_mscaled,
+                                self.alpha,
+                                self.Ndn,
+                                self.Nup,
+                                self.dt,
+                                self.maxstep,
+                                self.dtmax,
+                                self.dtmin,
+                                self.Ndelay,
+                                self.Nmax,
+                                self.finc,
+                                self.fdec,
+                                self.alpha0,
+                                self.alpha_shrink
+                                )
+        # update mass scaled gradient, force and action for LI-NEB 
+        # FIRE() code has already called fdf(x) in the code.
+        self.action = self.nebgm.action 
+        self.grad_mscaled = self.nebgm.neb_optimization_gradient
+        self.f_mscaled = -self.grad_mscaled
+        # update new position 
+        self.x = x_mscaled / np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
 
     def update_GPR_model_one_bead_subroutine(
         self, training_x, bead_index_for_update, training_bead_forces
@@ -1600,6 +1649,7 @@ class LINEBGradientMapper(object):
         self.neb_optimization_force = np.copy(neb_optimization_force)
 
         neb_optimization_gradient = -neb_optimization_force
+        self.neb_optimization_gradient = neb_optimization_gradient
 
         return self.action, neb_optimization_gradient
 
