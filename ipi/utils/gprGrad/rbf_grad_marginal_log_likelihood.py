@@ -39,7 +39,7 @@ class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
         num_data = function_dist.event_shape.numel()
         return res.div_(num_data)
     
-    def log_prob_likelihood(self, normal_dist: MultitaskMultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -6)):
+    def log_prob_likelihood(self, normal_dist: MultitaskMultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -4)):
         """
         compute the log probability of observable (target).
         Perform the pseudo-inverse when the covariance matrix is ill-conditioned.

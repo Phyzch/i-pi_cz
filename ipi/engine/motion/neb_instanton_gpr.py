@@ -64,7 +64,7 @@ class MAPNEBGPRMover(Motion):
         prefix="neb_instanton",
         tolerances={"gradient": 5e-3, "gradient_end_bead": 1e-2},
         energy_shift=0.00,
-        FIRE={"tmax": 10.0, "tmin": 0.02, 
+        FIRE={"tmax": 4.0, "tmin": 0.1, 
               "Ndelay": 5, "finc": 1.1, "fdec": 0.5, 
               "alpha0": 0.15, "alpha_shrink": 0.99, 
               "Nmax": 100, "maxstep": 100,
@@ -90,7 +90,7 @@ class MAPNEBGPRMover(Motion):
         VSC_spring_k_max_ratio=3.00,
         alt_out=5,
         gpr_relative_force_error_criterion=0.05,
-        gpr_absolute_force_error_criterion=0.001,
+        gpr_absolute_force_error_criterion=0.002,
         gpr_trust_region=0.1,
         minimum_trust_region= 0.05,
         distance_cutoff_for_training_data= 0.05,
@@ -105,6 +105,7 @@ class MAPNEBGPRMover(Motion):
         read_initial_gpr_training_data=False,
         final_hessian_bool=False,
         ab_initio_hessian_bool=False,
+        test_gpr_model_along_instanton_path= False,
         read_gpr_hessian_folder="None",
         add_new_hessian_data_bool=False,
         candidate_hessian_data_number=20,
@@ -131,10 +132,13 @@ class MAPNEBGPRMover(Motion):
         self.options["final_hessian_bool"] = final_hessian_bool
         self.options["ab_initio_hessian_bool"] = ab_initio_hessian_bool
         self.options["read_initial_gpr_training_data"] = read_initial_gpr_training_data
+        # for testing gpr prediction along lineb path.
+        self.options["test_gpr_model_along_instanton_path"] = test_gpr_model_along_instanton_path
         # for store ab initio hessians used for gpr hessian model.
         self.options["read_gpr_hessian_folder"] = read_gpr_hessian_folder
         self.options["add_new_hessian_data_bool"] = add_new_hessian_data_bool
         self.options["candidate_hessian_data_number"] = candidate_hessian_data_number
+
 
         # minimum value for allowed trust region ratio.
         # This is to prevent the algorithm making the trust region ratio too small.
@@ -928,7 +932,7 @@ class MAPNEBGPRMover(Motion):
         # one step using FIRE. 
         # the x_mscaled will be updated in the mintools.FIRE() code.
         self.velocity_mscaled, self.alpha, self.Ndn, self.Nup, self.time_step  = \
-              ipi.utils.nebinstool.FIRE_NEB(x_mscaled,
+              ipi.utils.mintools.FIRE(x_mscaled,
                                 self.nebgm,
                                 fdf0,
                                 self.velocity_mscaled,
@@ -1264,12 +1268,14 @@ class MAPNEBGPRMover(Motion):
 
         kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
         
+        min_max_force = np.power(10.0, -3)
         # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2. We use stability criterion to set it as 0.5 (empirical value).
         m_H = 1837  # mass of hydrogen in atomic unit.
         # check the left end bead.
         max_force2 = np.max(
             np.abs(self.nebgm.rbf[0])
         )  # maximum gradient of left end bead.
+        max_force2 = np.max([min_max_force, max_force2])
         val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
         left_kappa_scale = kappa_ratio / val2
         self.optarrays["kappa"]["left"] = (
@@ -1285,6 +1291,7 @@ class MAPNEBGPRMover(Motion):
         max_force3 = np.max(
             np.abs(self.nebgm.rbf[-1])
         )  # maximum gradient of right end bead
+        max_force3 = np.max([min_max_force, max_force3])
         val3 = max_force3 * np.power(dt, 2) * right_kappa / np.sqrt(m_H)
         right_kappa_scale = kappa_ratio / val3
         self.optarrays["kappa"]["right"] = (
@@ -2022,6 +2029,7 @@ class RP_MAP(object):
         self.prefix = nebmover.options["prefix"]
         self.final_hessian_bool = nebmover.options["final_hessian_bool"]
         self.ab_initio_hessian_bool = nebmover.options["ab_initio_hessian_bool"]
+        self.test_gpr_model_along_instanton_path = nebmover.options["test_gpr_model_along_instanton_path"]
 
         self.energy_shift = nebmover.optarrays["energy_shift"]
         self.output_maker = nebmover.output_maker
@@ -2673,7 +2681,8 @@ class RP_MAP(object):
 
         # optimize GPR model to make sure it will give accurate force for dynamics.
         # Separate point as test set and training set, add training set until the generalization error is small.
-        self.optimize_GPR_model_for_dynamics_evolution()
+        if self.test_gpr_model_along_instanton_path:
+            self.optimize_GPR_model_for_dynamics_evolution()
 
         # start classical dynamics along minimum action path (MEP) on the inverted potential.
         t_list, v_list, x_list = self.classical_dynamics_along_MAP()

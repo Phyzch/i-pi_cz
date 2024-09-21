@@ -76,8 +76,8 @@ class InputNebInstGPR(InputDictionary):
                             "Nmax",
                             "maxstep",
                             "neb_step_update_kappa"],
-                "default": [10.0,
-                            0.02,
+                "default": [4.0,
+                            0.1,
                             5,
                             1.1,
                             0.5,
@@ -315,7 +315,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.001,
+                "default": 0.002,
                 "help": """
                 convergence criterion for gpr outer loop. 
                 When |f^GPR - f| < gpr_absolute_force_error_criterion, 
@@ -413,6 +413,20 @@ class InputNebInstGPR(InputDictionary):
                 "help": "Bool variable to decide whether to read the stored training data.",
             },
         ),
+
+        "test_gpr_model_along_instanton_path":(
+            InputValue,
+            {
+                "dtype": bool, 
+                "default": False,
+                "help": """
+                bool variable to decide whether test the gpr model for data point along LINEB path.
+                default is False, but can turn it on if you suspect the GPR model prediction along force is not accurate,
+                which causes the temperature predicted to be wrong.
+                """
+            }
+        ),
+
         "read_gpr_hessian_folder": (
             InputValue,
             {
@@ -508,6 +522,9 @@ class InputNebInstGPR(InputDictionary):
         self.gpr_SE_kernel_number.store(options["gpr_SE_kernel_number"])
         self.read_initial_gpr_training_data.store(
             options["read_initial_gpr_training_data"]
+        )
+        self.test_gpr_model_along_instanton_path.store(
+            options["test_gpr_model_along_instanton_path"]
         )
         # about computing hessian for gpr model & rate calculation.
         self.read_gpr_hessian_folder.store(options["read_gpr_hessian_folder"])
