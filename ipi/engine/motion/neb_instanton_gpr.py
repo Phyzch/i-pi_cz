@@ -103,9 +103,9 @@ class MAPNEBGPRMover(Motion):
         },
         gpr_SE_kernel_number=1,
         read_initial_gpr_training_data=False,
+        test_gpr_model_along_instanton_path= False,
         final_hessian_bool=False,
         ab_initio_hessian_bool=False,
-        test_gpr_model_along_instanton_path= False,
         read_gpr_hessian_folder="None",
         add_new_hessian_data_bool=False,
         candidate_hessian_data_number=20,
@@ -340,6 +340,11 @@ class MAPNEBGPRMover(Motion):
             print("Skip neb stage. Go directly into instanton stage. \n")
         else:
             self.rp_map.skip_neb_mode_bool = False
+
+        # the file that store the 
+        if self.options["stage"] == "neb" and step == 0:
+            optimization_gradient_file_name = "optimization_gradient.txt"
+            self.optimization_gradient_file = open(optimization_gradient_file_name, "w")
 
         # Check if we restarted a converged calculation or the calculation converged.
         if self.options["stage"] == "converged":
@@ -673,7 +678,6 @@ class MAPNEBGPRMover(Motion):
         if not early_stop_bool:
             print("@LI-NEB converge on GPR PES.")
 
-        self.neb_optimization_step = self.neb_optimization_step + neb_step 
 
         return early_stop_bool, outrange_bead_index_list
 
@@ -755,6 +759,16 @@ class MAPNEBGPRMover(Motion):
                 tolerances["gradient_end_bead"],
             ),
             verbosity.low,
+        )
+
+        # record total number of optimization step
+        self.neb_optimization_step = self.neb_optimization_step + 1
+
+        # store the optimization gradient info.
+        self.optimization_gradient_file.write(
+            str(self.neb_optimization_step) + "  "
+            + str(grad_max_inner_bead) + "  "
+            + str(grad_max_end_bead) + "\n"
         )
 
         # print("old action: " + str(self.old_action) + "  new action: " + str(self.action))
@@ -1199,6 +1213,8 @@ class MAPNEBGPRMover(Motion):
             "@Exit step: NEB_instanton: path optimization converged. Step %i \n" % step,
             verbosity.low,
         )
+
+        self.optimization_gradient_file.close()
 
         # print neb beads geometry and energy.
         ipi.utils.nebinstool.print_neb_instanton_geo(
