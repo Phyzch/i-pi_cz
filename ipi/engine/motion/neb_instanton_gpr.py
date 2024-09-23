@@ -2470,6 +2470,17 @@ class RP_MAP(object):
         print("The force error along LI-NEB path is small. Pass the test.")
         print("\n")
 
+        # update the data in the gpr training data folder.
+        train_x = self.gpr_model.train_cartesian_inputs
+        train_V = self.gpr_model.train_cartesian_targets[:, 0]
+        train_V_to_store = train_V + self.energy_shift
+        train_grad = self.gpr_model.train_cartesian_targets[:, 1:]
+        train_f_to_store = -train_grad
+
+        ipi.utils.nebinstgprtool.store_training_data(
+            train_x, train_V_to_store, train_f_to_store, prefix="neb_final_gpr_training"
+        )
+
     def construct_gpr_hessian_model(self):
         """
         construct the gpr_hessian model, which will predict hessian information using Gaussian Process Regression.
