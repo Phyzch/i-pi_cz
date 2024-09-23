@@ -2628,6 +2628,17 @@ class RP_MAP(object):
                 (1, 0, 2),
             )
 
+            # add new hessian data (+ pot & gradients) into gpr_hessian model.
+            ipi.utils.nebinstgprtool.add_hessian_data_to_model(
+                self.gpr_hessian_model,
+                new_hessian_point_x,
+                new_pots,
+                new_grads,
+                new_hessians,
+                self.energy_shift,
+                retrain_bool=True,
+            )
+
             # create a new data folder with up to date potential, gradient & hessian data.
             # the newly computed hessian will also be stored in this file.
             self.data_destination_folder = (
@@ -2649,16 +2660,7 @@ class RP_MAP(object):
                 self.data_destination_folder,
             )
 
-            # add new hessian data (+ pot & gradients) into gpr_hessian model.
-            ipi.utils.nebinstgprtool.add_hessian_data_to_model(
-                self.gpr_hessian_model,
-                new_hessian_point_x,
-                new_pots,
-                new_grads,
-                new_hessians,
-                self.energy_shift,
-                retrain_bool=True,
-            )
+
 
 
     def predict_ring_polymer_hessians_using_gpr(self):
