@@ -1085,6 +1085,22 @@ class DummyOptimizer:
                 * imvector[:]
             )
 
+        # print initial geometry: extension along the instanton path.
+        print_instanton_geo(
+                "imfreq",
+                0,
+                self.beads.nbeads,
+                self.beads.natoms,
+                self.beads.names,
+                self.beads.q,
+                self.forces.f,
+                self.forces.pots,
+                self.cell,
+                self.optarrays["energy_shift"],
+                self.output_maker,
+            )        
+
+
     def exitstep(self, d_x_max, step):
         """Exits the simulation step. Computes time, checks for convergence."""
         self.qtime += time.time()

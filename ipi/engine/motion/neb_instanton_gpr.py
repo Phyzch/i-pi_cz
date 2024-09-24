@@ -31,6 +31,7 @@ import ipi.utils.gpr_hessian_tools
 import ipi.utils.mintools
 import os
 from timeit import default_timer as timer
+import threading 
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
@@ -305,6 +306,10 @@ class MAPNEBGPRMover(Motion):
                 self.optarrays["energy_shift"],
                 self.output_maker,
             )
+
+            # check number of active threads in the current python process
+            num_threads = threading.active_count() 
+            print(f"Number of threads used by the python program: {num_threads}")
 
             # The instanton path energy is defined relative to the energy shift.
             # We perform the transformation only when we start the initial calculation. Not for restarting the calculation.
@@ -2142,6 +2147,9 @@ class RP_MAP(object):
                   v_list: a list of velocity of trajectories.
                   x_list: a list of coordinate of trajectories.
         """
+        #FIXME: for benchmark 
+        start_time = timer()
+        
         t, r_distance = 0, 0  # time & normalized distance along path.
         x = np.copy(self.neb_beads.q[0])  # coordinate
         v = np.zeros([3 * self.neb_beads.natoms])  # velocity
@@ -2184,6 +2192,12 @@ class RP_MAP(object):
         pot_list = np.array(pot_list)
 
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)
+
+        end_time = timer()
+        time_elapsed = (
+            end_time - start_time
+        ) / 60  # time elapsed in minutes
+        print("the running time for the constrained dynamics along the path is: " + str(time_elapsed) + " min.")
 
         return t_list, v_list, x_list
 
