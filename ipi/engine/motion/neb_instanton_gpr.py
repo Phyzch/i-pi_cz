@@ -564,70 +564,48 @@ class MAPNEBGPRMover(Motion):
 
         # check overfitting on the unseen test data to test over-fitting.
         print("@initial gpr training info: Test Overfitting of GPR model.")
+        nbeads = self.beads.nbeads
 
-        test_q = self.beads.q[0] * 1 / 4 + self.beads.q[1] * 3 / 4
-        print("q[0] * 1/4 + q[1] * 3/4")
-        (
-            predicted_test_V_shift,
-            predicted_test_force,
-            ab_initio_test_pot,
-            ab_initio_test_force,
-        ) = ipi.utils.nebinstgprtool.check_gpr_fitting_error(
-            self.gpr_beads,
-            self.gpr_forces,
-            self.gpr_model,
-            self.optarrays["energy_shift"],
-            test_q,
-        )
+        if nbeads >= 2:
+            test_q = self.beads.q[0] * 1 / 4 + self.beads.q[1] * 3 / 4
+            print("q[0] * 1/4 + q[1] * 3/4")
+            (
+                predicted_test_V_shift,
+                predicted_test_force,
+                ab_initio_test_pot,
+                ab_initio_test_force,
+            ) = ipi.utils.nebinstgprtool.check_gpr_fitting_error(
+                self.gpr_beads,
+                self.gpr_forces,
+                self.gpr_model,
+                self.optarrays["energy_shift"],
+                test_q,
+            )
 
-        test_q = self.beads.q[3] * 1 / 4 + self.beads.q[2] * 3 / 4
-        print("q[3] * 1/4 + q[2] * 3/4")
-        (
-            predicted_test_V_shift,
-            predicted_test_force,
-            ab_initio_test_pot,
-            ab_initio_test_force,
-        ) = ipi.utils.nebinstgprtool.check_gpr_fitting_error(
-            self.gpr_beads,
-            self.gpr_forces,
-            self.gpr_model,
-            self.optarrays["energy_shift"],
-            test_q,
-        )
+            self.ab_initio_bead_calculation_number = (
+                self.ab_initio_bead_calculation_number + 1
+            )   
 
-        test_q = self.beads.q[4] * 1 / 4 + self.beads.q[5] * 3 / 4
-        print("q[4] * 1/4 + q[5] * 3/4")
-        (
-            predicted_test_V_shift,
-            predicted_test_force,
-            ab_initio_test_pot,
-            ab_initio_test_force,
-        ) = ipi.utils.nebinstgprtool.check_gpr_fitting_error(
-            self.gpr_beads,
-            self.gpr_forces,
-            self.gpr_model,
-            self.optarrays["energy_shift"],
-            test_q,
-        )
+        if nbeads >= 4:
+            test_q = self.beads.q[3] * 1 / 4 + self.beads.q[2] * 3 / 4
+            print("q[3] * 1/4 + q[2] * 3/4")
+            (
+                predicted_test_V_shift,
+                predicted_test_force,
+                ab_initio_test_pot,
+                ab_initio_test_force,
+            ) = ipi.utils.nebinstgprtool.check_gpr_fitting_error(
+                self.gpr_beads,
+                self.gpr_forces,
+                self.gpr_model,
+                self.optarrays["energy_shift"],
+                test_q,
+            )
 
-        test_q = self.beads.q[7] * 1 / 4 + self.beads.q[8] * 3 / 4
-        print("q[7] * 1/4 + q[8] * 3/4")
-        (
-            predicted_test_V_shift,
-            predicted_test_force,
-            ab_initio_test_pot,
-            ab_initio_test_force,
-        ) = ipi.utils.nebinstgprtool.check_gpr_fitting_error(
-            self.gpr_beads,
-            self.gpr_forces,
-            self.gpr_model,
-            self.optarrays["energy_shift"],
-            test_q,
-        )
+            self.ab_initio_bead_calculation_number = (
+            self.ab_initio_bead_calculation_number + 1
+            )
 
-        self.ab_initio_bead_calculation_number = (
-            self.ab_initio_bead_calculation_number + 4
-        )
         pass
 
     def neb_loop(self, outer_loop_step):
