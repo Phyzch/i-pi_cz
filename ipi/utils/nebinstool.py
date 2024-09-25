@@ -207,7 +207,7 @@ def interpolate_ring_polymer_beads(
         rp_t = rp_t_list[i]
 
         for t_index in range(t_index_start, t_list_len - 1):
-            if rp_t > t_list[t_index] and rp_t < t_list[t_index + 1]:
+            if rp_t >= t_list[t_index] and rp_t < t_list[t_index + 1]:
                 # interpolate using velocity and acceleration.
                 dt = t_list[t_index + 1] - t_list[t_index]
                 rp_dt = rp_t - t_list[t_index]
