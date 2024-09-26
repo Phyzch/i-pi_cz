@@ -56,10 +56,20 @@ class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
 
         # get log determinant and first part of quadratic form
         covar_tensor = covar.to_dense() 
-        logdet = torch.logdet(covar_tensor) # log(|K + sigma^2 I|)
-        
-        pseudo_inverse_covar = torch.linalg.pinv(covar_tensor, atol= singular_value_cutoff) 
-        inv_quad = diff @ pseudo_inverse_covar @ diff # y^t (K+ sigma^2 I)^-1 y
+
+        covar_eigval, _ = torch.lobpcg(covar_tensor, k= 1, largest= False)
+        covar_eigval_min = torch.min(torch.real(covar_eigval))
+
+        if covar_eigval_min < singular_value_cutoff:
+            # the covariance matrix is ill-conditioned. 
+            logdet = torch.logdet(covar_tensor) # log(|K + sigma^2 I|)
+            
+            pseudo_inverse_covar = torch.linalg.pinv(covar_tensor, atol= singular_value_cutoff) 
+            inv_quad = diff @ pseudo_inverse_covar @ diff # y^t (K+ sigma^2 I)^-1 y
+        else:
+            # the covariance matrix is well-conditioned. Using CG method to compute logdet & inv_quad
+            covar = covar.evaluate_kernel()
+            inv_quad, logdet = covar.inv_quad_logdet(inv_quad_rhs=diff.unsqueeze(-1), logdet=True)
 
         res = -0.5 * sum([inv_quad, logdet, diff.size(-1) * math.log(2 * math.pi) ])
         return res 

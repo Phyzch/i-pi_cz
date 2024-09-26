@@ -31,7 +31,8 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
         
         # pseudo-inverse the covariance matrix.
         train_train_covar_tensor = train_train_covar.to_dense()
-        covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
+        # compute eigenvalues using lobpcg: faster for sparse matrix.
+        covar_eigval, _ = torch.lobpcg(train_train_covar_tensor, k=1, largest= False)
         covar_eigval_min = torch.min(torch.real(covar_eigval)) 
         if covar_eigval_min < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
@@ -61,7 +62,7 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
 
         # pseudo-inverse the covariance matrix
         train_train_covar_tensor = train_train_covar.to_dense()
-        covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
+        covar_eigval, _ = torch.lobpcg(train_train_covar_tensor, k= 1, largest= False)
         covar_eigval_min = torch.min(torch.real(covar_eigval)) 
 
         if covar_eigval_min < singular_value_cutoff:
