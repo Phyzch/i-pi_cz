@@ -1000,3 +1000,65 @@ def store_training_data_in_gpr_hessian_model(
     )
 
     return prefix
+
+def store_training_hyperparameter_in_gpr_model(
+        gpr_model: GPModelWithDerivativesWrapper,
+        folder_path
+):
+    """
+    store the hyper-parameter of the trained gpr model
+    """
+    file_name = "gpr.pth"
+    file_path = os.path.join(folder_path, file_name)
+
+    gpr_model.save_model(file_path)
+
+def load_training_hyperparameter_in_gpr_model(
+        gpr_model: GPModelWithDerivativesWrapper,
+        folder_path
+):
+    """
+    load the hyper-parameter of the trained gpr model
+    """
+    file_name = "gpr.pth"
+    file_path = os.path.join(folder_path, file_name)
+
+    if os.path.exists(file_path):
+        gpr_model.load_model(file_path)
+        model_hyperparameter_exists = True 
+    else:
+        print(f"The file {file_path} does not exists. Can not load hyper-parameter for gpr model. Need to train it.")
+        model_hyperparameter_exists = False 
+
+    return model_hyperparameter_exists
+
+def store_training_hyperparameter_in_gpr_hessian_model(
+        gpr_hessian_model: GPModelWithHessiansWrapper,
+        folder_path
+):
+    """
+    store the hyper-parameter of the trained gpr model 
+    """
+    file_name = "gpr_hessian.pth"
+    file_path = os.path.join(folder_path, file_name)
+
+    gpr_hessian_model.save_model(file_path)
+
+def load_training_hyperparameter_for_gpr_hessian_model(
+        gpr_hessian_model: GPModelWithHessiansWrapper,
+        folder_path
+):
+    """
+    load the hyper-parameter of the trained gpr model.
+    """
+    file_name = "gpr_hessian.pth"
+    file_path = os.path.join(folder_path, file_name)
+
+    if os.path.exists(file_path):
+        gpr_hessian_model.load_model(file_path)
+        model_hyperparameter_exists = True
+    else:
+        print(f"The file {file_path} does not exists. Can not load hyper-parameter for gpr hessian model. Need to train it.")
+        model_hyperparameter_exists = False 
+    
+    return model_hyperparameter_exists

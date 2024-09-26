@@ -9,7 +9,8 @@ import gpytorch
 import numpy as np
 from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 from .gprGrad.rbf_grad_gp import GPModelWithDerivatives, train_gpr
-
+import os 
+import shutil
 
 def predict_latent_function_gp_with_derivative(
     model: GPModelWithDerivatives, test_inputs, covar_bool=False
@@ -403,6 +404,7 @@ class GPModelWithDerivativesWrapper:
         kernel_outputscale: np.ndarray,
         kernel_lengthscale_ratio: np.ndarray,
         noise_std,
+        train_bool= True
     ):
         """
         initialize the model.
@@ -518,7 +520,14 @@ class GPModelWithDerivativesWrapper:
             moving_likelihood_noise_variance,
         )
 
-        # train self.gpr_model() to get optimized hyperparameter
+        if train_bool:   
+            # train self.gpr_model() to get optimized hyperparameter
+            self.train_gpr()
+
+    def train_gpr(self):
+        """
+        train the gpr model.
+        """
         train_gpr(self.gpr_model)
 
     def transform_cartesian_noise_to_gpr_model_noise(self, noise_std):
@@ -796,3 +805,29 @@ class GPModelWithDerivativesWrapper:
         )
 
         return free_moving_beads_internal_coordinate
+
+    # ---- save and load gaussian process regression model -----
+    def save_model(self, file_path):
+        """
+        save the hyper-parameter of the gpr model.
+        """
+        state_dict = self.gpr_model.state_dict() 
+
+        # save state dict.
+        if os.path.exists(file_path + "#"):
+            shutil.rmtree(file_path + "#")
+        if os.path.exists(file_path):
+            os.rename(file_path, file_path + "#")
+        torch.save(state_dict, file_path)
+    
+    def load_model(self, file_path):
+        """
+        load the hyper-parameter of the gpr model
+        """
+        if os.path.exists(file_path):
+            state_dict = torch.load(file_path)
+            self.gpr_model.load_state_dict(state_dict)
+            print("successfully load the gpr model in gprtools.py")
+        else:
+            raise(FileExistsError, f"unable to load the gpr model in gprtools.py at file location: {file_path}")
+        

@@ -13,7 +13,8 @@ from .gprHessian.RBFHessian_utils import (
     transform_1d_train_targets_into_pots_grads_hessians,
 )
 import ipi.utils.gprHessian.RBFHessian_gp
-
+import os 
+import shutil
 
 class TransformTrainingTarget(object):
     """
@@ -402,6 +403,7 @@ class GPModelWithHessiansWrapper:
         ref_mean_V: np.ndarray = np.array([]),
         ref_mean_grad_x: np.ndarray = np.array([]),
         ref_mean_hessian_x: np.ndarray = np.array([]),
+        train_bool= True
     ):
         """
         :param: train_x: [M, 3 * natom]. initial M training points x in Cartesian coordinate.
@@ -604,8 +606,9 @@ class GPModelWithHessiansWrapper:
             ref_mean_hessian_q_tensor,
         )
 
-        # train the gaussian process regression model.
-        ipi.utils.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
+        if train_bool:
+            # train the gaussian process regression model.
+            ipi.utils.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
 
     def compute_noise_var(self, noise_std):
         """
@@ -1188,3 +1191,28 @@ class GPModelWithHessiansWrapper:
             gpr_hessian_lengthscale_list,
             gpr_hessian_lengthscale_ratio_list,
         )
+
+    # ---- save and load gaussian process regression model ------- 
+    def save_model(self, file_path):
+        """
+        save the hyper-parameter of the gpr model.
+        """
+        state_dict = self.gpr_model.state_dict() 
+
+        # save state dict.
+        if os.path.exists(file_path + "#"):
+            shutil.rmtree(file_path + "#")
+        if os.path.exists(file_path):
+            os.rename(file_path, file_path + "#")
+        torch.save(state_dict, file_path)
+    
+    def load_model(self, file_path):
+        """
+        load the hyper-parameter of the gpr model
+        """
+        if os.path.exists(file_path):
+            state_dict = torch.load(file_path)
+            self.gpr_model.load_state_dict(state_dict)
+            print("successfully load the gpr model in gpr_hessian_tools.py")
+        else:
+            raise(FileExistsError, f"unable to load the gpr model in gpr_hessian_tools.py at file location: {file_path}")

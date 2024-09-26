@@ -461,6 +461,23 @@ class InputNebInstGPR(InputDictionary):
                   These hessian data will be added to the gpr_hessian model.",
             },
         ),
+
+        "train_hessian_model_bool": (
+            InputValue,
+            {
+                "dtype": bool,
+                "default": True,
+                "help": """
+                option to train GPR hessian model. 
+                Training GPR model can be expensive when model size gets large. ~O(N^3).
+                Because we have to compute inverse of the matrix & log determinant of the matrix 
+                at each step of optimization. 
+                It's not necessary to train GPR model each time we add more data, only do it 
+                when the performance of gpr model degrades.
+                """
+            }
+        ),
+
         "variable_spring_constant": (
             InputValue,
             {
@@ -532,6 +549,7 @@ class InputNebInstGPR(InputDictionary):
         self.candidate_hessian_data_number.store(
             options["candidate_hessian_data_number"]
         )
+        self.train_hessian_model_bool.store(options["train_hessian_model_bool"])
 
         # for stability of gaussian process regression model
         self.minimum_trust_region.store(
