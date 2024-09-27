@@ -2564,16 +2564,11 @@ class RP_MAP(object):
             )
 
             # only 1 hessian training data. 
-            hessian_data_list = np.array([ref_hessians])
-            training_data_num_without_hessian = len(cartesian_coordinate_x)
-            hessian_index_list = np.array([ training_data_num_without_hessian ])
-            
-            # add data point with hessian into the list of exisiting data point with only pot & force.
-            cartesian_coordinate_x = np.concatenate([cartesian_coordinate_x, [first_hessian_data_x]], axis= 0)
-            training_V_shifted = np.concatenate([training_V_shifted, ref_V_shifted])
-            training_grads = np.concatenate([training_grads, [ref_grads]], axis= 0)
+            hessian_data_list = np.array([])
+            hessian_index_list = np.array([])
 
-            # construct gpr hessian model. We have to train it here.
+            # construct gpr hessian model. 
+            # We have to train it here. First train with only potential and gradient data.
             self.gpr_hessian_model = (
                 ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
                     cartesian_coordinate_x,
@@ -2594,6 +2589,23 @@ class RP_MAP(object):
                     ref_mean_hessian_x= ref_hessians,
                     train_bool= True
                 )
+            )
+
+            # After train the model with only potential and gradient,
+            # the hyper-parameter should be close to the minimum point after adding hessian data.
+            # Now add hessian data & re-train the model.
+            new_pots = ref_V_shifted + self.energy_shift
+            new_grads = np.array([ref_grads])
+            new_hessians = np.array([ref_hessians])
+            new_hessian_point_x = np.array([first_hessian_data_x])
+            ipi.utils.nebinstgprtool.add_hessian_data_to_model(
+                self.gpr_hessian_model,
+                new_hessian_point_x,
+                new_pots,
+                new_grads,
+                new_hessians,
+                self.energy_shift,
+                retrain_bool= self.train_hessian_model_bool
             )
 
         else:
@@ -2659,11 +2671,8 @@ class RP_MAP(object):
                     )
             else:
                 # the hyper-parameter of the gpr hessian model does not exist. Must train the model.
-                self.gpr_hessian_model.train_model()
-                # store the hyper-parameter after the training
-                ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
-                    self.gpr_hessian_model, self.read_gpr_hessian_folder
-                )
+                raise(RuntimeError, "The model hyper-parameter gpr_hessian.pth does not exist. Optimizing hessian data directly\
+                      without pre-trained hyper-parameter can be inefficient. Please make sure to provide pre-trained hyper-parameter")
         
         end_time = timer()
         time_elapsed = (end_time - start_time) / 60
@@ -2716,17 +2725,19 @@ class RP_MAP(object):
                     len(candidate_hessian_point_x) == self.candidate_hessian_data_number
                 ), "the candidate hessian data point number read from file is not the same as the one in input.xml"
 
-            assert (
-                np.max(self.new_hessian_data_index) < self.candidate_hessian_data_number
-            ), "the index of new hessian data point should not be larger than the number of candidate hessian data point"
+            if len(self.new_hessian_data_index) != 0:
+                assert (
+                    np.max(self.new_hessian_data_index) < self.candidate_hessian_data_number
+                ), "the index of new hessian data point should not be larger than the number of candidate hessian data point"
 
-            common_index = np.intersect1d(
-                self.new_hessian_data_index, self.hessian_index_in_candidate_list
-            )
-            assert (
-                len(common_index) == 0
-            ), "At least one data point in new_hessian_data_index coincide with the one point that we have already computed hessian.\
-                please double check new_hessian_data_index entry in input.xml"
+            if len(self.new_hessian_data_index) != 0 and len(self.hessian_index_in_candidate_list) != 0: 
+                common_index = np.intersect1d(
+                    self.new_hessian_data_index, self.hessian_index_in_candidate_list
+                )
+                assert (
+                    len(common_index) == 0
+                ), "At least one data point in new_hessian_data_index coincide with the one point that we have already computed hessian.\
+                    please double check new_hessian_data_index entry in input.xml"
 
             if len(self.new_hessian_data_index) > 0:
                 # the new data point that we will compute hessian.
@@ -2764,6 +2775,8 @@ class RP_MAP(object):
                 else:
                     retrain_bool = False
 
+                if retrain_bool:
+                    start_t = timer()
                 ipi.utils.nebinstgprtool.add_hessian_data_to_model(
                     self.gpr_hessian_model,
                     new_hessian_point_x,
@@ -2773,6 +2786,10 @@ class RP_MAP(object):
                     self.energy_shift,
                     retrain_bool= retrain_bool,
                 )
+                if retrain_bool:
+                    end_t = timer()
+                    time_elapsed = (end_t - start_t) / 60
+                    print(f"the elapsed time for re-training the model is {time_elapsed} min.")
 
             # create a new data folder with up to date potential, gradient & hessian data.
             # the newly computed hessian will also be stored in this file.

@@ -162,7 +162,7 @@ class FixInternalDofs(object):
         self, train_inputs: np.ndarray, grads: np.ndarray, hessians: np.ndarray
     ):
         self.input_dim = train_inputs.shape[1]
-        self.fix_internal_dofs_cutoff = np.power(10.0, -4)
+        self.fix_internal_dofs_cutoff = np.power(10.0, -6)
 
         # check whether coordinate alng certain internal dofs need to be fixed.
         train_inputs_change = np.max(train_inputs, axis=0) - np.min(

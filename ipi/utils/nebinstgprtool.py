@@ -1058,7 +1058,7 @@ def load_training_hyperparameter_for_gpr_hessian_model(
         gpr_hessian_model.load_model(file_path)
         model_hyperparameter_exists = True
     else:
-        print(f"The file {file_path} does not exists. Can not load hyper-parameter for gpr hessian model. Need to train it.")
+        print(f"The file {file_path} does not exist. Can not load hyper-parameter for gpr hessian model. Need to train it.")
         model_hyperparameter_exists = False 
     
     return model_hyperparameter_exists
