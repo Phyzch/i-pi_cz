@@ -159,22 +159,38 @@ class FixInternalDofs(object):
     """
 
     def __init__(
-        self, train_inputs: np.ndarray, grads: np.ndarray, hessians: np.ndarray
+        self, train_inputs: np.ndarray,
+        grads: np.ndarray,
+        hessians: np.ndarray,
+        gpr_fix_internal_dofs_bool: bool,
+        gpr_fix_internal_dofs_cutoff: float
     ):
         self.input_dim = train_inputs.shape[1]
-        self.fix_internal_dofs_cutoff = np.power(10.0, -6)
+        self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
 
         # check whether coordinate alng certain internal dofs need to be fixed.
         train_inputs_change = np.max(train_inputs, axis=0) - np.min(
             train_inputs, axis=0
         )
-        self.fixed_internal_dofs = np.array(
-            [
-                i
-                for i in range(self.input_dim)
-                if train_inputs_change[i] < self.fix_internal_dofs_cutoff
-            ]
-        )
+
+        if np.min(train_inputs_change) < 1e-6 and (not gpr_fix_internal_dofs_bool):
+            print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
+            raise(RuntimeError, "Certain internal dofs of input data is fixed.\
+                   Should turn gpr_fix_internal_dofs_bool on.")
+    
+
+        if gpr_fix_internal_dofs_bool:
+            self.fixed_internal_dofs = np.array(
+                [
+                    i
+                    for i in range(self.input_dim)
+                    if train_inputs_change[i] < self.fix_internal_dofs_cutoff
+                ]
+            )
+        else:
+            self.fixed_internal_dofs = np.array(
+                []
+            )
 
         if len(self.fixed_internal_dofs) != 0:
             self.free_moving_dofs = np.delete(
@@ -403,7 +419,9 @@ class GPModelWithHessiansWrapper:
         ref_mean_V: np.ndarray = np.array([]),
         ref_mean_grad_x: np.ndarray = np.array([]),
         ref_mean_hessian_x: np.ndarray = np.array([]),
-        train_bool= True
+        train_bool= True,
+        gpr_fix_internal_dofs_bool= False,
+        gpr_fix_internal_dofs_cutoff= 1e-4,
     ):
         """
         :param: train_x: [M, 3 * natom]. initial M training points x in Cartesian coordinate.
@@ -512,7 +530,11 @@ class GPModelWithHessiansWrapper:
 
         # Filter the fixed dofs in coordinate (q) and gradients & hessians.
         self.FixingDofs = FixInternalDofs(
-            train_inputs, normalized_train_grad_q, normalized_train_hessians_q
+            train_inputs, 
+            normalized_train_grad_q, 
+            normalized_train_hessians_q,
+            gpr_fix_internal_dofs_bool,
+            gpr_fix_internal_dofs_cutoff
         )
         moving_train_inputs = (
             self.FixingDofs.transform_training_inputs_to_free_moving_dofs(train_inputs)
@@ -1051,10 +1073,12 @@ class GPModelWithHessiansWrapper:
                 self.train_hessian_q = np.concatenate(
                     [self.train_hessian_q, new_train_hessian_q], axis=0
                 )
-            # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
-            self.FixingDofs.update_hessians_for_fixed_dofs(self.train_hessian_q)
         else:
             self.train_hessian_q = new_train_hessian_q
+
+        if len(self.train_hessian_q) > 0:
+            # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
+            self.FixingDofs.update_hessians_for_fixed_dofs(self.train_hessian_q)
 
         # compute noise_covar_factor array for new training data. This new noise covar factor matrix will be added into Gaussian Process Regression model when we optimize hyper-parameters
         (

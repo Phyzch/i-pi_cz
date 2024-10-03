@@ -201,22 +201,37 @@ class FixInternalDofs(object):
     class that fix certain internal dofs in the training data before feeding data into the Gaussian Process Regression model
     """
 
-    def __init__(self, train_inputs: np.ndarray, train_targets: np.ndarray):
+    def __init__(self, train_inputs: np.ndarray, 
+                 train_targets: np.ndarray,
+                 gpr_fix_internal_dofs_bool: bool, 
+                 gpr_fix_internal_dofs_cutoff: float):
         self.input_dim = np.shape(train_inputs)[1]
         self.output_dim = np.shape(train_targets)[1]
-        self.fix_internal_dofs_cutoff = np.power(10.0, -4)
+        self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
 
         # check whether coordinate along certain internal dof is fixed
         train_inputs_change = np.max(train_inputs, axis=0) - np.min(
             train_inputs, axis=0
         )
-        self.fixed_internal_dofs = np.array(
-            [
-                i
-                for i in range(self.input_dim)
-                if train_inputs_change[i] < self.fix_internal_dofs_cutoff
-            ]
-        )
+        
+        if np.min(train_inputs_change) < 1e-6 and (not gpr_fix_internal_dofs_bool):
+            print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
+            raise(RuntimeError, "Certain internal dofs of input data is fixed.\
+                   Should turn gpr_fix_internal_dofs_bool on.")
+
+        if gpr_fix_internal_dofs_bool:
+            self.fixed_internal_dofs = np.array(
+                [
+                    i
+                    for i in range(self.input_dim)
+                    if train_inputs_change[i] < self.fix_internal_dofs_cutoff
+                ]
+            )
+        else:
+            self.fixed_internal_dofs =  np.array(
+                []
+            )
+        
         if len(self.fixed_internal_dofs) != 0:
             self.free_moving_dofs = np.delete(
                 np.arange(self.input_dim), self.fixed_internal_dofs
@@ -404,7 +419,9 @@ class GPModelWithDerivativesWrapper:
         kernel_outputscale: np.ndarray,
         kernel_lengthscale_ratio: np.ndarray,
         noise_std,
-        train_bool= True
+        train_bool= True,
+        gpr_fix_internal_dofs_bool= False,
+        gpr_fix_internal_dofs_cutoff = 1e-4
     ):
         """
         initialize the model.
@@ -495,7 +512,11 @@ class GPModelWithDerivativesWrapper:
         self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
 
         # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
-        self.FixingDofs = FixInternalDofs(train_inputs, normalized_train_targets)
+        self.FixingDofs = FixInternalDofs(train_inputs, 
+                                          normalized_train_targets,
+                                          gpr_fix_internal_dofs_bool,
+                                          gpr_fix_internal_dofs_cutoff
+                                          )
         moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = (
             self.FixingDofs.transform_training_data_to_free_moving_dofs(
                 train_inputs, normalized_train_targets, likelihood_noise_variance

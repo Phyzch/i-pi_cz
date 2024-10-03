@@ -405,6 +405,31 @@ class InputNebInstGPR(InputDictionary):
                 "help": "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. ",
             },
         ),
+
+        "gpr_fix_internal_dofs_bool":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help": """
+                bool variable to decide whether we fix certain internal dofs.
+                This is for the case that certain internal dofs of training data is fixed.
+                The criterion is |q_max - q_min| < cutoff (given by gpr_fix_internal_dofs_cutoff)
+            """
+            }
+        ),
+
+        "gpr_fix_internal_dofs_cutoff":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 1e-4,
+                "help": """
+                cutoff value for fixing internal dofs.
+            """
+            }
+        ),
+
         "read_initial_gpr_training_data": (
             InputValue,
             {
@@ -558,6 +583,14 @@ class InputNebInstGPR(InputDictionary):
 
         self.distance_cutoff_for_training_data.store(
             options["distance_cutoff_for_training_data"]
+        )
+
+        self.gpr_fix_internal_dofs_bool.store(
+            options["gpr_fix_internal_dofs_bool"]
+        )
+
+        self.gpr_fix_internal_dofs_cutoff.store(
+            options["gpr_fix_internal_dofs_cutoff"]
         )
 
         # optarrays

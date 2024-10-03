@@ -796,6 +796,8 @@ def test_gpr_hessian_prediction(
     pots_with_hessian_before_shift,
     grads_with_hessian,
     hessians_data,
+    gpr_fix_internal_dofs_bool,
+    gpr_fix_internal_dofs_cutoff
 ):
     """
     test gaussian process regression model that predict hessian.
@@ -883,6 +885,8 @@ def test_gpr_hessian_prediction(
         ref_mean_V=ref_V,
         ref_mean_grad_x=ref_grads,
         ref_mean_hessian_x=ref_hessians,
+        gpr_fix_internal_dofs_bool= gpr_fix_internal_dofs_bool,
+        gpr_fix_internal_dofs_cutoff= gpr_fix_internal_dofs_cutoff
     )
 
     internal_coordinate_with_hessian = coordinate_transformer.get_internal_coordinate_q(
