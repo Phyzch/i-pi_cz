@@ -152,7 +152,7 @@ def Read_instanton_data(inputt, V00, temp, quiet):
     neb_beads = simulation.syslist[0].motion.beads.copy()
     m = simulation.syslist[0].motion.beads.m.copy()
 
-    nbeads = simulation.syslist[0].motion.optarrays["instanton_bead_number"]
+    nbeads = simulation.syslist[0].motion.optarrays["instanton_bead_number"]  # number of half ring polymer beads.
     natoms = simulation.syslist[0].motion.beads.natoms
 
     hessian = simulation.syslist[0].motion.optarrays["instanton_hessian"]
@@ -178,7 +178,7 @@ def Read_instanton_data(inputt, V00, temp, quiet):
         sys.exit()
     
     h0 = red2comp(hessian, nbeads, natoms)
-    full_rp_beads_q, nbeads, hessian2 = get_double(half_rp_beads_q, nbeads, natoms, h0)  # get position, nbeads and hessian for full ring polymer
+    full_rp_beads_q, nbeads, hessian2 = get_double(half_rp_beads_q, nbeads, natoms, h0)  # get position, nbeads and hessian for full ring polymer. (now nbeads is for full ring polymer)
 
     hessian = hessian2 
     

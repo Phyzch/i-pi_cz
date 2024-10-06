@@ -2631,6 +2631,8 @@ class RP_MAP(object):
             new_grads = np.array([ref_grads])
             new_hessians = np.array([ref_hessians])
             new_hessian_point_x = np.array([first_hessian_data_x])
+            print("We are going to train the gpr model with hessian data.\
+                   This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
             ipi.utils.nebinstgprtool.add_hessian_data_to_model(
                 self.gpr_hessian_model,
                 new_hessian_point_x,
@@ -2700,6 +2702,8 @@ class RP_MAP(object):
                 # we do not have to train it.
                 # however, if desired (setting train_hessian_model_bool == True), we can train it.
                 if (not self.add_new_hessian_data_bool) and self.train_hessian_model_bool:
+                    print("We are going to train the gpr model with hessian data.\
+                   This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
                     self.gpr_hessian_model.train_model() 
                     ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
                         self.gpr_hessian_model, self.read_gpr_hessian_folder
@@ -2807,6 +2811,8 @@ class RP_MAP(object):
                 # add new hessian data (+ pot & gradients) into gpr_hessian model.
                 if self.train_hessian_model_bool:
                     retrain_bool = True 
+                    print("We are going to train the gpr model with hessian data.\
+                        This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
                 else:
                     retrain_bool = False
 
@@ -2912,10 +2918,11 @@ class RP_MAP(object):
                 pots = self.rp_forces.pots
                 grads = -np.copy(dstrip(self.rp_forces.f))
                 hessians = self.rp_hessian
-                ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(
-                    self.gpr_model, self.energy_shift, x, pots, grads, hessians,
-                    self.gpr_fix_internal_dofs_bool, self.gpr_fix_internal_dofs_cutoff
-                )
+                
+                # ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(
+                #     self.gpr_model, self.energy_shift, x, pots, grads, hessians,
+                #     self.gpr_fix_internal_dofs_bool, self.gpr_fix_internal_dofs_cutoff
+                # )
 
             else:
                 # create gpr hessian model either reading data from input file or using training data from gpr model.
