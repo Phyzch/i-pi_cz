@@ -85,7 +85,7 @@ class MAPNEBGPRMover(Motion):
         kappa={"left": 50, "right": 50},
         dynamical_adjust_ratio= {"spring_k": 0.1,
                                  "kappa": 0.2},
-        end_bead_energy_converge_value = 1e-4,
+        end_bead_energy_converge_value = 1e-3,
         variable_spring_constant=False,
         VSC_E_ref=0.00,
         VSC_spring_k_max_ratio=3.00,
