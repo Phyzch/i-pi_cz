@@ -364,7 +364,10 @@ class MAPNEBGPRMover(Motion):
             geometry_info_file_name = "geometry_info.txt"
             self.geometry_info_file = open(geometry_info_file_name, "w")
             self.geometry_info_file.write("step   optimization_step   ab_initio_calculation_number \n")
-
+            
+            action_info_file_name = "action_info.txt"
+            self.action_info_file = open(action_info_file_name, "w")
+            self.action_info_file.write("step  action \n")
 
         # Check if we restarted a converged calculation or the calculation converged.
         if self.options["stage"] == "converged":
@@ -677,12 +680,26 @@ class MAPNEBGPRMover(Motion):
         # print geometry when outer_loop_step % alt = 0. for record.
         self.print_geometry(outer_loop_step)
 
+        # first check the gradient of current geometry before making the move. 
+        # If it pass the criterion, we do not need to start the inner loop.
+        grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
+
+        grad_max_inner_bead = np.amax(grad_norm[1 : self.beads.nbeads - 1])
+        grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
+        # output info about neb calculation.
+        self.neb_instanton_step_info(
+            outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead
+        )
+
+
         print("\n")
         print("@Start outer loop: " + str(outer_loop_step) + "\n")
         while (
             grad_max_inner_bead > tolerances["gradient"]
             or grad_max_end_bead > tolerances["gradient_end_bead"]
         ):
+            neb_step = neb_step + 1  # neb_step == 0: we have not moved the bead.
+            
             (
                 grad_max_inner_bead,
                 grad_max_end_bead,
@@ -690,7 +707,6 @@ class MAPNEBGPRMover(Motion):
                 outrange_bead_index_list,
             ) = self.neb_step(outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead)
 
-            neb_step = neb_step + 1
 
             # beads move out of trust region.
             if early_stop_bool:
@@ -771,13 +787,17 @@ class MAPNEBGPRMover(Motion):
 
         print("\n")
         info(
-            "@Inner step summary: Outer loop # {} , inner loop # {},  max force gradient for inner bead {:4.2e}, (condition {:4.2e}), max force gradient for end bead {:4.2e} (condition {:4.2e})".format(
+            "@Inner step summary: Outer loop # {} , inner loop # {}, \
+              max force gradient for inner bead {:4.2e}, (condition {:4.2e}), \
+              max force gradient for end bead {:4.2e} (condition {:4.2e})\
+              action {} ".format(
                 outer_loop_step,
                 neb_step,
                 grad_max_inner_bead,
                 tolerances["gradient"],
                 grad_max_end_bead,
                 tolerances["gradient_end_bead"],
+                self.action
             ),
             verbosity.low,
         )
@@ -790,6 +810,12 @@ class MAPNEBGPRMover(Motion):
             str(self.neb_optimization_step) + "  "
             + str(grad_max_inner_bead) + "  "
             + str(grad_max_end_bead) + "\n"
+        )
+
+        # store the action info.
+        self.action_info_file.write(
+            str(self.neb_optimization_step) + " "
+            + str(self.action) + "\n"
         )
 
         # print("old action: " + str(self.old_action) + "  new action: " + str(self.action))
@@ -1236,6 +1262,7 @@ class MAPNEBGPRMover(Motion):
         self.optimization_gradient_file.close()
         self.optimization_gradient_outloop_file.close()
         self.geometry_info_file.close()
+        self.action_info_file.close()
 
         # print neb beads geometry and energy.
         ipi.utils.nebinstool.print_neb_instanton_geo(
