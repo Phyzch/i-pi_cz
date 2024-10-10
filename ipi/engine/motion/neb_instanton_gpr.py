@@ -63,7 +63,9 @@ class MAPNEBGPRMover(Motion):
         fixatoms=None,
         mode="verlet",
         prefix="neb_instanton",
-        tolerances={"gradient": 5e-3, "gradient_end_bead": 1e-2},
+        tolerances={"gradient": 5e-3, 
+                    "gradient_end_bead": 1e-2,
+                    "action_forces_sum": 5e-3},
         energy_shift=0.00,
         FIRE={"tmax": 4.0, "tmin": 0.1, 
               "Ndelay": 5, "finc": 1.1, "fdec": 0.5, 
@@ -686,9 +688,15 @@ class MAPNEBGPRMover(Motion):
 
         grad_max_inner_bead = np.amax(grad_norm[1 : self.beads.nbeads - 1])
         grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
+        # amplitude of sum of transverse action force of internal beads.
+        action_forces_sum_amplitude = self.nebgm.action_forces_sum_amplitude
         # output info about neb calculation.
         self.neb_instanton_step_info(
-            outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead
+            outer_loop_step,
+            neb_step, 
+            grad_max_inner_bead,
+            grad_max_end_bead,
+            action_forces_sum_amplitude
         )
 
 
@@ -697,6 +705,7 @@ class MAPNEBGPRMover(Motion):
         while (
             grad_max_inner_bead > tolerances["gradient"]
             or grad_max_end_bead > tolerances["gradient_end_bead"]
+            or action_forces_sum_amplitude > tolerances["action_forces_sum"] 
         ):
             neb_step = neb_step + 1  # neb_step == 0: we have not moved the bead.
             
@@ -706,13 +715,15 @@ class MAPNEBGPRMover(Motion):
                 early_stop_bool,
                 outrange_bead_index_list,
             ) = self.neb_step(outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead)
-
+            
+            action_forces_sum_amplitude = self.nebgm.action_forces_sum_amplitude
 
             # beads move out of trust region.
             if early_stop_bool:
                 break
-
+        
         if not early_stop_bool:
+            # TODO: Now we have to drift the li-neb path 
             print("@LI-NEB converge on GPR PES.")
 
 
@@ -778,7 +789,12 @@ class MAPNEBGPRMover(Motion):
 
 
     def neb_instanton_step_info(
-        self, outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead
+        self, 
+        outer_loop_step, 
+        neb_step, 
+        grad_max_inner_bead, 
+        grad_max_end_bead,
+        action_forces_sum_amplitude
     ):
         """
         output the information about convergence check for each step of neb move
@@ -787,9 +803,10 @@ class MAPNEBGPRMover(Motion):
 
         print("\n")
         info(
-            "@Inner step summary: Outer loop # {} , inner loop # {}, \
-              max force gradient for inner bead {:4.2e}, (condition {:4.2e}), \
-              max force gradient for end bead {:4.2e} (condition {:4.2e})\
+            "@Inner step summary: Outer loop # {} , inner loop # {}, \n \
+              max force gradient for inner bead {:4.2e}, (condition {:4.2e}), \n \
+              max force gradient for end bead {:4.2e} (condition {:4.2e}) \n\
+              sum of gradient of action for internal beads {:4.2e} (condition {:4.2e}) \n \
               action {} ".format(
                 outer_loop_step,
                 neb_step,
@@ -797,6 +814,8 @@ class MAPNEBGPRMover(Motion):
                 tolerances["gradient"],
                 grad_max_end_bead,
                 tolerances["gradient_end_bead"],
+                action_forces_sum_amplitude,
+                tolerances["action_forces_sum"],
                 self.action
             ),
             verbosity.low,
@@ -915,14 +934,23 @@ class MAPNEBGPRMover(Motion):
                 message="Only projected velocity verlet (verlet), conjugate gradient (cg) and FIRE are currently implemented. set mode == 'verlet' ",
             )
 
+        # drift 1 step.
+        self.neb_drift_step()
+
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
         grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
 
         grad_max_inner_bead = np.amax(grad_norm[1 : nbeads - 1])
         grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
+        # amplitude of sum of transverse action force of internal beads.
+        action_forces_sum_amplitude = self.nebgm.action_forces_sum_amplitude
         # output info about neb calculation.
         self.neb_instanton_step_info(
-            outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead
+            outer_loop_step,
+            neb_step,
+            grad_max_inner_bead,
+            grad_max_end_bead,
+            action_forces_sum_amplitude
         )
 
         return (
@@ -1020,6 +1048,28 @@ class MAPNEBGPRMover(Motion):
         )
 
         self.beads.q[:, self.fixatoms_mask] = self.x
+
+    def neb_drift_step(self):
+        """
+        drift the whole bead along the direction of action gradient
+        """
+        action_forces_sum = np.sum(self.nebgm.action_forces, axis= 0)
+        action_forces_mean = action_forces_sum / (self.beads.nbeads - 2)
+
+        # do 1 step of steepest descent along the action force direction for all beads.
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        x_mscaled = x_mscaled + 0.5 * action_forces_mean * np.power(self.time_step, 2)
+        self.x = x_mscaled / np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
+        self.beads.q[:, self.fixatoms_mask] = self.x
+
+        self.action, optimization_gradient = self.nebgm(x_mscaled)
+
+        print(f"sum of action forces: {self.nebgm.action_forces_sum_amplitude}. action: {self.action}")
 
 
     def update_GPR_model_one_bead_subroutine(
@@ -1763,6 +1813,10 @@ class LINEBGradientMapper(object):
             nimage, natom, btau, mscaled_q, mscaled_f
         )
 
+        # sum of action forces for all internal beads 
+        # (the action force for the end bead is set to be 0)
+        self.action_forces_sum_amplitude = np.linalg.norm(np.sum(self.action_forces, axis= 0))
+
         self.neb_optimization_force = np.copy(neb_optimization_force)
 
         neb_optimization_gradient = -neb_optimization_force
@@ -2032,8 +2086,9 @@ class LINEBGradientMapper(object):
                 - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
             )
 
+        
         self.neb_transverse_force = (
-            neb_optimization_force  # transverse gradient for interior neb beads.
+            np.copy(neb_optimization_force)  # transverse gradient for interior neb beads.
         )
 
         # add energy constraint force for two end beads.
