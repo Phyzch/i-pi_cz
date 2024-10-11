@@ -702,28 +702,52 @@ class MAPNEBGPRMover(Motion):
 
         print("\n")
         print("@Start outer loop: " + str(outer_loop_step) + "\n")
+        
+        action_force_stop_criterion = False 
+        action_step_average_number = 5
+        action_sufficient_decrease_cutoff = np.power(10.0, -4)
+        drifting_action_list = []  # record action when we start drifting.
+
         while (
             grad_max_inner_bead > tolerances["gradient"]
             or grad_max_end_bead > tolerances["gradient_end_bead"]
-            or action_forces_sum_amplitude > tolerances["action_forces_sum"] 
+            or ( self.nebgm.action_forces_sum_amplitude > tolerances["action_forces_sum"] and (not action_force_stop_criterion) )
         ):
             neb_step = neb_step + 1  # neb_step == 0: we have not moved the bead.
-            
+
             (
                 grad_max_inner_bead,
                 grad_max_end_bead,
                 early_stop_bool,
                 outrange_bead_index_list,
             ) = self.neb_step(outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead)
-            
-            action_forces_sum_amplitude = self.nebgm.action_forces_sum_amplitude
+
+            if (grad_max_inner_bead <= tolerances["gradient"] 
+                and grad_max_end_bead <= tolerances["gradient_end_bead"]):
+                # if the minimum action doesn't descrease sufficiently over several steps. 
+                # we assume we have reached the minimum of the action.
+                # We only turn on drifting when two other criterion has been satisfied.
+                drifting_action_list.append(self.action)
+                if len(drifting_action_list) > 2 * action_step_average_number:
+                    previous_minimum_action = np.min(
+                        drifting_action_list[
+                            -int(2 * action_step_average_number):
+                              - int(action_step_average_number)]
+                        )
+                    current_minimum_action = np.min(
+                        drifting_action_list[
+                            -int(action_step_average_number):
+                        ]
+                        )
+                    if current_minimum_action > previous_minimum_action - action_sufficient_decrease_cutoff:
+                        action_force_stop_criterion = True
+                    
 
             # beads move out of trust region.
             if early_stop_bool:
                 break
         
         if not early_stop_bool:
-            # TODO: Now we have to drift the li-neb path 
             print("@LI-NEB converge on GPR PES.")
 
 
@@ -934,8 +958,10 @@ class MAPNEBGPRMover(Motion):
                 message="Only projected velocity verlet (verlet), conjugate gradient (cg) and FIRE are currently implemented. set mode == 'verlet' ",
             )
 
-        # drift 1 step.
-        self.neb_drift_step()
+        if (grad_max_inner_bead <= self.options["tolerances"] ["gradient"] 
+                and grad_max_end_bead <= self.options["tolerances"]["gradient_end_bead"]):
+            # drift 1 step.
+            self.neb_drift_step()
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
         grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
