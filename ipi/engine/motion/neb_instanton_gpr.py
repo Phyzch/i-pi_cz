@@ -65,7 +65,8 @@ class MAPNEBGPRMover(Motion):
         prefix="neb_instanton",
         tolerances={"gradient": 5e-3, 
                     "gradient_end_bead": 1e-2,
-                    "action_forces_sum": 5e-3},
+                    "action_forces_sum": 5e-3,
+                    "action": 1e-4},
         energy_shift=0.00,
         FIRE={"tmax": 4.0, "tmin": 0.1, 
               "Ndelay": 5, "finc": 1.1, "fdec": 0.5, 
@@ -705,13 +706,14 @@ class MAPNEBGPRMover(Motion):
         
         action_force_stop_criterion = False 
         action_step_average_number = 5
-        action_sufficient_decrease_cutoff = np.power(10.0, -4)
+        action_sufficient_decrease_cutoff = tolerances["action"]
         drifting_action_list = []  # record action when we start drifting.
 
         while (
             grad_max_inner_bead > tolerances["gradient"]
             or grad_max_end_bead > tolerances["gradient_end_bead"]
-            or ( self.nebgm.action_forces_sum_amplitude > tolerances["action_forces_sum"] and (not action_force_stop_criterion) )
+            or ( self.nebgm.action_forces_sum_amplitude > tolerances["action_forces_sum"] 
+                and (not action_force_stop_criterion) )
         ):
             neb_step = neb_step + 1  # neb_step == 0: we have not moved the bead.
 
@@ -726,7 +728,7 @@ class MAPNEBGPRMover(Motion):
                 and grad_max_end_bead <= tolerances["gradient_end_bead"]):
                 # if the minimum action doesn't descrease sufficiently over several steps. 
                 # we assume we have reached the minimum of the action.
-                # We only turn on drifting when two other criterion has been satisfied.
+                # We only turn on drifting when gradients of beads are small.
                 drifting_action_list.append(self.action)
                 if len(drifting_action_list) > 2 * action_step_average_number:
                     previous_minimum_action = np.min(
@@ -960,7 +962,8 @@ class MAPNEBGPRMover(Motion):
 
         if (grad_max_inner_bead <= self.options["tolerances"] ["gradient"] 
                 and grad_max_end_bead <= self.options["tolerances"]["gradient_end_bead"]):
-            # drift 1 step.
+            # move all beads at once along the negative gradient direction of the action.
+            # "drift" step
             self.neb_drift_step()
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.

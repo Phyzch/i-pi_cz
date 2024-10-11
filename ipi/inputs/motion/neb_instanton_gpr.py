@@ -47,12 +47,19 @@ class InputNebInstGPR(InputDictionary):
             InputDictionary,
             {
                 "dtype": float,
-                "options": ["gradient", "gradient_end_bead", "action_forces_sum"],
-                "default": [5e-3, 1e-2, 5e-3],
+                "options": ["gradient",
+                            "gradient_end_bead", 
+                            "action_forces_sum",
+                            "action"],
+                "default": [5e-3,
+                            1e-2,
+                            5e-3,
+                            1e-4],
                 "help": "Convergence criteria for neb optimization\
                     gradient: gradient for internal beads. \
                     gradient_end_bead: gradient for end beads \
-                    action_forces_sum: sum of transverse gradient of internal beads.",
+                    action_forces_sum: sum of transverse gradient of internal beads. \
+                    action: the decrease of action when we drift all beads.",
                 "dimension": ["undefined", "undefined", "undefined"],
             },
         ),
