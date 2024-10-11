@@ -122,9 +122,10 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         # pseudo-inverse the covariance matrix
         train_train_covar_tensor = train_train_covar.to_dense()
         covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
-        covar_eigval_min = torch.min(torch.real(covar_eigval)) 
+        covar_eigval_min = torch.min(torch.real(covar_eigval))
+        covar_eigval_max = torch.max(torch.real(covar_eigval))
 
-        if covar_eigval_min < singular_value_cutoff:
+        if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             U, S ,Vh = torch.linalg.svd(train_train_covar_tensor)
             nonzero_indices = (S > singular_value_cutoff).nonzero().squeeze(-1)

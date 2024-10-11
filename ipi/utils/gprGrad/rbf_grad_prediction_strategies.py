@@ -32,9 +32,12 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
         # pseudo-inverse the covariance matrix.
         train_train_covar_tensor = train_train_covar.to_dense()
         # compute eigenvalues using lobpcg: faster for sparse matrix.
-        covar_eigval, _ = torch.lobpcg(train_train_covar_tensor, k=1, largest= False)
-        covar_eigval_min = torch.min(torch.real(covar_eigval)) 
-        if covar_eigval_min < singular_value_cutoff:
+        # covar_eigval, _ = torch.lobpcg(train_train_covar_tensor, k=1, largest= False)
+        covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
+        covar_eigval_min = torch.min(torch.real(covar_eigval))
+        covar_eigval_max = torch.max(torch.real(covar_eigval))
+
+        if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             covar_inverse = torch.linalg.pinv(train_train_covar_tensor, atol= singular_value_cutoff) # (K(X,X) + sigma^2 I)^-1 * y
             mean_cache = (covar_inverse @ train_labels_offset).squeeze(-1) 
@@ -62,10 +65,12 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
 
         # pseudo-inverse the covariance matrix
         train_train_covar_tensor = train_train_covar.to_dense()
-        covar_eigval, _ = torch.lobpcg(train_train_covar_tensor, k= 1, largest= False)
-        covar_eigval_min = torch.min(torch.real(covar_eigval)) 
+        # covar_eigval, _ = torch.lobpcg(train_train_covar_tensor, k= 1, largest= False)
+        covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
+        covar_eigval_min = torch.min(torch.real(covar_eigval))
+        covar_eigval_max = torch.max(torch.real(covar_eigval))
 
-        if covar_eigval_min < singular_value_cutoff:
+        if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             U, S ,Vh = torch.linalg.svd(train_train_covar_tensor)
             nonzero_indices = (S > singular_value_cutoff).nonzero().squeeze(-1)

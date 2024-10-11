@@ -54,7 +54,7 @@ class InputNebInstGPR(InputDictionary):
                 "default": [5e-3,
                             1e-2,
                             5e-3,
-                            1e-4],
+                            1e-3],
                 "help": "Convergence criteria for neb optimization\
                     gradient: gradient for internal beads. \
                     gradient_end_bead: gradient for end beads \

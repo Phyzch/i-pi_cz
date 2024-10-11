@@ -66,7 +66,7 @@ class MAPNEBGPRMover(Motion):
         tolerances={"gradient": 5e-3, 
                     "gradient_end_bead": 1e-2,
                     "action_forces_sum": 5e-3,
-                    "action": 1e-4},
+                    "action": 1e-3},
         energy_shift=0.00,
         FIRE={"tmax": 4.0, "tmin": 0.1, 
               "Ndelay": 5, "finc": 1.1, "fdec": 0.5, 
@@ -97,7 +97,7 @@ class MAPNEBGPRMover(Motion):
         gpr_absolute_force_error_criterion=0.002,
         gpr_trust_region=0.1,
         minimum_trust_region= 0.05,
-        distance_cutoff_for_training_data= 0.05,
+        distance_cutoff_for_training_data= 0.1,
         gpr_kernel_outputscale=np.zeros(0, float),
         gpr_kernel_lengthscale_ratio=np.zeros(0, float),
         gpr_noise_std={
@@ -125,6 +125,10 @@ class MAPNEBGPRMover(Motion):
               motion will be constrained or not. Defaults to False.
         """
         super(MAPNEBGPRMover, self).__init__(fixcom=fixcom, fixatoms=fixatoms)
+
+        if distance_cutoff_for_training_data > gpr_trust_region:
+            distance_cutoff_for_training_data = gpr_trust_region
+            print(f"readjust distance cutoff for rejecting training data to trust region value {gpr_trust_region}")
 
         # parameters to pass in from input.xml
         self.options = {}
@@ -1105,13 +1109,16 @@ class MAPNEBGPRMover(Motion):
 
         action, action_gradient_mean = self.actiongm(x_mscaled)
 
+        fdf0 = (action, action_gradient_mean)
+
+        time_step = self.optarrays["time_step"]
         x_mscaled, self.drift_velocity_mscaled, self.action, action_gradient_mean = \
             ipi.utils.nebinstool.projected_verlet(
                 x_mscaled,
                 self.drift_velocity_mscaled,
                 (action, action_gradient_mean),
                 self.actiongm,
-                self.time_step
+                time_step
             )
         
         self.x = x_mscaled / np.sqrt(
