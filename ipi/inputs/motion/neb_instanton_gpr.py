@@ -60,7 +60,6 @@ class InputNebInstGPR(InputDictionary):
                     gradient_end_bead: gradient for end beads \
                     action_forces_sum: sum of transverse gradient of internal beads. \
                     action: the decrease of action when we drift all beads.",
-                "dimension": ["undefined", "undefined", "undefined"],
             },
         ),
         "energy_shift": (
