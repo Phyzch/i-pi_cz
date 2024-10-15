@@ -160,7 +160,7 @@ class InstantonMotion(Motion):
         self.optarrays["old_f"] = old_force 
 
         # We set the default optimization algorithm depending on the mode.
-        # default optimization method for "rate": nicholas,  default optimization method for tunneling splitting: limited meory BFGS
+        # default optimization method for "rate": nichols,  default optimization method for tunneling splitting: limited meory BFGS
         if mode == "rate":
             if opt == "None":
                 opt = "nichols"

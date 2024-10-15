@@ -66,7 +66,7 @@ class MAPNEBGPRMover(Motion):
         tolerances={"gradient": 5e-3, 
                     "gradient_end_bead": 1e-2,
                     "action_forces_sum": 5e-3,
-                    "action": 1e-3},
+                    "action": 1e-4},
         energy_shift=0.00,
         FIRE={"tmax": 4.0, "tmin": 0.1, 
               "Ndelay": 5, "finc": 1.1, "fdec": 0.5, 
@@ -74,6 +74,7 @@ class MAPNEBGPRMover(Motion):
               "Nmax": 100, "maxstep": 100,
               "neb_step_update_kappa": 20},
         time_step=4.0,
+        drift_time_step= 4.0, 
         cg_big_step= 1.0,
         instanton_time_step=4.0,
         stage="neb",
@@ -177,6 +178,7 @@ class MAPNEBGPRMover(Motion):
 
         self.optarrays["FIRE"] = FIRE   # parameters for FIRE optimization algorithm.
         self.optarrays["time_step"] = time_step
+        self.optarrays["drift_time_step"] = drift_time_step
         self.optarrays["cg_big_step"] = cg_big_step
         self.optarrays["instanton_time_step"] = instanton_time_step
 
@@ -382,6 +384,10 @@ class MAPNEBGPRMover(Motion):
             self.action_info_file = open(action_info_file_name, "w")
             self.action_info_file.write("step  action \n")
 
+            action_outloop_info_file_name = "action_info_outloop.txt"
+            self.action_outloop_info_file = open(action_outloop_info_file_name, "w")
+            self.action_outloop_info_file.write("step action \n")
+
         # Check if we restarted a converged calculation or the calculation converged.
         if self.options["stage"] == "converged":
             # output number of ab-initio calculation.
@@ -417,7 +423,14 @@ class MAPNEBGPRMover(Motion):
             self.optimization_gradient_outloop_file.write(
                 str(step) + " "
                 + str(grad_max_inner_bead) + " "
-                + str(grad_max_end_bead) + "\n"
+                + str(grad_max_end_bead) + " "
+                + str(self.ab_initio_bead_calculation_number) + "\n"
+            )
+
+            self.action_outloop_info_file.write(
+                str(step) + " "
+                + str(self.action) + " "
+                + str(self.ab_initio_bead_calculation_number) + "\n "
             )
 
             # update Gaussian Process Regression model with new training data
@@ -478,7 +491,9 @@ class MAPNEBGPRMover(Motion):
         train_x, stored_train_V, stored_train_f = (
             ipi.utils.nebinstgprtool.read_training_data(prefix="neb_final_gpr_training")
         )
-        # count the # of ab-initio calculation we have done
+
+        # count the # of ab-initio calculation we have done.
+        # Note: We should not count this number as new ab initio calculation we will do.
         ab_initio_calculation_number = np.shape(train_x)[0]
         self.ab_initio_bead_calculation_number = (
             self.ab_initio_bead_calculation_number + ab_initio_calculation_number
@@ -716,7 +731,7 @@ class MAPNEBGPRMover(Motion):
         print("@Start outer loop: " + str(outer_loop_step) + "\n")
         
         action_force_stop_criterion = False 
-        action_step_average_number = 5
+        action_step_average_number = 10
         action_sufficient_decrease_cutoff = tolerances["action"]
         drifting_action_list = []  # record action when we start drifting.
 
@@ -827,7 +842,26 @@ class MAPNEBGPRMover(Motion):
 
             self.Ndn = 0  # number of steps going down hill
             self.Nup = 0  # number of steps going up hill.
+
+            # initialize parameter for FIRE method used for drifting.
+            self.drift_time_step = self.optarrays["drift_time_step"]
+            self.drift_alpha0 = self.optarrays["FIRE"]["alpha0"]
+            self.drift_alpha = self.drift_alpha0
+            self.drift_alpha_shrink = self.optarrays["FIRE"]["alpha_shrink"]
             
+            self.drift_dtmax = self.optarrays["drift_time_step"] * self.optarrays["FIRE"]["tmax"]
+            self.drift_dtmin = self.optarrays["drift_time_step"] * self.optarrays["FIRE"]["tmin"]
+
+            self.drift_Ndelay = self.optarrays["FIRE"]["Ndelay"]
+            self.drift_finc = self.optarrays["FIRE"]["finc"]
+            self.drift_fdec = self.optarrays["FIRE"]["fdec"]
+
+            self.drift_Nmax = self.optarrays["FIRE"]["Nmax"]
+            self.drift_maxstep = self.optarrays["FIRE"]["maxstep"]
+
+            self.drift_Ndn = 0  # number of steps going down hill for drifting motion.
+            self.drift_Nup = 0  # number of steps going up hill for drifting motion.
+
 
 
     def neb_instanton_step_info(
@@ -983,8 +1017,16 @@ class MAPNEBGPRMover(Motion):
             # "drift" step
             self.neb_drift_step()
         else:
-            # reset the velocity for drifting.
-            self.drift_velocity_mscaled = np.zeros(self.x.shape)
+            # Reset the Parameter for projected verlet or FIRE for drifting. 
+            # This procedure is to ensure the convergence.
+            self.drift_velocity_mscaled = np.zeros(self.drift_velocity_mscaled.shape)
+            if self.options["mode"] == "FIRE":
+                self.drift_alpha = self.drift_alpha0
+                self.drift_Ndn = 0 
+                self.drift_Nup = 0 
+                self.drift_time_step = self.optarrays["drift_time_step"]
+
+
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
         grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
@@ -1111,16 +1153,45 @@ class MAPNEBGPRMover(Motion):
 
         fdf0 = (action, action_gradient_mean)
 
-        time_step = self.optarrays["time_step"]
-        x_mscaled, self.drift_velocity_mscaled, self.action, action_gradient_mean = \
-            ipi.utils.nebinstool.projected_verlet(
-                x_mscaled,
-                self.drift_velocity_mscaled,
-                (action, action_gradient_mean),
-                self.actiongm,
-                time_step
-            )
+        if self.options["mode"] == "FIRE":
+            # one step using FIRE
+            # the x_mscaled will be updated in the mintools.FIRE() code
+            self.drift_velocity_mscaled, self.drift_alpha, self.drift_Ndn, self.drift_Nup, self.drift_time_step = \
+                ipi.utils.mintools.FIRE(
+                    x_mscaled,
+                    self.actiongm,
+                    fdf0,
+                    self.drift_velocity_mscaled,
+                    self.drift_alpha,
+                    self.drift_Ndn,
+                    self.drift_Nup,
+                    self.drift_time_step,
+                    self.drift_maxstep,
+                    self.drift_dtmax,
+                    self.drift_dtmin,
+                    self.drift_Ndelay,
+                    self.drift_Nmax,
+                    self.drift_finc,
+                    self.drift_fdec,
+                    self.drift_alpha0,
+                    self.drift_alpha_shrink
+                )
+        else:
+            drift_time_step = self.optarrays["drift_time_step"]
+            x_mscaled, self.drift_velocity_mscaled, self.action, action_gradient_mean = \
+                ipi.utils.nebinstool.projected_verlet(
+                    x_mscaled,
+                    self.drift_velocity_mscaled,
+                    (action, action_gradient_mean),
+                    self.actiongm,
+                    drift_time_step
+                )
         
+        # since the bead has been moved. We have to update action and gradient in LINEB moves.
+        self.action, self.grad_mscaled = self.nebgm(x_mscaled)
+        self.f_mscaled = -self.grad_mscaled
+
+        # update the new position.
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
@@ -1370,6 +1441,7 @@ class MAPNEBGPRMover(Motion):
         self.optimization_gradient_outloop_file.close()
         self.geometry_info_file.close()
         self.action_info_file.close()
+        self.action_outloop_info_file.close() 
 
         # print neb beads geometry and energy.
         ipi.utils.nebinstool.print_neb_instanton_geo(

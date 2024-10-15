@@ -144,7 +144,7 @@ def print_ab_initio_calculation_number(
     file_name = "ab_initio_force_number step " + str(step) + ".txt"
     with open(file_name, "w") as f:
         f.write(
-            "ab initio calculation number:  " + str(ab_initio_calculation_number) + "\n"
+            "ab initio calculation number (including initial training data):  " + str(ab_initio_calculation_number) + "\n"
         )
 
 

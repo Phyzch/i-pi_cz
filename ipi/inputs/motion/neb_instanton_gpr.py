@@ -54,7 +54,7 @@ class InputNebInstGPR(InputDictionary):
                 "default": [5e-3,
                             1e-2,
                             5e-3,
-                            1e-3],
+                            1e-4],
                 "help": "Convergence criteria for neb optimization\
                     gradient: gradient for internal beads. \
                     gradient_end_bead: gradient for end beads \
@@ -119,9 +119,23 @@ class InputNebInstGPR(InputDictionary):
                 "default": 4.00,  # = 0.1 fs
                 "help": """"time step for evolve neb beads with projected velocity verlet. 
                 If mode == "verlet": this is the time step for projected velocity verlet algorithm.
+                If mode == "FIRE", this is the initial time step for the Fast Inertial relaxation engine method.
                 """,
                 "dimension": "time",
             },
+        ),
+
+        "drift_time_step": (
+            InputValue,
+            {
+                "dtype": float,
+                "default": 4.00, # 0.1 fs
+                "help": """
+                Time step for moving all neb beads together towards the direction of 
+                negative gradient of the action.
+                """
+            }
+
         ),
 
         "cg_big_step": (
@@ -614,6 +628,7 @@ class InputNebInstGPR(InputDictionary):
         self.VSC_spring_k_max_ratio.store(optarrays["VSC_spring_k_max_ratio"])
 
         self.time_step.store(optarrays["time_step"])
+        self.drift_time_step.store(optarrays["drift_time_step"])
         self.cg_big_step.store(optarrays["cg_big_step"])
         self.instanton_time_step.store(optarrays["instanton_time_step"])
 
