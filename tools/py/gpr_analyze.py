@@ -1,5 +1,6 @@
 '''
 Analyze the training and prediction of Gaussian Process Regression model. 
+python gpr_analyze.py RESTART -hf <hessian_folder> -index <neb_bead_index_with_highest_energy> -f <ab_initio_hessian_file> 
 '''
 import numpy as np
 import sys
