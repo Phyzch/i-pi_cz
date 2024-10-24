@@ -40,7 +40,7 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
 
         return res
 
-    def log_prob_likelihood(self, normal_dist: MultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -4)):
+    def log_prob_likelihood(self, normal_dist: MultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -2)):
         """
         compute the log probability of observable (target).
         Perform the pseudo-inverse when the covariance matrix is ill-conditioned.
@@ -54,7 +54,7 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
         covar_tensor = covar.to_dense() 
         logdet = torch.logdet(covar_tensor) # log(|K + sigma^2 I|)
         
-        pseudo_inverse_covar = torch.linalg.pinv(covar_tensor, atol= singular_value_cutoff) 
+        pseudo_inverse_covar = torch.linalg.pinv(covar_tensor, rtol= singular_value_cutoff) 
         inv_quad = diff @ pseudo_inverse_covar @ diff # y^t (K+ sigma^2 I)^-1 y
 
         res = -0.5 * sum([inv_quad, logdet, diff.size(-1) * math.log(2 * math.pi) ])

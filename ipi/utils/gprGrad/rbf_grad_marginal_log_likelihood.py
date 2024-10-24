@@ -66,7 +66,7 @@ class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
             # the covariance matrix is ill-conditioned. 
             logdet = torch.logdet(covar_tensor) # log(|K + sigma^2 I|)
             
-            pseudo_inverse_covar = torch.linalg.pinv(covar_tensor, atol= singular_value_cutoff) 
+            pseudo_inverse_covar = torch.linalg.pinv(covar_tensor, rtol= singular_value_cutoff) 
             inv_quad = diff @ pseudo_inverse_covar @ diff # y^t (K+ sigma^2 I)^-1 y
         else:
             # the covariance matrix is well-conditioned. Using CG method to compute logdet & inv_quad

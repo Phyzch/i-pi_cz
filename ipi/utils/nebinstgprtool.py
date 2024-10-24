@@ -410,14 +410,9 @@ def read_training_data(prefix):
     return cartesian_coordinate_x, training_V, training_forces
 
 
-def read_training_data_with_hessian(prefix):
+def read_hessian_data(prefix, ndofs):
     """
-    read coordinate, potential V, force f and hessian h from training data
     """
-    cartesian_coordinate_x, training_V, training_forces = read_training_data(prefix)
-
-    ndofs = np.shape(training_forces)[1]
-    # read hessian
     hessian_file_name = os.path.join(prefix, "hessian.txt")
     assert os.path.exists(hessian_file_name), (
         "data: hessian file: " + str(hessian_file_name) + " does not exist"
@@ -446,6 +441,19 @@ def read_training_data_with_hessian(prefix):
 
     hessian_index_list = np.array(hessian_index_list)
     hessian_data_list = np.array(hessian_data_list)
+
+    return hessian_index_list, hessian_data_list 
+
+def read_training_data_with_hessian(prefix):
+    """
+    read coordinate, potential V, force f and hessian h from training data
+    """
+    cartesian_coordinate_x, training_V, training_forces = read_training_data(prefix)
+
+    ndofs = np.shape(training_forces)[1]
+    # read hessian
+    hessian_index_list, hessian_data_list = read_hessian_data(prefix, 
+                                                              ndofs)
 
     return (
         cartesian_coordinate_x,

@@ -12,7 +12,7 @@ Adapted from Instanton_postproc.py written by Y. Litman
 instanton according to J. Phys. Chem. Lett. 7, 437(2016) (Instanton Rate calculations) or J. Chem. Phys. 134, 054109 (2011) (Tunneling Splitting)
 
 
-Syntax:    python  neb_instanton_postproc.py  <checkpoint_file> -c <case> -t  <temperature (K)> -e <ground_state_energy> (-n <nbeads(full polymer)>) (-freq <freq_reactant.dat>)
+Syntax:    python  neb_instanton_postproc.py  <checkpoint_file> -c <case> -t  <temperature (K)> -e <ground_state_energy> 
 
 Examples for rate calculation:
            python  Instanton_postproc.py   RESTART  -c  instanton    -t   300
@@ -79,19 +79,7 @@ def parse_input():
         type=int,
         action="append",
     )
-    parser.add_argument(
-        "-n",
-        "--nbeadsR",
-        default=0,
-        help="Number of beads (full polymer) to compute the approximate partition function (only reactant case)",
-        type=int,
-    )
-    parser.add_argument(
-        "-freq",
-        "--freq_reac",
-        default=None,
-        help="List of frequencies of the minimum. Required for splitting calculation.",
-    )
+
     parser.add_argument(
         "-q",
         "--quiet",
@@ -107,8 +95,6 @@ def parse_input():
     asr = args.asr
     V00 = args.energy_shift
     filt = args.filter
-    nbeadsR = args.nbeadsR  # number of beads for full ring polymer
-    input_freq = args.freq_reac
     quiet = args.quiet
     Verbosity = verbosity
     Verbosity.level = "quiet"
@@ -135,7 +121,7 @@ def parse_input():
     if args.temperature == 0.0:
         raise ValueError("The temperature must be specified.'")
     
-    return args, inputt, case, temp, asr, V00, filt, nbeadsR, input_freq, quiet, Verbosity, nzeros
+    return args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros
 
 # ----- read instanton data from check point file (RESTART) -------
 
@@ -362,7 +348,7 @@ def print_instanton_path(nbeads, natoms, names, bead_q ,pots, filename = "instan
 
 
 def compute_instanton_rate():
-    args, inputt, case, temp, asr, V00, filt, nbeadsR, input_freq, quiet, Verbosity, nzeros = parse_input()
+    args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros = parse_input()
 
     neb_beads, m, nbeads, natoms, temp2, pots_half_rp, full_rp_beads_q, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2 = Read_instanton_data(inputt, V00, temp, quiet)
 

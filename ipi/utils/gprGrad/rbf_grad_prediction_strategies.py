@@ -39,7 +39,7 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
 
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
-            covar_inverse = torch.linalg.pinv(train_train_covar_tensor, atol= singular_value_cutoff) # (K(X,X) + sigma^2 I)^-1 * y
+            covar_inverse = torch.linalg.pinv(train_train_covar_tensor, rtol= singular_value_cutoff) # (K(X,X) + sigma^2 I)^-1 * y
             mean_cache = (covar_inverse @ train_labels_offset).squeeze(-1) 
         else:
             mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
@@ -73,7 +73,7 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             U, S ,Vh = torch.linalg.svd(train_train_covar_tensor)
-            nonzero_indices = (S > singular_value_cutoff).nonzero().squeeze(-1)
+            nonzero_indices = (S > singular_value_cutoff * covar_eigval_max).nonzero().squeeze(-1)
             nonzero_s = S[nonzero_indices]
             nonzero_u = torch.index_select(U, dim= 1, index= nonzero_indices)
             nonzero_vh = torch.index_select(Vh, dim= 0, index= nonzero_indices)

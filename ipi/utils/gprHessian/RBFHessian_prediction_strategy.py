@@ -76,7 +76,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
     @property
     @cached(name="mean_cache")
-    def mean_cache(self, singular_value_cutoff = pow(10.0, -4)):
+    def mean_cache(self, singular_value_cutoff = pow(10.0, -2)):
         """
         mean_cache = (K(X,X) + sigma^2 I)^(-1) * y.  here X are inputs of training data. y are targets of training data.
         """
@@ -87,14 +87,15 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
         train_labels_offset = (self.train_labels - train_mean).unsqueeze(-1)  # y
 
-
         # pseudo-inverse the covariance matrix.
         train_train_covar_tensor = train_train_covar.to_dense()
         covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
         covar_eigval_min = torch.min(torch.real(covar_eigval)) 
-        if covar_eigval_min < singular_value_cutoff:
+        covar_eigval_max = torch.max(torch.real(covar_eigval))
+
+        if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
-            covar_inverse = torch.linalg.pinv(train_train_covar_tensor, atol= singular_value_cutoff) # (K(X,X) + sigma^2 I)^-1 * y
+            covar_inverse = torch.linalg.pinv(train_train_covar_tensor, rtol= singular_value_cutoff) # (K(X,X) + sigma^2 I)^-1 * y
             mean_cache = (covar_inverse @ train_labels_offset).squeeze(-1) 
         else:
             mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
@@ -112,7 +113,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
     @property
     @cached(name= "covar_cached")
-    def covar_cache(self, singular_value_cutoff = pow(10.0, -4)):
+    def covar_cache(self, singular_value_cutoff = pow(10.0, -2)):
         """
         compute the cache for the prediction of the covariance matrix. Which is (K(X,X) + sigma^2 I)^{-1/2}
         use pseudo-inverse (Moore Penrose inverse) when the covariance matrix becomes ill-conditioned. (smallest eigenvalue is close to 0).
@@ -128,7 +129,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             U, S ,Vh = torch.linalg.svd(train_train_covar_tensor)
-            nonzero_indices = (S > singular_value_cutoff).nonzero().squeeze(-1)
+            nonzero_indices = (S > singular_value_cutoff * covar_eigval_max).nonzero().squeeze(-1)
             nonzero_s = S[nonzero_indices]
             nonzero_u = torch.index_select(U, dim= 1, index= nonzero_indices)
             nonzero_vh = torch.index_select(Vh, dim= 0, index= nonzero_indices)
