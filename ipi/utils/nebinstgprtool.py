@@ -335,6 +335,51 @@ def store_candidate_hessian_data_coordinate(
             f.write(str(used_hessian_index) + " ")
         f.write("\n")
 
+def store_candidate_grad_data_coordinate(
+        candidate_grad_point_x, used_grad_index_in_candidate_list, prefix
+):
+    """
+    store the information about which data point we have used gradient in gpr model and
+    what are the potential (candidate) data points we can compute gradients and add to gpr model.
+    :param: candidate_grad_point_x: coordinate for candidate points that we can compute gradients.
+    :param: used_grad_index_in_candidate_list: the index of data points that we have already computed gradients.
+    :param: prefix: name of folders that we will store info
+    """
+    assert os.path.exists(prefix), "the prefix folder should have already been created."
+    candidate_point_number = len(candidate_grad_point_x)
+    ndofs = np.shape(candidate_grad_point_x)[1]
+
+    # write the coordinate of candidate gradient data points
+    gradient_coordinate_file_name = os.path.join(prefix, "candidate_gradient_coord.txt")
+    if os.path.exists(gradient_coordinate_file_name):
+        os.rename(gradient_coordinate_file_name, gradient_coordinate_file_name + "#")
+
+    with open(gradient_coordinate_file_name, "w") as f:
+        f.write("Total candidate point number: \n")
+        f.write(str(candidate_point_number) + "\n")
+
+        f.write("#Index   cartesian coordinate \n")
+        for i in range(candidate_point_number):
+            f.write(str(i) + "    ")
+            for j in range(ndofs):
+                f.write(str(candidate_grad_point_x[i, j]) + " ")
+            f.write("\n")
+    
+    # write the index of gradient data point that we have already computed gradient information.
+    grad_index_file_name = os.path.join(
+        prefix, "grad_index_in_candidate_point_list.txt"
+    )
+
+    if os.path.exists(grad_index_file_name):
+        os.rename(grad_index_file_name, grad_index_file_name + "#")
+
+    used_grad_point_num = len(used_grad_index_in_candidate_list)
+    with open(grad_index_file_name, "w") as f:
+        f.write("Index for data point that we have computed gradients. \n")
+        for i in range(used_grad_point_num):
+            used_grad_index = int(used_grad_index_in_candidate_list[i])
+            f.write(str(used_grad_index) + " ")
+        f.write("\n")
 
 def extract_number_from_line(line):
     line = re.split(" ", line.strip())
@@ -501,6 +546,44 @@ def read_candidate_hessian_data_coordinate(prefix):
         used_hessian_index_in_candidate_list = np.array(list(map(int, line)))
 
     return candidate_hessian_point_x, used_hessian_index_in_candidate_list
+
+def read_candidate_grad_data_coordinate(prefix):
+    """
+    read the information about which data point we have used hessian in gpr model and
+    what are the potential (candidate) data points we can compute hessians and add to gpr model.
+    :param: prefix: name of folders that we will load info
+    """
+    assert os.path.exists(prefix), "the prefix folder should have already been created."
+
+    # read candidate hessian coordinate
+    grad_coordinate_file_name = os.path.join(prefix, "candidate_gradient_coord.txt")
+    candidate_grad_point_x = []
+    with open(grad_coordinate_file_name, "r") as f:
+        lines = f.readlines()
+        bead_number = int(extract_number_from_line(lines[1])[0])
+
+        start_line_index = 3
+        for bead_index in range(bead_number):
+            line_index = start_line_index + bead_index
+            line = extract_number_from_line(lines[line_index])[
+                1:
+            ]  # the first number is bead index.
+            bead_x = np.array(list(map(float, line)))
+            candidate_grad_point_x.append(bead_x)
+
+    candidate_grad_point_x = np.array(candidate_grad_point_x)
+
+    # read the index of used point in candidate list.
+    grad_index_file_name = os.path.join(
+        prefix, "grad_index_in_candidate_point_list.txt"
+    )
+
+    with open(grad_index_file_name, "r") as f:
+        lines = f.readlines()
+        line = extract_number_from_line(lines[1])
+        used_grad_index_in_candidate_list = np.array(list(map(int, line)))
+
+    return candidate_grad_point_x, used_grad_index_in_candidate_list
 
 
 def dydt_inverted_pot_gpr(y, t, param):
@@ -980,6 +1063,34 @@ def add_hessian_data_to_model(
         new_train_hessian,
         new_hessian_data_point_index,
         retrain_bool=retrain_bool,
+    )
+
+def add_potential_grad_data_to_model(
+    gpr_hessian_model: GPModelWithHessiansWrapper,
+    train_data_coordinate,
+    train_pots,
+    train_gradients,
+    energy_shift,
+    retrain_bool= True
+):
+    """
+    simple function to add data with only potential and gradient information into the gpr_hessian_model.
+    We also shift the potential energy before we add the data into gpr_hessian_model.
+    we assume all data points do not have hessian information.
+    """
+    new_train_x = np.copy(train_data_coordinate)
+    new_train_V = np.copy(train_pots) - energy_shift 
+    new_train_grad_x = np.copy(train_gradients)
+    new_train_hessian = np.array([])
+    new_hessian_data_point_index = np.array([])
+
+    gpr_hessian_model.update_model_with_new_data(
+        new_train_x,
+        new_train_V,
+        new_train_grad_x,
+        new_train_hessian,
+        new_hessian_data_point_index,
+        retrain_bool= retrain_bool
     )
 
 

@@ -510,6 +510,35 @@ class InputNebInstGPR(InputDictionary):
             },
         ),
 
+        "add_new_grad_data_bool":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help": "Bool variable to decide whether we will add new gradient training data in the training set."
+            }
+        ),
+        
+        "candidate_grad_data_number":(
+            InputValue,
+            {
+                "dtype": int,
+                "default": 100,
+                "help": "number of ab initio potential data we can potentially compute and add to the path. \
+                    we can choose indices from these data points and use them to construct gpr_hessian model"
+            },
+        ),
+        
+        "new_grad_data_index": (
+            InputArray,
+            {
+                "dtype": int,
+                "default": input_default(factory= np.zeros, args=(0,)),
+                "help": "The index for new data point which we will compute potential. \
+                    These potential data will be added to the gpr_hessian model"
+            }
+        ),
+
         "train_hessian_model_bool": (
             InputValue,
             {
@@ -597,6 +626,12 @@ class InputNebInstGPR(InputDictionary):
         self.candidate_hessian_data_number.store(
             options["candidate_hessian_data_number"]
         )
+
+        self.add_new_grad_data_bool.store(options["add_new_grad_data_bool"])
+        self.candidate_grad_data_number.store(
+            options["candidate_grad_data_number"]
+        )
+
         self.train_hessian_model_bool.store(options["train_hessian_model_bool"])
 
         # for stability of gaussian process regression model
@@ -657,6 +692,7 @@ class InputNebInstGPR(InputDictionary):
 
         # about computing hessian for gpr model & rate calculation.
         self.new_hessian_data_index.store(optarrays["new_hessian_data_index"])
+        self.new_grad_data_index.store(optarrays["new_grad_data_index"])
 
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()

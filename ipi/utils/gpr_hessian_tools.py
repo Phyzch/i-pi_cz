@@ -1002,10 +1002,12 @@ class GPModelWithHessiansWrapper:
         assert (
             np.shape(new_train_grad_x)[1] == 3 * self.natom
         ), "dim of gradients for input data is not 3 * natom"
-        assert (
-            np.shape(new_train_hessian_x)[1] == 3 * self.natom
-            and np.shape(new_train_hessian_x)[2] == 3 * self.natom
-        ), "the shape of hessian for input data is not 3 * natom"
+
+        if len(new_train_hessian_x) > 0:
+            assert (
+                np.shape(new_train_hessian_x)[1] == 3 * self.natom
+                and np.shape(new_train_hessian_x)[2] == 3 * self.natom
+            ), "the shape of hessian for input data is not 3 * natom"
 
         # transform input data into internal coordinate
         new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(
@@ -1028,6 +1030,7 @@ class GPModelWithHessiansWrapper:
 
         else:
             new_train_hessian_q = np.array([])
+            new_train_hessian_x_symmetrized = np.array([])
 
         # number of training data before adding data into model.
         training_data_num = np.shape(self.train_cartesian_input)[0]

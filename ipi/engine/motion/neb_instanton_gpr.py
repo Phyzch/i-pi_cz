@@ -114,10 +114,13 @@ class MAPNEBGPRMover(Motion):
         final_hessian_bool=False,
         ab_initio_hessian_bool=False,
         read_gpr_hessian_folder="None",
-        add_new_hessian_data_bool=False,
         train_hessian_model_bool= True, 
+        add_new_hessian_data_bool=False,
         candidate_hessian_data_number=20,
         new_hessian_data_index=np.zeros(0, int),
+        add_new_grad_data_bool= False,
+        candidate_grad_data_number= 100,
+        new_grad_data_index= np.zeros(0, int)
     ):
         """Initialises NEBMover.
 
@@ -148,9 +151,14 @@ class MAPNEBGPRMover(Motion):
         self.options["test_gpr_model_along_instanton_path"] = test_gpr_model_along_instanton_path
         # for store ab initio hessians used for gpr hessian model.
         self.options["read_gpr_hessian_folder"] = read_gpr_hessian_folder
-        self.options["add_new_hessian_data_bool"] = add_new_hessian_data_bool
         self.options["train_hessian_model_bool"] = train_hessian_model_bool
+
+        self.options["add_new_hessian_data_bool"] = add_new_hessian_data_bool
         self.options["candidate_hessian_data_number"] = candidate_hessian_data_number
+        
+        self.options["add_new_grad_data_bool"] = add_new_grad_data_bool 
+        self.options["candidate_grad_data_number"] = candidate_grad_data_number
+        
         self.options["gpr_fix_internal_dofs_bool"] = gpr_fix_internal_dofs_bool 
         self.options["gpr_fix_internal_dofs_cutoff"] = gpr_fix_internal_dofs_cutoff
         # minimum value for allowed trust region ratio.
@@ -194,6 +202,9 @@ class MAPNEBGPRMover(Motion):
 
         # for store ab initio hessians used for gpr hessian model.
         self.optarrays["new_hessian_data_index"] = new_hessian_data_index
+
+        # for store ab initio grads along the path used for gpr hessian model.
+        self.optarrays["new_grad_data_index"] = new_grad_data_index
 
         self.nebgm = LINEBGradientMapper()
         self.actiongm = ActionGradientMapper()
@@ -2566,6 +2577,13 @@ class RP_MAP(object):
             "candidate_hessian_data_number"
         ]
         self.new_hessian_data_index = nebmover.optarrays["new_hessian_data_index"]
+        
+        # options about which ab-initio potential and gradient data (along the path)
+        # we will add to the existing training data
+        self.add_new_grad_data_bool= nebmover.options["add_new_grad_data_bool"]
+        self.candidate_grad_data_number = nebmover.options["candidate_grad_data_number"]
+        self.new_grad_data_index = nebmover.optarrays["new_grad_data_index"]
+
         self.train_hessian_model_bool = nebmover.options["train_hessian_model_bool"]
 
     def initialize(self, neb_beads, neb_final_step):
@@ -3149,6 +3167,7 @@ class RP_MAP(object):
         """
         self.data_destination_folder = self.read_gpr_hessian_folder
 
+        # For the initial stage, must provide hessian data to add to the training data.
         if (
             not self.add_new_hessian_data_bool
         ) and self.read_gpr_hessian_folder == "None":
@@ -3157,13 +3176,23 @@ class RP_MAP(object):
                   Either add new hessian data (add_new_hessian_data_bool= True) or read hessian data \
                   from read_gpr_hessian_folder"
             )
+        
+        # For the initial stage, must provide grad data to add to the training data.
+        if (
+            not self.add_new_grad_data_bool
+        ) and self.read_gpr_hessian_folder == "None":
+            raise(
+                "Error. You must add new gradient data along the path \
+                    at the initial stage of the instanton rate calculation \
+                    using GPR."
+            )
 
         if self.add_new_hessian_data_bool:
             # find the location of data point we can compute hessian & the index of data point that we have already computed hessians.
-            if self.read_gpr_hessian_folder == "None":
-                if len(self.new_hessian_data_index) == 0:
+            if len(self.new_hessian_data_index) == 0:
                     raise("Must provide the index of new hessian data point if add_new_hessian_data_bool= True")
-
+            
+            if self.read_gpr_hessian_folder == "None":
                 candidate_hessian_point_x, _ = (
                     ipi.utils.nebinstool.path_equal_distance_interpolation(
                         np.copy(self.neb_beads.q), self.candidate_hessian_data_number
@@ -3232,16 +3261,7 @@ class RP_MAP(object):
                     (1, 0, 2),
                 )
 
-                # add new hessian data (+ pot & gradients) into gpr_hessian model.
-                if self.train_hessian_model_bool:
-                    retrain_bool = True 
-                    print("We are going to train the gpr model with hessian data.\
-                        This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
-                else:
-                    retrain_bool = False
 
-                if retrain_bool:
-                    start_t = timer()
                 ipi.utils.nebinstgprtool.add_hessian_data_to_model(
                     self.gpr_hessian_model,
                     new_hessian_point_x,
@@ -3249,13 +3269,83 @@ class RP_MAP(object):
                     new_grads,
                     new_hessians,
                     self.energy_shift,
-                    retrain_bool= retrain_bool,
+                    retrain_bool= False,
                 )
-                if retrain_bool:
-                    end_t = timer()
-                    time_elapsed = (end_t - start_t) / 60
-                    print(f"the elapsed time for re-training the model is {time_elapsed} min.")
 
+        if self.add_new_grad_data_bool:
+            if len(self.new_grad_data_index) == 0:
+                raise("Must provide the index of new gradient data point if add_new_grad_data_bool=True")
+            
+            if self.read_gpr_hessian_folder == "None":
+                candidate_grad_point_x, _ = (
+                    ipi.utils.nebinstool.path_equal_distance_interpolation(
+                        np.copy(self.neb_beads.q),
+                        self.candidate_grad_data_number
+                    )
+                )
+                self.grad_index_in_candidate_list = np.array([])
+            else:
+                (candidate_grad_point_x, self.grad_index_in_candidate_list) = (
+                    ipi.utils.nebinstgprtool.read_candidate_grad_data_coordinate(
+                        self.read_gpr_hessian_folder
+                    )
+                )
+                
+            assert (
+                len(candidate_grad_point_x) == self.candidate_grad_data_number
+            ), "the candidate gradient data point number read from the file is not the same as the one in input.xml"
+
+            if len(self.new_grad_data_index) != 0:
+                assert(
+                    np.max(self.new_grad_data_index) < self.candidate_grad_data_number
+                ), "the index of new gradient data point should not be larger than the number of candidate gradient data point"
+
+            if len(self.new_grad_data_index) != 0 and len(self.grad_index_in_candidate_list) != 0:
+                common_index = np.intersect1d(
+                    self.new_grad_data_index, self.grad_index_in_candidate_list
+                )
+
+                assert (
+                    len(common_index) == 0
+                    ), "At least one data point in new_grad_data_index coincide with the one point that we have already computed grads.\
+                        please double check new_grad_data_index entry in input.xml" 
+
+            new_grad_point_x = candidate_grad_point_x[self.new_grad_data_index]
+            new_grad_point_num = len(self.new_grad_data_index)
+
+            natoms = self.neb_beads.natoms 
+            new_beads = Beads(natoms, new_grad_point_num)
+            new_forces = self.rp_forces.copy(new_beads, self.dcell)
+            new_beads.q = new_grad_point_x 
+
+            # compute ab initio potentials and forces.
+            new_pots = new_forces.pots 
+            new_grads = -dstrip(new_forces.f).copy() 
+
+            # add potential and gradient data into the gpr model.
+            ipi.utils.nebinstgprtool.add_potential_grad_data_to_model(
+                self.gpr_hessian_model,
+                new_grad_point_x,
+                new_pots,
+                new_grads,
+                self.energy_shift,
+                retrain_bool= False
+            )
+
+        # train the model.
+        if self.train_hessian_model_bool:
+            print("We are going to train the gpr model with hessian data.\
+                This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
+            start_t = timer()
+
+            self.gpr_hessian_model.train_model()
+
+            end_t = timer()
+            time_elapsed = (end_t - start_t) / 60
+            print(f"the elapsed time for re-training the model is {time_elapsed} min.")
+
+        # if we have updated the data, we store the data set and training hyper-parameters to a given folder.
+        if self.add_new_hessian_data_bool or self.add_new_grad_data_bool:
             # create a new data folder with up to date potential, gradient & hessian data.
             # the newly computed hessian will also be stored in this file.
             self.data_destination_folder = (
@@ -3269,17 +3359,45 @@ class RP_MAP(object):
                 self.gpr_hessian_model, self.data_destination_folder
             )
 
-            # store the coordinate of candidate data point for hessian calculation
-            # & current index among candidate points that we have already computed hessian.
-            self.hessian_index_in_candidate_list = np.concatenate(
-                [self.hessian_index_in_candidate_list, self.new_hessian_data_index]
-            )
+            if self.add_new_hessian_data_bool:
+                # store the coordinate of candidate data point for hessian calculation
+                # & current index among candidate points that we have already computed hessian.
+                self.hessian_index_in_candidate_list = np.concatenate(
+                    [self.hessian_index_in_candidate_list, self.new_hessian_data_index]
+                )
+            else:
+                # read hessian index and coordinate from previous folder.
+                (candidate_hessian_point_x, self.hessian_index_in_candidate_list) = (
+                    ipi.utils.nebinstgprtool.read_candidate_hessian_data_coordinate(
+                        self.read_gpr_hessian_folder
+                    )
+                )
 
             # store candidate_hessian_point_x, hessian_index_in_candidate_list in data destination folder.
             ipi.utils.nebinstgprtool.store_candidate_hessian_data_coordinate(
                 candidate_hessian_point_x,
                 self.hessian_index_in_candidate_list,
                 self.data_destination_folder,
+            )
+
+            if self.add_new_grad_data_bool:
+                # store the coordinate of candidate data point for gradient calculation.
+                # & current index among candidate points that we have already computed gradients.
+                self.grad_index_in_candidate_list = np.concatenate(
+                    [self.grad_index_in_candidate_list, self.new_grad_data_index]
+                )
+            else:
+                # read grad index and coordinate from previous folder.
+                (candidate_grad_point_x, self.grad_index_in_candidate_list) = (
+                    ipi.utils.nebinstgprtool.read_candidate_grad_data_coordinate(
+                        self.read_gpr_hessian_folder
+                    )
+                )
+            # store candidate_grad_point_x, grad_index_in_candidate_list in data destination folder.
+            ipi.utils.nebinstgprtool.store_candidate_grad_data_coordinate(
+                candidate_grad_point_x,
+                self.grad_index_in_candidate_list,
+                self.data_destination_folder
             )
 
 
