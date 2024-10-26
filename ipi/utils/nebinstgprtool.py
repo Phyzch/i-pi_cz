@@ -1185,3 +1185,41 @@ def load_training_hyperparameter_for_gpr_hessian_model(
         model_hyperparameter_exists = False 
     
     return model_hyperparameter_exists
+
+def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
+    """
+    analyze the training error in gpr hessian model.
+    """
+    coord = gpr_hessian_model.train_cartesian_input 
+    hessian_data_point_index = gpr_hessian_model.training_data_hessian_data_point_index
+
+    # predict hessians.
+    predicted_pots, predicted_grads, predicted_hessians, _, _, _ = gpr_hessian_model.predict_latent_function(
+        coord, hessian_data_point_index, internal_coordinate_bool= False 
+    )
+
+    # ab initio training data.
+    ab_initio_training_hessians = gpr_hessian_model.train_cartesian_hessian
+    ab_initio_train_V = gpr_hessian_model.train_V 
+    ab_initio_train_cartesian_gradient = gpr_hessian_model.train_cartesian_gradient
+
+    if len(ab_initio_training_hessians) > 0:
+        # compute the relative error in training hessian data.
+        relative_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
+            predicted_hessians, ab_initio_training_hessians
+        )
+
+        print(f"train data: relative hessian error for ring polymer beads: {relative_hessian_error}")
+
+    # compute the relative error in training potential
+    V_error = np.abs(ab_initio_train_V - predicted_pots) / np.abs(ab_initio_train_V)
+    print(f"train data: error of potential prediction: {V_error}")
+    
+    # compute the relative error in training grads
+    df = np.linalg.norm(ab_initio_train_cartesian_gradient - predicted_grads, axis= 1)
+    ab_initio_force_amplitude = np.linalg.norm(ab_initio_train_cartesian_gradient, axis= 1)
+    df_error = df / ab_initio_force_amplitude
+
+    print(f"train data: error of force prediction: {df_error}")
+
+    pass 

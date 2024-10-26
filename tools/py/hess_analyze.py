@@ -1,5 +1,6 @@
 """
 read the hessian from ab initial file.
+python hess_analyze.py -a <num_atoms> -b <nbeads> -f <hess file>
 """
 import numpy as np 
 import sys 

@@ -3066,10 +3066,11 @@ class RP_MAP(object):
                 )
             )
 
+
             # After train the model with only potential and gradient,
             # the hyper-parameter should be close to the minimum point after adding hessian data.
             # Now add hessian data & re-train the model.
-            new_pots = ref_V_shifted + self.energy_shift
+            new_pots = dstrip(new_forces.pots).copy()
             new_grads = np.array([ref_grads])
             new_hessians = np.array([ref_hessians])
             new_hessian_point_x = np.array([first_hessian_data_x])
@@ -3085,6 +3086,7 @@ class RP_MAP(object):
                 retrain_bool= self.train_hessian_model_bool
             )
 
+            
         else:
             print(
                 "read_gpr_hessian_folder provided. Will read potential & gradients & hessians from folder and create gpr_hessian model."
