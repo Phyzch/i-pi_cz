@@ -219,7 +219,6 @@ class FixInternalDofs(object):
         if (
             len(self.fixed_internal_dofs) != 0
             and len(new_hessian_data) > 0
-            and len(self.hessians_for_fixed_dofs) == 0
         ):
             self.hessians_for_fixed_dofs = np.mean(new_hessian_data, axis=0)
             self.hessians_for_fixed_dofs[
@@ -1079,10 +1078,6 @@ class GPModelWithHessiansWrapper:
         else:
             self.train_hessian_q = new_train_hessian_q
 
-        if len(self.train_hessian_q) > 0:
-            # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
-            self.FixingDofs.update_hessians_for_fixed_dofs(self.train_hessian_q)
-
         # compute noise_covar_factor array for new training data. This new noise covar factor matrix will be added into Gaussian Process Regression model when we optimize hyper-parameters
         (
             new_noise_covar_factor_pot_grad_array,
@@ -1097,6 +1092,12 @@ class GPModelWithHessiansWrapper:
                 new_train_V, new_train_grad_q, new_train_hessian_q
             )
         )
+
+        # normalize train_hessian_q 
+        normalized_train_hessian_q = self.train_hessian_q / self.Normalizer.V_range
+        if len(self.train_hessian_q) > 0:
+            # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
+            self.FixingDofs.update_hessians_for_fixed_dofs(normalized_train_hessian_q)
 
         # Filter the fixed dofs
         new_train_inputs = (
