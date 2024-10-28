@@ -1629,8 +1629,8 @@ class MAPNEBGPRMover(Motion):
         We randomly sample data around the center coordinate & separate data into training data and test data.
         """
         train_data_number = 20
-        test_data_number = 5
-        train_data_with_hessian_number = 5
+        test_data_number = 2
+        train_data_with_hessian_number = 2
         test_data_with_hessian_number = test_data_number
 
         total_data_number = int(train_data_number + test_data_number)
@@ -1717,6 +1717,7 @@ class MAPNEBGPRMover(Motion):
             self.optarrays["gpr_kernel_lengthscale_ratio"],
             self.optarrays["gpr_noise_std"],
             constant_mean_func_bool=False,
+            train_bool= True,
             ref_mean_x=ref_x,
             ref_mean_V=ref_V,
             ref_mean_grad_x=ref_grad_x,
@@ -1732,7 +1733,7 @@ class MAPNEBGPRMover(Motion):
         )
 
         # test the training data
-        predicted_train_hessians_q, train_ab_initio_hessians_q = (
+        train_ab_initio_hessians_q, predicted_train_hessians_q = (
             ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(
                 train_data_with_hessian_coordinate,
                 train_gradients,
@@ -1744,7 +1745,7 @@ class MAPNEBGPRMover(Motion):
             )
         )
 
-        predicted_train_hessians, train_ab_initio_hessians = (
+        train_ab_initio_hessians, predicted_train_hessians = (
             ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(
                 train_data_with_hessian_coordinate,
                 train_gradients,
@@ -1757,7 +1758,7 @@ class MAPNEBGPRMover(Motion):
         )
 
         # test the test data
-        predicted_test_hessians_q, test_ab_initio_hessians_q = (
+        test_ab_initio_hessians_q, predicted_test_hessians_q = (
             ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(
                 test_data_with_hessian_coordinate,
                 test_gradients,
@@ -1769,7 +1770,7 @@ class MAPNEBGPRMover(Motion):
             )
         )
 
-        predicted_test_hessians, test_ab_initio_hessians = (
+        test_ab_initio_hessians, predicted_test_hessians = (
             ipi.utils.nebinstgprtool.compare_ab_initio_hessian_and_predicted_hessian(
                 test_data_with_hessian_coordinate,
                 test_gradients,
@@ -3066,6 +3067,9 @@ class RP_MAP(object):
                 )
             )
 
+            #FIXME: debug the code
+            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+            pass
 
             # After train the model with only potential and gradient,
             # the hyper-parameter should be close to the minimum point after adding hessian data.
@@ -3086,7 +3090,10 @@ class RP_MAP(object):
                 retrain_bool= self.train_hessian_model_bool
             )
 
-            
+            #FIXME: debug the code
+            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+            pass
+
         else:
             print(
                 "read_gpr_hessian_folder provided. Will read potential & gradients & hessians from folder and create gpr_hessian model."
@@ -3141,22 +3148,30 @@ class RP_MAP(object):
                     self.read_gpr_hessian_folder
             )
 
-            if model_hyperparameter_exists:
-                # the hyper-parameter of the gpr hessian model exists.
-                # we do not have to train it.
-                # however, if desired (setting train_hessian_model_bool == True), we can train it.
-                if (not self.add_new_hessian_data_bool) and self.train_hessian_model_bool:
-                    print("We are going to train the gpr model with hessian data.\
+            # if model_hyperparameter_exists:
+            #     # the hyper-parameter of the gpr hessian model exists.
+            #     # we do not have to train it.
+            #     # however, if desired (setting train_hessian_model_bool == True), we can train it.
+            #     if (not self.add_new_hessian_data_bool) and self.train_hessian_model_bool:
+            #         print("We are going to train the gpr model with hessian data.\
+            #        This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
+            #         self.gpr_hessian_model.train_model() 
+            #         ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
+            #             self.gpr_hessian_model, self.read_gpr_hessian_folder
+            #         )
+            # else:
+            #     # the hyper-parameter of the gpr hessian model does not exist. Must train the model.
+            #     raise(RuntimeError, "The model hyper-parameter gpr_hessian.pth does not exist. Optimizing hessian data directly\
+            #           without pre-trained hyper-parameter can be inefficient. Please make sure to provide pre-trained hyper-parameter")
+
+            #FIXME: debug the code
+            print("We are going to train the gpr model with hessian data.\
                    This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
-                    self.gpr_hessian_model.train_model() 
-                    ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
-                        self.gpr_hessian_model, self.read_gpr_hessian_folder
-                    )
-            else:
-                # the hyper-parameter of the gpr hessian model does not exist. Must train the model.
-                raise(RuntimeError, "The model hyper-parameter gpr_hessian.pth does not exist. Optimizing hessian data directly\
-                      without pre-trained hyper-parameter can be inefficient. Please make sure to provide pre-trained hyper-parameter")
-        
+            self.gpr_hessian_model.train_model() 
+
+            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+            pass
+
         end_time = timer()
         time_elapsed = (end_time - start_time) / 60
         print(f"time elapsed for training hessian model is: {time_elapsed} min." )
@@ -3432,6 +3447,10 @@ class RP_MAP(object):
             end_t = timer()
             time_elapsed = (end_t - start_t) / 60
             print(f"the elapsed time for re-training the model is {time_elapsed} min.")
+
+        #FIXME: debug the code
+        ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+        pass
 
         # store the computed ab inito gradient and hessian data if we compute new data point. 
         self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,

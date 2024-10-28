@@ -738,15 +738,7 @@ def compare_ab_initio_hessian_and_predicted_hessian(
         gradients_with_hessian[hessian_data_point_index_list],
         ab_initio_hessians,
     )
-    # the predicted results in Cartesian coordinate
-    predicted_pots, predicted_grads, predicted_hessians, _, _, _ = (
-        gpr_hessian_model.predict_latent_function(
-            cartesian_x_with_hessian,
-            hessian_data_point_index_list,
-            internal_coordinate_bool=False,
-        )
-    )
-
+    
     index_to_show_list = [0, int(data_num / 2), data_num - 1]
 
     if internal_coordinate_bool:
@@ -1191,7 +1183,14 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     analyze the training error in gpr hessian model.
     """
     coord = gpr_hessian_model.train_cartesian_input 
-    hessian_data_point_index = gpr_hessian_model.training_data_hessian_data_point_index
+    hessian_data_point_index = np.array(
+        list(
+            map(
+                int, 
+                gpr_hessian_model.training_data_hessian_data_point_index
+                )
+            )
+        )
 
     # predict hessians.
     predicted_pots, predicted_grads, predicted_hessians, _, _, _ = gpr_hessian_model.predict_latent_function(
