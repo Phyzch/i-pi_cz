@@ -333,8 +333,11 @@ class NormalizeTrainingData(object):
     """
     normalize the potential & force of training data.
     """
-
-    def __init__(self, training_targets: np.ndarray):
+    # FIXME: Change the code here. 
+    # ADD code that re-scale the input coordinate.
+    def __init__(self, 
+                 training_targets: np.ndarray,
+                 training_inputs: np.ndarray):
         """
         V_normalized = (V - V_mean)/V_range.
         :param: training_targets : [V, dV/dx]. numpy array.
@@ -343,12 +346,28 @@ class NormalizeTrainingData(object):
         self.V_mean = np.mean(V)
         self.V_range = np.max(V) - np.min(V)
 
-    def normalization_transform(self, training_targets):
+        # transform the coordinate. Do it for the initial data.
+        # TODO: This code could cause trouble when we reload the training data.
+        # Because the q_mean and q_range will change after we add new data.
+        q_mean = np.mean(training_inputs, axis= 0)  # <q>
+        q_range = np.max(training_inputs, axis= 0) - np.min(training_inputs, axis= 0) # q_max - q_min
+
+        self.q_mean = q_mean 
+        self.q_range = q_range
+
+    # FIXME: Change the code here.
+    # ADD code that re-scale the input coordinate & also gradient.
+    def normalization_transform(self, 
+                                training_targets,
+                                training_inputs):
         """
         normalize the potential V & force F.
         V_normalized = (V - V_mean) / V_range.
         F_normalized = F / V_range.
-
+        
+        Then:
+        F_normalized = F_normalized * q_range.
+        q = (q - <q>) / q_range
         This function perform the normalize procedure.
         :param: training_targets : [V, dV/dq]. numpy array.
         """
@@ -358,12 +377,32 @@ class NormalizeTrainingData(object):
         grad_V = training_targets[:, 1:]
         grad_V_normalized = grad_V / self.V_range
 
+        # transform the coordinate and gradient.
+        normalized_training_inputs = (training_inputs - self.q_mean[np.newaxis, :]) / self.q_range[np.newaxis, :]
+        grad_V_normalized = self.q_range[np.newaxis, :] * grad_V_normalized
+
         normalized_training_targets = np.concatenate(
-            [V_normalized[:, np.newaxis], grad_V_normalized], axis=1
+            [
+                V_normalized[:, np.newaxis], 
+                grad_V_normalized
+            ], 
+            axis=1
         )
 
-        return normalized_training_targets
+        return normalized_training_targets, normalized_training_inputs
 
+    # FIXME: New function. perform normalization transform for training inputs.
+    def normalization_transform_for_inputs(self, 
+                                           training_inputs):
+        """
+        normalize the input.
+        q = (q - <q>) / q_range
+        """
+        normalized_training_inputs = (training_inputs - self.q_mean[np.newaxis, :]) / self.q_range[np.newaxis, :]
+        return normalized_training_inputs
+
+    # FIXME : Change the code here. 
+    # Add code to reverse the re-scale of the training targets because we have rescaled the training inputs.
     def inverse_normalization_transform(self, normalized_training_targets):
         """
         inverse the normalization procedure of potential V & force F.
@@ -381,23 +420,40 @@ class NormalizeTrainingData(object):
         V = V_normalized * self.V_range + self.V_mean
         grad_V = grad_V_normalized * self.V_range
 
+        # FIXME: new code: re-scale the grad_V.
+        grad_V = grad_V / self.q_range[np.newaxis, :]
+
         training_targets = np.concatenate([V[:, np.newaxis], grad_V], axis=1)
 
         return training_targets
 
+    # FIXME: Change the code here.
+    # ADD code that re-scale the noise because we re-scale the coordinate.
     def normalize_noise_var(self, noise_var):
         """
         normalize the variance of noise
         """
         normalized_noise_var = noise_var / np.power(self.V_range, 2)
 
+        # rescale the variance of gradient noise due to the scaling of the input coordinate.
+        normalized_grad_noise_var = normalized_noise_var[1:]
+        normalized_grad_noise_var = normalized_grad_noise_var * np.power(self.q_range, 2)
+        normalized_noise_var[1:] = normalized_grad_noise_var
+
         return normalized_noise_var
 
+    # FIXME: Change the code here.
+    # ADD code that inverse re-scale the noise because we have re-scaled the coordinate.
     def inverse_normalize_noise_var(self, normalized_noise_var):
         """
         inverse normalize the variance of the noise
         """
         noise_var = normalized_noise_var * np.power(self.V_range, 2)
+
+        # inverse rescale the variance of gradient noise 
+        grad_noise_var = noise_var[:,1:]
+        grad_noise_var = grad_noise_var / np.power(self.q_range, 2)
+        noise_var[:,1:] = grad_noise_var
 
         return noise_var
 
@@ -483,7 +539,8 @@ class GPModelWithDerivativesWrapper:
                 train_x, train_grad_x
             )
         )
-        # target data: [V, dV/dx1, ..., dV/dxn]
+
+        # target data: [V, dV/dq1, ..., dV/dqn]
         train_targets = np.concatenate([train_V[:, np.newaxis], train_grad_q], axis=1)
 
         # compute the estimated noise covariance factor for the force in the internal coordinate q. noise for Fq = dV/dq.
@@ -492,18 +549,29 @@ class GPModelWithDerivativesWrapper:
         )
 
         # decide normalization parameter. Here we normalize the potential as (V- <V>)/range(V). The force also needs to be scaled.
-        self.Normalizer = NormalizeTrainingData(train_targets)
+        self.Normalizer = NormalizeTrainingData(train_targets,
+                                                train_inputs)
+
         # perform normalization on training targets.
-        normalized_train_targets = self.Normalizer.normalization_transform(
-            train_targets
+        normalized_train_targets, normalized_train_inputs = (
+            self.Normalizer.normalization_transform(
+                train_targets,
+                train_inputs
+            )
         )
+        
         likelihood_noise_variance = self.Normalizer.normalize_noise_var(
             likelihood_noise_variance
         )
 
+        # record training input and normalized training targets. 
         self.train_inputs = (
             train_inputs  # training inputs in internal coordinate space q.
         )
+        self.normalized_train_inputs = (
+            normalized_train_inputs  # training inputs after re-scale the coordinate.
+        )
+
         self.normalized_train_targets = normalized_train_targets  # training outputs in internal coordinates q. (V, dV/dq)
 
         self.train_cartesian_inputs = (
@@ -512,16 +580,19 @@ class GPModelWithDerivativesWrapper:
         self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
 
         # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
+        # FIXME: To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
         self.FixingDofs = FixInternalDofs(train_inputs, 
                                           normalized_train_targets,
                                           gpr_fix_internal_dofs_bool,
                                           gpr_fix_internal_dofs_cutoff
                                           )
+        
         moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = (
             self.FixingDofs.transform_training_data_to_free_moving_dofs(
-                train_inputs, normalized_train_targets, likelihood_noise_variance
+                normalized_train_inputs, normalized_train_targets, likelihood_noise_variance
             )
         )
+
         moving_input_dim = input_dim - len(self.FixingDofs.fixed_internal_dofs)
         moving_output_dim = output_dim - len(self.FixingDofs.fixed_internal_dofs)
 
@@ -598,14 +669,16 @@ class GPModelWithDerivativesWrapper:
             np.shape(test_x)[1] == 3 * self.natom
         ), "dim of coordinates for input data is not 3 * natom"
 
-        # transform to internal coordinate q.
+        # transform to internal coordinate q. normalization + filter fixed dofs.
         moving_test_q = self.get_free_moving_internal_coordinate(test_x)
         moving_test_q_tensor = torch.from_numpy(moving_test_q)
 
         # use Gaussian process regression model to make prediction
         moving_normalized_test_mean_tensor, moving_normalized_test_var_tensor = (
             predict_latent_function_gp_with_derivative(
-                self.gpr_model, test_inputs=moving_test_q_tensor, covar_bool=False
+                self.gpr_model, 
+                test_inputs=moving_test_q_tensor,
+                covar_bool=False
             )
         )
 
@@ -624,7 +697,10 @@ class GPModelWithDerivativesWrapper:
         )
 
         # inverse the normalization procedure for mean value and variance.
-        test_var = self.Normalizer.inverse_normalize_noise_var(normalized_test_var)
+        test_var = self.Normalizer.inverse_normalize_noise_var(
+            normalized_test_var
+        )
+        
         test_mean = self.Normalizer.inverse_normalization_transform(
             normalized_test_mean
         )
@@ -687,19 +763,21 @@ class GPModelWithDerivativesWrapper:
         assert (
             np.shape(new_train_grad_q)[1] == self.input_dim
         ), "train_grad_q for internal coordiante has wrong dimension"
+
         new_train_targets = np.concatenate(
             [new_train_V[:, np.newaxis], new_train_grad_q], axis=1
         )
 
         # normalize the new_train_targets
-        normalized_new_train_targets = self.Normalizer.normalization_transform(
-            new_train_targets
+        normalized_new_train_targets, normalized_new_train_inputs = self.Normalizer.normalization_transform(
+            new_train_targets,
+            new_train_inputs
         )
 
         # For the case we have to fix certain dofs
         moving_new_train_inputs, moving_new_train_targets = (
             self.FixingDofs.transform_training_data_to_free_moving_dofs(
-                new_train_inputs, normalized_new_train_targets
+                normalized_new_train_inputs, normalized_new_train_targets
             )
         )
 
@@ -708,6 +786,7 @@ class GPModelWithDerivativesWrapper:
         )
         moving_new_train_inputs_tensor = torch.from_numpy(moving_new_train_inputs)
 
+        # we only add new training data if they are not too close to each other.
         filtered_new_train_inputs_index = update_model_with_new_data(
             self.gpr_model,
             moving_new_train_inputs_tensor,
@@ -718,9 +797,21 @@ class GPModelWithDerivativesWrapper:
         if len(filtered_new_train_inputs_index) != 0:
             # update the training data and targets in internal coordinate q.
             self.train_inputs = np.concatenate(
-                [self.train_inputs, new_train_inputs[filtered_new_train_inputs_index]],
+                [
+                    self.train_inputs, 
+                    new_train_inputs[filtered_new_train_inputs_index]
+                ],
                 axis=0,
             )
+
+            self.normalized_train_inputs = np.concatenate(
+                [
+                    self.normalized_train_inputs, 
+                    normalized_new_train_inputs[filtered_new_train_inputs_index]
+                ],
+                axis= 0
+            )
+
             self.normalized_train_targets = np.concatenate(
                 [
                     self.normalized_train_targets,
@@ -731,8 +822,13 @@ class GPModelWithDerivativesWrapper:
 
             # update the training data and targets in cartesian coordinate x.
             new_train_cartesian_targets = np.concatenate(
-                [new_train_V[:, np.newaxis], new_train_grad_x], axis=1
+                [
+                    new_train_V[:, np.newaxis],
+                    new_train_grad_x
+                ],
+                axis=1
             )
+
             self.train_cartesian_inputs = np.concatenate(
                 [
                     self.train_cartesian_inputs,
@@ -819,9 +915,16 @@ class GPModelWithDerivativesWrapper:
             self.coordinate_transformer.get_internal_coordinate_q(beads_x)
         )
 
+        # FIXME: add code to normalize the training inputs.
+        normalized_beads_internal_coordinate = (
+            self.Normalizer.normalization_transform_for_inputs(
+                beads_internal_coordinate
+            )
+        )
+
         free_moving_beads_internal_coordinate = (
             self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                beads_internal_coordinate
+                normalized_beads_internal_coordinate
             )
         )
 
