@@ -333,8 +333,6 @@ class NormalizeTrainingData(object):
     """
     normalize the potential & force of training data.
     """
-    # FIXME: Change the code here. 
-    # ADD code that re-scale the input coordinate.
     def __init__(self, 
                  training_targets: np.ndarray,
                  training_inputs: np.ndarray):
@@ -355,8 +353,6 @@ class NormalizeTrainingData(object):
         self.q_mean = q_mean 
         self.q_range = q_range
 
-    # FIXME: Change the code here.
-    # ADD code that re-scale the input coordinate & also gradient.
     def normalization_transform(self, 
                                 training_targets,
                                 training_inputs):
@@ -391,7 +387,6 @@ class NormalizeTrainingData(object):
 
         return normalized_training_targets, normalized_training_inputs
 
-    # FIXME: New function. perform normalization transform for training inputs.
     def normalization_transform_for_inputs(self, 
                                            training_inputs):
         """
@@ -401,8 +396,6 @@ class NormalizeTrainingData(object):
         normalized_training_inputs = (training_inputs - self.q_mean[np.newaxis, :]) / self.q_range[np.newaxis, :]
         return normalized_training_inputs
 
-    # FIXME : Change the code here. 
-    # Add code to reverse the re-scale of the training targets because we have rescaled the training inputs.
     def inverse_normalization_transform(self, normalized_training_targets):
         """
         inverse the normalization procedure of potential V & force F.
@@ -420,15 +413,13 @@ class NormalizeTrainingData(object):
         V = V_normalized * self.V_range + self.V_mean
         grad_V = grad_V_normalized * self.V_range
 
-        # FIXME: new code: re-scale the grad_V.
+        # new code: re-scale the grad_V.
         grad_V = grad_V / self.q_range[np.newaxis, :]
 
         training_targets = np.concatenate([V[:, np.newaxis], grad_V], axis=1)
 
         return training_targets
 
-    # FIXME: Change the code here.
-    # ADD code that re-scale the noise because we re-scale the coordinate.
     def normalize_noise_var(self, noise_var):
         """
         normalize the variance of noise
@@ -442,8 +433,6 @@ class NormalizeTrainingData(object):
 
         return normalized_noise_var
 
-    # FIXME: Change the code here.
-    # ADD code that inverse re-scale the noise because we have re-scaled the coordinate.
     def inverse_normalize_noise_var(self, normalized_noise_var):
         """
         inverse normalize the variance of the noise
@@ -580,7 +569,7 @@ class GPModelWithDerivativesWrapper:
         self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
 
         # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
-        # FIXME: To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
+        # To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
         self.FixingDofs = FixInternalDofs(train_inputs, 
                                           normalized_train_targets,
                                           gpr_fix_internal_dofs_bool,
@@ -915,7 +904,7 @@ class GPModelWithDerivativesWrapper:
             self.coordinate_transformer.get_internal_coordinate_q(beads_x)
         )
 
-        # FIXME: add code to normalize the training inputs.
+        # add code to normalize the training inputs.
         normalized_beads_internal_coordinate = (
             self.Normalizer.normalization_transform_for_inputs(
                 beads_internal_coordinate
