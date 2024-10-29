@@ -3067,6 +3067,11 @@ class RP_MAP(object):
                 )
             )
 
+            #FIXME: debug. For testing the error induced by forward and backward transformation of gradient and hessian.
+            ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
+                np.array([first_hessian_data_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
+            )
+
             #FIXME: debug the code
             ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
             pass
@@ -3117,6 +3122,11 @@ class RP_MAP(object):
             ref_V_shifted = np.array([training_V_shifted[hessian_index_list[0]]])
             ref_grads = training_grads[hessian_index_list[0]]
             ref_hessians = hessian_data_list[0]
+            
+            #FIXME: debug. For testing the error induced by forward and backward transformation of gradient and hessian.
+            ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
+                np.array([ref_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
+            )
 
             self.gpr_hessian_model = (
                 ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
@@ -3148,6 +3158,7 @@ class RP_MAP(object):
                     self.read_gpr_hessian_folder
             )
 
+            # FIXME: for debugging. Temperarily disable loading hyper-parameters for gpr hessian model.
             # if model_hyperparameter_exists:
             #     # the hyper-parameter of the gpr hessian model exists.
             #     # we do not have to train it.

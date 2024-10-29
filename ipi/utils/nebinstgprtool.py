@@ -7,9 +7,11 @@ import numpy as np
 from ipi.utils.gprtools import GPModelWithDerivativesWrapper
 import re
 import os
+import ipi.utils.nebinstgprtool
 from ipi.utils.nebinstool import RK4
 import ipi.utils.nebinstool
 from ipi.utils.gpr_hessian_tools import GPModelWithHessiansWrapper
+import ipi.utils.internalcoordtools 
 import shutil
 
 
@@ -1222,3 +1224,51 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     print(f"train data: error of force prediction: {df_error}")
 
     pass 
+
+
+def analyze_transformation_between_cartesian_coord_and_internal_coord(coord_x,
+                                                                      grad_x,
+                                                                      hessian_x,
+                                                                      coordinate_transformer: ipi.utils.internalcoordtools.non_redundant_coordinate_transformer):
+    """
+    analyze the transformation of gradient and hessian between the Cartesian coordinate
+    and the internal coordinate. 
+    We perform the transformation of gradients and hessian from Cartesian coordinate 
+    to internal coordinate, then transform back.
+    We then compare the difference between the original gradient and hessian and 
+    the transformed gradient and hessian.
+    :param: coord_x: cartesian coordinate of points x.
+    :param: grad_x: gradient of data points in cartesian coordinate.
+    :param: hessian_x: the hessian of data points in cartesian coordinate.
+    :param: coordinate_transformer: class object that transform gradient and hessian between cartesian coordinate and internal coordinate.
+    """
+    # transform the gradient and hessian from cartesian coordinate into internal coordinate.
+    grad_q = coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(coord_x, 
+                                                                                      grad_x)
+    
+    hessian_q = coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(coord_x, 
+                                                                                       grad_x, 
+                                                                                       hessian_x)
+
+    # transform back
+    back_transformed_grad_x = coordinate_transformer.transform_internal_gradient_to_cartesian_gradient(coord_x,
+                                                                                                       grad_q)
+    
+    back_transformed_hessian_x = coordinate_transformer.transform_internal_hessian_to_cartesian_hessian(coord_x,
+                                                                                                        grad_q,
+                                                                                                        hessian_q)
+    
+    # Now test the relative difference of gradient 
+    dg = np.linalg.norm(grad_x - back_transformed_grad_x, axis= 1)
+    ab_initio_grad_amplitude = np.linalg.norm(grad_x, axis= 1)
+    dg_error = dg / ab_initio_grad_amplitude
+
+    print(f"error after forward & backward transform the gradient: {dg_error}")
+    
+    # Now test the relative 
+    relative_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
+        hessian_x, back_transformed_hessian_x
+    )
+
+    print(f"relative hessian error after forward & backward transform of hessian: {relative_hessian_error}")
+    
