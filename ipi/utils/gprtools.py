@@ -496,7 +496,6 @@ class GPModelWithDerivativesWrapper:
 
         self.natom = natom
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
-
         self.coordinate_transformer = coordinate_transformer
 
         # record the input data about initial value of kernel and noise info.
@@ -509,8 +508,22 @@ class GPModelWithDerivativesWrapper:
             [train_V[:, np.newaxis], train_grad_x], axis=1
         )
 
-        # transform cartesian coordinate x to internal coordinate q
-        train_inputs = coordinate_transformer.get_internal_coordinate_q(train_x)
+        self.train_cartesian_inputs = (
+            train_x  # training inputs in cartesian coordinate x
+        )
+        self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
+
+
+        # --------- Transform coordinate and gradient from Cartesian coordinate into the internal coordinate.
+        train_inputs, train_targets, likelihood_noise_variance = self.transform_data_to_internal_coordinate(
+            train_x,
+            train_V,
+            train_grad_x,
+            noise_std
+        )
+        self.train_inputs = (
+            train_inputs  # training inputs in internal coordinate space q.
+        )
 
         input_dim = np.shape(train_inputs)[
             1
@@ -518,13 +531,77 @@ class GPModelWithDerivativesWrapper:
         output_dim = (
             input_dim + 1
         )  # output_dim = input_dim + 1 (train_targets = [V, dV/dx1, ..., dV/dxn])
+
         self.input_dim = input_dim
         self.output_dim = output_dim
+
+        # ------- Normalize the training inputs, targets and noise -----------
+        # decide normalization parameter. Here we normalize the potential as (V- <V>)/range(V). The force also needs to be scaled.
+        self.Normalizer = NormalizeTrainingData(train_targets,
+                                                train_inputs
+                                                )
+
+        normalized_train_inputs, normalized_train_targets, likelihood_noise_variance = self.normalize_data(
+            train_inputs,
+            train_targets,
+            likelihood_noise_variance
+        )
+        # record normalized training input and normalized training targets. 
+        self.normalized_train_inputs = (
+            normalized_train_inputs  
+        )
+
+        # training outputs in internal coordinates q. (V, dV/dq)
+        self.normalized_train_targets = normalized_train_targets  
+
+        # -------- Fixing certain dofs ----------------
+        # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
+        # To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
+        self.FixingDofs = FixInternalDofs(train_inputs, 
+                                          normalized_train_targets,
+                                          gpr_fix_internal_dofs_bool,
+                                          gpr_fix_internal_dofs_cutoff
+                                          )
+        
+        moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = self.fix_internal_dofs(
+            normalized_train_inputs, normalized_train_targets, likelihood_noise_variance
+        )
+
+        # ------- transform input from numpy array to torch.tensor -----------
+        (moving_train_inputs, moving_train_targets) = map(
+            torch.from_numpy, (moving_train_inputs, moving_train_targets)
+        )
+
+        # -------- fixing certain dofs. -----------------
+
+        # initialize the gaussian process regression model with input training data.
+        self.gpr_model = GPModelWithDerivatives(
+            moving_train_inputs,
+            moving_train_targets,
+            self.moving_input_dim,
+            self.moving_output_dim,
+            gpr_SE_kernel_number,
+            kernel_outputscale,
+            kernel_lengthscale_ratio,
+            moving_likelihood_noise_variance,
+        )
+
+        if train_bool:   
+            # train self.gpr_model() to get optimized hyperparameter
+            self.train_gpr()
+
+    def transform_data_to_internal_coordinate(self, train_x, train_V, train_grad_x, noise_std= None):
+        """
+        Transform the cartesian coordinate, and gradient into the internal coordinate.
+        Transform the noise from Cartesian coordinate into the internal coordinate.
+        """
+        # transform cartesian coordinate x to internal coordinate q
+        train_inputs = self.coordinate_transformer.get_internal_coordinate_q(train_x)
 
         # shape: [N, 3 * natom - 6]
         # transform the gradient of potential V: dV/dx -> dV/dq
         train_grad_q = (
-            coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+            self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
                 train_x, train_grad_x
             )
         )
@@ -532,15 +609,21 @@ class GPModelWithDerivativesWrapper:
         # target data: [V, dV/dq1, ..., dV/dqn]
         train_targets = np.concatenate([train_V[:, np.newaxis], train_grad_q], axis=1)
 
-        # compute the estimated noise covariance factor for the force in the internal coordinate q. noise for Fq = dV/dq.
-        likelihood_noise_variance = self.transform_cartesian_noise_to_gpr_model_noise(
-            noise_std
-        )
+        if noise_std != None:
+            # compute the estimated noise covariance factor for the force in the internal coordinate q. noise for Fq = dV/dq.
+            likelihood_noise_variance = self.transform_cartesian_noise_to_gpr_model_noise(
+                noise_std
+            )
 
-        # decide normalization parameter. Here we normalize the potential as (V- <V>)/range(V). The force also needs to be scaled.
-        self.Normalizer = NormalizeTrainingData(train_targets,
-                                                train_inputs)
+        if noise_std != None:
+            return train_inputs, train_targets, likelihood_noise_variance
+        else:
+            return train_inputs, train_targets
 
+    def normalize_data(self, train_inputs, train_targets, likelihood_noise_variance):
+        """
+        Normalize the training inputs, training targets and the noise.
+        """
         # perform normalization on training targets.
         normalized_train_targets, normalized_train_inputs = (
             self.Normalizer.normalization_transform(
@@ -553,63 +636,30 @@ class GPModelWithDerivativesWrapper:
             likelihood_noise_variance
         )
 
-        # record training input and normalized training targets. 
-        self.train_inputs = (
-            train_inputs  # training inputs in internal coordinate space q.
-        )
-        self.normalized_train_inputs = (
-            normalized_train_inputs  # training inputs after re-scale the coordinate.
-        )
+        return normalized_train_inputs, normalized_train_targets, likelihood_noise_variance
 
-        self.normalized_train_targets = normalized_train_targets  # training outputs in internal coordinates q. (V, dV/dq)
-
-        self.train_cartesian_inputs = (
-            train_x  # training inputs in cartesian coordinate x
-        )
-        self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
-
-        # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
-        # To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
-        self.FixingDofs = FixInternalDofs(train_inputs, 
-                                          normalized_train_targets,
-                                          gpr_fix_internal_dofs_bool,
-                                          gpr_fix_internal_dofs_cutoff
-                                          )
-        
+    def fix_internal_dofs(self, train_inputs, train_targets, likelihood_noise_variance):
+        """
+        delete certain fixed dofs in training inputs and targets.
+        """
         moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = (
             self.FixingDofs.transform_training_data_to_free_moving_dofs(
-                normalized_train_inputs, normalized_train_targets, likelihood_noise_variance
+                train_inputs, train_targets, likelihood_noise_variance
             )
         )
 
-        moving_input_dim = input_dim - len(self.FixingDofs.fixed_internal_dofs)
-        moving_output_dim = output_dim - len(self.FixingDofs.fixed_internal_dofs)
+        self.moving_input_dim = self.input_dim - len(self.FixingDofs.fixed_internal_dofs)
+        self.moving_output_dim = self.output_dim - len(self.FixingDofs.fixed_internal_dofs)
 
-        # transform input from numpy array to torch.tensor
-        moving_train_inputs_tensor = torch.from_numpy(moving_train_inputs)
-        moving_train_targets_tensor = torch.from_numpy(moving_train_targets)
+        return moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance
 
-        # initialize the gaussian process regression model with input training data.
-        self.gpr_model = GPModelWithDerivatives(
-            moving_train_inputs_tensor,
-            moving_train_targets_tensor,
-            moving_input_dim,
-            moving_output_dim,
-            gpr_SE_kernel_number,
-            kernel_outputscale,
-            kernel_lengthscale_ratio,
-            moving_likelihood_noise_variance,
-        )
-
-        if train_bool:   
-            # train self.gpr_model() to get optimized hyperparameter
-            self.train_gpr()
 
     def train_gpr(self):
         """
         train the gpr model.
         """
         train_gpr(self.gpr_model)
+
 
     def transform_cartesian_noise_to_gpr_model_noise(self, noise_std):
         """
@@ -741,21 +791,17 @@ class GPModelWithDerivativesWrapper:
         ), "dim of gradients for input data is not 3 * natom"
 
         # input data in internal coordinate
-        new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(
-            new_train_x
+        new_train_inputs, new_train_targets = self.transform_data_to_internal_coordinate(
+            new_train_x,
+            new_train_V,
+            new_train_grad_x
         )
 
-        # gradient of potential in internal coordinate
-        new_train_grad_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
-            new_train_x, new_train_grad_x
-        )
+        # check the shape of gradient in internal coordinate.
+        new_train_grad_q = new_train_targets[:,1:]
         assert (
             np.shape(new_train_grad_q)[1] == self.input_dim
         ), "train_grad_q for internal coordiante has wrong dimension"
-
-        new_train_targets = np.concatenate(
-            [new_train_V[:, np.newaxis], new_train_grad_q], axis=1
-        )
 
         # normalize the new_train_targets
         normalized_new_train_targets, normalized_new_train_inputs = self.Normalizer.normalization_transform(
@@ -763,75 +809,99 @@ class GPModelWithDerivativesWrapper:
             new_train_inputs
         )
 
-        # For the case we have to fix certain dofs
+        # fix certain dofs from input and targets, not including it in our gpr model.
         moving_new_train_inputs, moving_new_train_targets = (
             self.FixingDofs.transform_training_data_to_free_moving_dofs(
                 normalized_new_train_inputs, normalized_new_train_targets
             )
         )
 
-        normalized_moving_new_train_targets_tensor = torch.from_numpy(
-            moving_new_train_targets
+        # transform numpy array into tensor.
+        (moving_new_train_inputs, moving_new_train_targets) = map(
+            torch.from_numpy, (moving_new_train_inputs, moving_new_train_targets)
         )
-        moving_new_train_inputs_tensor = torch.from_numpy(moving_new_train_inputs)
 
         # we only add new training data if they are not too close to each other.
         filtered_new_train_inputs_index = update_model_with_new_data(
             self.gpr_model,
-            moving_new_train_inputs_tensor,
-            normalized_moving_new_train_targets_tensor,
+            moving_new_train_inputs,
+            moving_new_train_targets,
             distance_cutoff,
         )
 
         if len(filtered_new_train_inputs_index) != 0:
-            # update the training data and targets in internal coordinate q.
-            self.train_inputs = np.concatenate(
-                [
-                    self.train_inputs, 
-                    new_train_inputs[filtered_new_train_inputs_index]
-                ],
-                axis=0,
-            )
+            self.update_training_variables(
+                filtered_new_train_inputs_index,
+                new_train_inputs,
+                normalized_new_train_inputs,
+                normalized_new_train_targets,
+                new_train_x,
+                new_train_V,
+                new_train_grad_x
+                )
 
-            self.normalized_train_inputs = np.concatenate(
-                [
-                    self.normalized_train_inputs, 
-                    normalized_new_train_inputs[filtered_new_train_inputs_index]
-                ],
-                axis= 0
-            )
+    def update_training_variables(self, 
+                                  filtered_new_train_inputs_index,
+                                  new_train_inputs,
+                                  normalized_new_train_inputs,
+                                  normalized_new_train_targets,
+                                  new_train_x,
+                                  new_train_V,
+                                  new_train_grad_x
+                                  ):
+        """
+        update variables: 
+        self.train_inputs, self.normalized_train_inputs, self.normalized_train_targets,
+        self.train_cartesian_inputs, self.train_cartesian_targets
+        """
+        # update the training data and targets in internal coordinate q.
+        self.train_inputs = np.concatenate(
+            [
+                self.train_inputs, 
+                new_train_inputs[filtered_new_train_inputs_index]
+            ],
+            axis=0,
+        )
 
-            self.normalized_train_targets = np.concatenate(
-                [
-                    self.normalized_train_targets,
-                    normalized_new_train_targets[filtered_new_train_inputs_index],
-                ],
-                axis=0,
-            )
+        self.normalized_train_inputs = np.concatenate(
+            [
+                self.normalized_train_inputs, 
+                normalized_new_train_inputs[filtered_new_train_inputs_index]
+            ],
+            axis= 0
+        )
 
-            # update the training data and targets in cartesian coordinate x.
-            new_train_cartesian_targets = np.concatenate(
-                [
-                    new_train_V[:, np.newaxis],
-                    new_train_grad_x
-                ],
-                axis=1
-            )
+        self.normalized_train_targets = np.concatenate(
+            [
+                self.normalized_train_targets,
+                normalized_new_train_targets[filtered_new_train_inputs_index],
+            ],
+            axis=0,
+        )
 
-            self.train_cartesian_inputs = np.concatenate(
-                [
-                    self.train_cartesian_inputs,
-                    new_train_x[filtered_new_train_inputs_index],
-                ],
-                axis=0,
-            )
-            self.train_cartesian_targets = np.concatenate(
-                [
-                    self.train_cartesian_targets,
-                    new_train_cartesian_targets[filtered_new_train_inputs_index],
-                ],
-                axis=0,
-            )
+        # update the training data and targets in cartesian coordinate x.
+        new_train_cartesian_targets = np.concatenate(
+            [
+                new_train_V[:, np.newaxis],
+                new_train_grad_x
+            ],
+            axis=1
+        )
+
+        self.train_cartesian_inputs = np.concatenate(
+            [
+                self.train_cartesian_inputs,
+                new_train_x[filtered_new_train_inputs_index],
+            ],
+            axis=0,
+        )
+        self.train_cartesian_targets = np.concatenate(
+            [
+                self.train_cartesian_targets,
+                new_train_cartesian_targets[filtered_new_train_inputs_index],
+            ],
+            axis=0,
+        )
 
     # ------ functions below are auxiliary functions to output gpr model parameters ------------------------
     def output_kernel_lengthscale(self):

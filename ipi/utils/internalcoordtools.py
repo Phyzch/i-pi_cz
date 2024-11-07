@@ -13,7 +13,7 @@ class non_redundant_coordinate_transformer:
     perform transformation between Cartesian coordinate and internal coordinate
     """
 
-    def __init__(self, natom, ref_x):
+    def __init__(self, natom, ref_x, singular_value_cutoff = np.power(10.0, -2)):
         """
         :param: natom: number of atoms for the molecule
         :param: ref_x: Cartesian coordinate of the reference point
@@ -32,10 +32,11 @@ class non_redundant_coordinate_transformer:
 
         # compute transformation matrix U between non_redundant_coordinate q and redundant_coordinate d for reference point
         # we can access U as self.ref_U
-        self.compute_transformation_matrix_U_for_ref_point()
+        self.compute_transformation_matrix_U_for_ref_point(singular_value_cutoff)
 
     # for reference point, compute transformation matrix U.
-    def compute_transformation_matrix_U_for_ref_point(self):
+    def compute_transformation_matrix_U_for_ref_point(self,
+                                                      singular_value_cutoff):
         """
         compute transformation matrix U for transformation between nonredundant coordinate q and redundant coordinate d.
         result is computed for reference point: ref_x.
@@ -46,7 +47,8 @@ class non_redundant_coordinate_transformer:
         )  # this function takes in an array of coordinate x and return \partial d / \partial x: The B matrix.
         ref_B = ref_B[0]  # B: redundant Wilson's B matrix.  shape: [natom^2, 3 * natom]
         ref_U, ref_S = self._SVD_matrix_B(
-            ref_B
+            ref_B,
+            singular_value_cutoff
         )  # ref_U: shape [natom^2, internal_dof].   ref_S: eigenvalue matrix S, diagonal part is eigenvalue s_i.
 
         self.ref_U = ref_U  # left singular vector matrix. each column is one left singular vector.
@@ -95,7 +97,7 @@ class non_redundant_coordinate_transformer:
         return B
 
     # SVD decomposition of B to obtain left singular vector matrix U.
-    def _SVD_matrix_B(self, B):
+    def _SVD_matrix_B(self, B, singular_value_cutoff):
         """
         This code should only be called once for the reference point.
         compute the transformation matrix U: which is the eigenvector of B B^T with nonzero eigenvalues.
@@ -122,7 +124,7 @@ class non_redundant_coordinate_transformer:
         zero_S = S[zero_S_index]
         if np.size(zero_S) != 0:
             zero_s_max = np.max(np.abs(zero_S))
-            if zero_s_max > np.power(1.0, -2) * np.min(np.abs(nonzero_S)):
+            if zero_s_max > np.power(10.0, -2) * np.min(np.abs(nonzero_S)):
                 # nonzero value is too large
                 raise (
                     "zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(
@@ -132,7 +134,7 @@ class non_redundant_coordinate_transformer:
 
         # check the case that non-zero singular value becomes 0 (could because of the extra symmetry).
         # In this case, we will have internal coordinate number < 3n - 6.
-        singular_value_cutoff = np.max(nonzero_S) * np.power(10.0, -2)
+        singular_value_cutoff = np.max(nonzero_S) * singular_value_cutoff
         S_clip = np.array([s for s in S if s > singular_value_cutoff])
         nonzero_S_index_len = len(S_clip)
 
