@@ -72,8 +72,11 @@ class NormalizeTrainingData(object):
     normalize the potential, force and hessian of the training data.
     This will enforce the potential V is in the range of [0, 1]
     """
-
-    def __init__(self, V: np.ndarray):
+    # FIXME: change code here.
+    # 
+    def __init__(self, 
+                 V: np.ndarray,
+                 training_inputs: np.ndarray):
         """
         V_normalized = (V - V_mean)/V_range.
 
@@ -82,8 +85,27 @@ class NormalizeTrainingData(object):
         self.V_mean = np.mean(V)
         self.V_range = np.max(V) - np.min(V)
 
+        # transform the coordinate. Do it for the initial data.
+        # TODO: This code could cause potential trouble when we reload the training data.
+        # Because q_mean and q_range depends on the dataset when the model is created.
+        # it will change after we add new data when we re-initialize the model
+        q_mean = np.mean(training_inputs, axis= 0) # <q>
+        q_range = np.max(training_inputs, axis= 0) - np.min(training_inputs, axis= 0)
+
+        self.q_mean = q_mean 
+        self.q_range = q_range
+
+        # the number of internal dofs.
+        self.q_ndofs = np.shape(training_inputs)[1] 
+
+    # FIXME: change this code. 
+    # re-scale the training inputs, gradients and hessians.
     def normalization_transform(
-        self, V: np.ndarray, grad_V: np.ndarray, hessian_V: np.ndarray
+        self, 
+        V: np.ndarray, 
+        grad_V: np.ndarray, 
+        hessian_V: np.ndarray,
+        train_inputs: np.ndarray
     ):
         """
         normalize the potential, gradients and hessians.
@@ -99,12 +121,56 @@ class NormalizeTrainingData(object):
         """
         V_normalized = (V - self.V_mean) / self.V_range
         grad_V_normalized = grad_V / self.V_range
-        hessian_V_normalized = hessian_V / self.V_range
 
-        return V_normalized, grad_V_normalized, hessian_V_normalized
+        # FIXME: transform the training_inputs, gradients and hessians.
+        train_inputs_normalized = (train_inputs - self.q_mean[np.newaxis, :]) / self.q_range[np.newaxis, :]
+        grad_V_normalized = grad_V_normalized * self.q_range[np.newaxis, :]
+        # diagonal matrix with q_range
+        q_range_diag_matrix = np.diag(self.q_range, k= 0)
+
+        # normalization for hessian.
+        if len(hessian_V) > 0:
+            hessian_V_normalized = hessian_V / self.V_range
+            hessian_V_normalized = np.matmul(np.matmul(q_range_diag_matrix, hessian_V_normalized), q_range_diag_matrix)
+        else:
+            hessian_V_normalized = np.array([])
+
+        return V_normalized, grad_V_normalized, hessian_V_normalized, train_inputs_normalized
+    
+    #FIXME: New function. Perform normalization transformation for hessian.
+    def normalization_transform_for_hessian(
+            self,
+            hessian_V: np.ndarray
+    ):
+        """
+        normalize the hessian data.
+        """  
+        if len(hessian_V) > 0:
+            hessian_V_normalized = hessian_V / self.V_range 
+            # FIXME: transform hessian because we re-scale the input.
+            q_range_diag_matrix = np.diag(self.q_range, k= 0)
+            hessian_V_normalized = np.matmul(np.matmul(q_range_diag_matrix, hessian_V_normalized), q_range_diag_matrix)
+        else:
+            hessian_V_normalized = np.array([])
+
+        return hessian_V_normalized
+
+    # FIXME: New function. Perform normalization transformation for inputs.
+    def normalization_transform_for_inputs(
+            self,
+            train_inputs: np.ndarray
+    ):
+        """
+        normalize the training inputs.
+        """
+        train_inputs_normalized = (train_inputs - self.q_mean[np.newaxis, :]) / self.q_range[np.newaxis, :]
+        return train_inputs_normalized
 
     def inverse_normalization_transform(
-        self, V_normalized, grad_V_normalized, hessian_V_normalized
+        self, 
+        V_normalized, 
+        grad_V_normalized, 
+        hessian_V_normalized
     ):
         """
         inverse the normalization procedure for potential V, gradients and hessians.
@@ -115,13 +181,34 @@ class NormalizeTrainingData(object):
         """
         V = V_normalized * self.V_range + self.V_mean
         grad_V = grad_V_normalized * self.V_range
-        hessian = hessian_V_normalized * self.V_range
+
+        # inverse normalization of gradient and hessian 
+        grad_V = grad_V / self.q_range[np.newaxis, :]
+
+        # diagonal matrix with q range.
+        inverse_q_range_diag_matrix = np.diag(1 / self.q_range, k= 0)
+
+        if len(hessian_V_normalized) > 0:
+            hessian = hessian_V_normalized * self.V_range
+            hessian = np.matmul(
+                np.matmul(
+                    inverse_q_range_diag_matrix, 
+                    hessian
+                    ), 
+                inverse_q_range_diag_matrix
+                )
+        else:
+            hessian = np.array([])
 
         return V, grad_V, hessian
 
-    def normalize_noise_var(self, pot_noise_var, force_noise_var, hessian_noise_var):
+    def normalize_noise_var(self, 
+                            pot_noise_var, 
+                            force_noise_var, 
+                            hessian_noise_var):
         """
         normalize the variance of noise by scaling it by self.V_range.
+        Note the re-scaling due to the input rescaling is performed in noise_covar_factor matrix. 
         """
         normalized_pot_noise_var = pot_noise_var / np.power(self.V_range, 2)
         normalized_force_noise_var = force_noise_var / np.power(self.V_range, 2)
@@ -132,6 +219,7 @@ class NormalizeTrainingData(object):
             normalized_force_noise_var,
             normalized_hessian_noise_var,
         )
+    
 
     def inverse_normalize_noise_var(
         self,
@@ -144,9 +232,74 @@ class NormalizeTrainingData(object):
         """
         pot_noise_var = normalized_pot_noise_var * np.power(self.V_range, 2)
         force_noise_var = normalized_force_noise_var * np.power(self.V_range, 2)
-        hessian_noise_var = normalized_hessian_noise_var * np.power(self.V_range, 2)
+
+        # FIXME: add code to inverse the normalization of the force and hessian.
+        force_noise_var = force_noise_var / np.power(self.q_range, 2)
+        inverse_square_q_range_diag_matrix = np.diag(1 / np.power(self.q_range, 2), k= 0)
+
+        if len(normalized_hessian_noise_var) > 0:
+            hessian_noise_var = normalized_hessian_noise_var * np.power(self.V_range, 2)
+            hessian_noise_var = np.matmul(
+                            np.matmul(
+                                inverse_square_q_range_diag_matrix, 
+                                hessian_noise_var
+                                ), 
+                            inverse_square_q_range_diag_matrix
+                            )
+        else:
+            hessian_noise_var = np.array([])
 
         return pot_noise_var, force_noise_var, hessian_noise_var
+
+    #FIXME: New code.
+    #FIXME: Normalize the noise covariance factor because we re-scale the training inputs.
+    def normalize_noise_covar_factor_array(self,
+                                           noise_covar_factor_pot_grad_array: np.ndarray,
+                                           noise_covar_factor_with_hessian_array: np.ndarray):
+        """
+        This function re-scale the noise transformation matrix when we re-scale the training inputs.
+        """
+        # transformation matrix for data points with only potential and gradient.
+        q_size = self.q_ndofs 
+        hessian_q_triu_size = int( (q_size + 1) * q_size / 2)
+
+        size_no_hessian = 1 + q_size  # size for data point with only potential and gradient data.
+        size_with_hessian = 1 + q_size + hessian_q_triu_size  # size for data point with pot, gradient and hessian data.
+
+        # matrix that normalize the noise covariance factor for data point without hessian 
+        matrix_no_hessian = np.zeros(shape= (size_no_hessian, size_no_hessian))
+        matrix_no_hessian[0, 0] = 1 
+        matrix_no_hessian[1:, 1:] = np.diag(self.q_range, k= 0)
+
+        # matrix that normalize the noise covariance factor for data points with hessian.
+        matrix_with_hessian = np.zeros(shape= (size_with_hessian, size_with_hessian))
+        matrix_with_hessian[0, 0] = 1
+        matrix_with_hessian[1: 1 + q_size, 1: 1 + q_size] = np.diag(self.q_range, k= 0)
+        
+        # matrix component that re-scale the upper triangle part of hessian.
+        hessian_rescale_matrix = np.ones((q_size, q_size))
+        q_range_diag_matrix = np.diag(self.q_range, k= 0)
+        hessian_rescale_matrix = np.matmul(np.matmul(q_range_diag_matrix, hessian_rescale_matrix), q_range_diag_matrix)
+        hessian_rescale_matrix_upper_triangle = take_upper_triangular_part(hessian_rescale_matrix)
+        hessian_rescale_matrix = np.diag(hessian_rescale_matrix_upper_triangle)
+
+        matrix_with_hessian[1 + q_size: size_with_hessian, 1 + q_size : size_with_hessian] = hessian_rescale_matrix
+
+        # Now we re-scale the noise covar factor matrix.
+        normalized_noise_covar_factor_pot_grad_array = np.matmul(matrix_no_hessian, 
+                                                                 noise_covar_factor_pot_grad_array)
+
+        if len(noise_covar_factor_with_hessian_array) > 0:
+            normalized_noise_covar_factor_with_hessian_array = np.matmul(
+                                                                        matrix_with_hessian, 
+                                                                        noise_covar_factor_with_hessian_array
+                                                                        )
+        else:
+            normalized_noise_covar_factor_with_hessian_array = np.array([])
+
+        return normalized_noise_covar_factor_pot_grad_array, normalized_noise_covar_factor_with_hessian_array
+
+
 
 
 class FixInternalDofs(object):
@@ -234,7 +387,9 @@ class FixInternalDofs(object):
         return moving_train_inputs
 
     def transform_training_targets_to_free_moving_dofs(
-        self, grads: np.ndarray, hessians: np.ndarray
+        self, 
+        grads: np.ndarray, 
+        hessians: np.ndarray
     ):
         """
         delete fixdofs data from training gradients and hessians.
@@ -247,6 +402,18 @@ class FixInternalDofs(object):
             moving_hessians = hessians
 
         return moving_grads, moving_hessians
+
+    def transform_training_hessians_to_free_moving_dofs(
+            self, 
+            hessians: np.ndarray
+    ):
+        if len(hessians) > 0:
+            index_2d = self.free_moving_dofs_2d_index
+            moving_hessians = hessians[:, index_2d[0], index_2d[1]]
+        else:
+            moving_hessians = hessians 
+        
+        return moving_hessians
 
     def transform_noise_covar_factor_fixing_internal_dofs(
         self, noise_covar_factor, with_hessian_bool=False
@@ -345,7 +512,9 @@ class FixInternalDofs(object):
         )
 
     def transform_from_free_moving_dofs_to_full_dofs(
-        self, test_moving_grads, test_moving_hessians, zero_bool=False
+        self, test_moving_grads, 
+        test_moving_hessians, 
+        zero_bool=False
     ):
         """
         Transform the prediction of the GPR model from free moving dofs into the full dofs
@@ -385,7 +554,6 @@ class FixInternalDofs(object):
             test_hessians = torch.Tensor([])
 
         return test_grads, test_hessians
-
 
 class GPModelWithHessiansWrapper:
     """
@@ -489,7 +657,8 @@ class GPModelWithHessiansWrapper:
         # transform the gradient of potential V into internal coordinate: dV/dx -> dV/dq
         train_grad_q = (
             coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
-                train_x, train_grad_x
+                train_x, 
+                train_grad_x
             )
         )
         # transform the hessian of potential V: d^2 V/ dx^2 -> d^2 V/ dq^2
@@ -520,14 +689,40 @@ class GPModelWithHessiansWrapper:
         hessian_noise_rank = int((3 * natom) * (3 * natom + 1) / 2)
 
         # Normalize the potential, gradient and hessians.
-        self.Normalizer = NormalizeTrainingData(train_V)
-        normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q = (
+        self.Normalizer = NormalizeTrainingData(train_V,
+                                                train_inputs
+                                                )
+
+        normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q, normalized_train_inputs = (
             self.Normalizer.normalization_transform(
-                train_V, train_grad_q, train_hessian_q
+                train_V, 
+                train_grad_q, 
+                train_hessian_q,
+                train_inputs
+            )
+        )
+
+        # TODO: Write code that normalize the noise_covar_factor_pot_grad_array 
+        # TODO: & noise_covar_factor_with_hessian_array
+        noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array = (
+            self.Normalizer.normalize_noise_covar_factor_array(
+                noise_covar_factor_pot_grad_array,
+                noise_covar_factor_with_hessian_array
+            )
+        )
+
+        # set variance of noise.
+        pot_noise_var, grad_noise_var, hessian_noise_var = self.compute_noise_var(
+            noise_std
+        )
+        pot_noise_var, grad_noise_var, hessian_noise_var = (
+            self.Normalizer.normalize_noise_var(
+                pot_noise_var, grad_noise_var, hessian_noise_var
             )
         )
 
         # Filter the fixed dofs in coordinate (q) and gradients & hessians.
+        # For fixing dofs, we use the train_inputs before we normalize it.
         self.FixingDofs = FixInternalDofs(
             train_inputs, 
             normalized_train_grad_q, 
@@ -535,12 +730,17 @@ class GPModelWithHessiansWrapper:
             gpr_fix_internal_dofs_bool,
             gpr_fix_internal_dofs_cutoff
         )
+        
         moving_train_inputs = (
-            self.FixingDofs.transform_training_inputs_to_free_moving_dofs(train_inputs)
+            self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
+                normalized_train_inputs
+                )
         )
+
         moving_normalized_train_grad_q, moving_normalized_train_hessian_q = (
             self.FixingDofs.transform_training_targets_to_free_moving_dofs(
-                normalized_train_grad_q, normalized_train_hessians_q
+                normalized_train_grad_q, 
+                normalized_train_hessians_q
             )
         )
 
@@ -549,17 +749,7 @@ class GPModelWithHessiansWrapper:
             self.FixingDofs.transform_noise_covar_factor_array_fixing_internal_dofs(
                 noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array
             )
-        )
-
-        # set variance of noise.
-        pot_noise_var, force_noise_var, hessian_noise_var = self.compute_noise_var(
-            noise_std
-        )
-        pot_noise_var, force_noise_var, hessian_noise_var = (
-            self.Normalizer.normalize_noise_var(
-                pot_noise_var, force_noise_var, hessian_noise_var
-            )
-        )
+        )  
 
         # transform pots, gradients and hessisans in to 1d data.
         # After we have normalized the training data and excluded fixed dof in gradient and hessian data.
@@ -612,7 +802,7 @@ class GPModelWithHessiansWrapper:
             kernel_outputscale,
             kernel_lengthscale_ratio,
             pot_noise_var,
-            force_noise_var,
+            grad_noise_var,
             hessian_noise_var,
             force_noise_rank,
             hessian_noise_rank,
@@ -659,11 +849,21 @@ class GPModelWithHessiansWrapper:
         B = self.coordinate_transformer._compute_redundant_gradient_matrix_B(
             np.array([x])
         )[0]
+
+        # FIXME: Use U matrix specific to Bq to do the transformation.
+        nonzero_s_len = np.shape(self.coordinate_transformer.ref_U)[1]
+        U, S, Vh = np.linalg.svd(B, full_matrices= False)
+        U = U[:, :nonzero_s_len]
+        UT = np.transpose(U)
         # \partial q / \partial x. shape [3n - 6, 3n]
-        Bq = np.matmul(self.coordinate_transformer.ref_UT, B)
+        Bq = np.matmul(UT, B)
+        
+        # # \partial q / \partial x. shape [3n - 6, 3n]
+        # Bq = np.matmul(self.coordinate_transformer.ref_UT, B)
+
         # \partial x / \partial q.
         inverse_Bq_transpose = np.transpose(
-            np.linalg.pinv(Bq, rcond=np.power(10.0, -8)), (1, 0)
+            np.linalg.pinv(Bq), (1, 0)
         )
 
         q_size = Bq.shape[0]
@@ -804,6 +1004,8 @@ class GPModelWithHessiansWrapper:
                 np.array([ref_mean_x])
             )[0]
 
+            ref_mean_q = np.copy(self.ref_mean_q)
+
             ref_mean_grad_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
                 np.array([ref_mean_x]), np.array([ref_mean_grad_x])
             )[
@@ -822,16 +1024,24 @@ class GPModelWithHessiansWrapper:
             self.ref_mean_hessian_q = ref_mean_hessian_q
 
             # Normalize the data.
-            ref_mean_V, ref_mean_grad_q, ref_mean_hessian_q = (
+            ref_mean_V, ref_mean_grad_q, ref_mean_hessian_q, ref_mean_q = (
                 self.Normalizer.normalization_transform(
-                    ref_mean_V, ref_mean_grad_q, ref_mean_hessian_q
+                    ref_mean_V, 
+                    np.array([ref_mean_grad_q]), 
+                    np.array([ref_mean_hessian_q]),
+                    np.array([ref_mean_q])
                 )
             )
 
+            ref_mean_q = ref_mean_q[0]
+            ref_mean_grad_q = ref_mean_grad_q[0]
+            ref_mean_hessian_q = ref_mean_hessian_q[0]
+
             # Filter the fixed dofs.
             ref_mean_q = self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                np.array([self.ref_mean_q])
+                np.array([ref_mean_q])
             )[0]
+
             ref_mean_grad_q, ref_mean_hessian_q = (
                 self.FixingDofs.transform_training_targets_to_free_moving_dofs(
                     np.array([ref_mean_grad_q]), np.array([ref_mean_hessian_q])
@@ -859,6 +1069,12 @@ class GPModelWithHessiansWrapper:
             ref_mean_grad_q_tensor,
             ref_mean_hessian_q_tensor,
         )
+
+    def rescale_likelihood_noise(self):
+        """
+        Re-scale the likelihood noise covariance matrix if the noise itself is too large.
+        """
+
 
     def predict_latent_function(
         self,
@@ -913,11 +1129,15 @@ class GPModelWithHessiansWrapper:
 
         # inverse the normalization procedure for mean value and variance.
         pots, grads_q, hessians_q = self.Normalizer.inverse_normalization_transform(
-            pots, grads_q, hessians_q
+            pots, 
+            grads_q, 
+            hessians_q
         )
         pots_var, grads_q_var, hessians_q_var = (
             self.Normalizer.inverse_normalize_noise_var(
-                pots_var, grads_q_var, hessians_q_var
+                pots_var, 
+                grads_q_var, 
+                hessians_q_var
             )
         )
 
@@ -1083,18 +1303,31 @@ class GPModelWithHessiansWrapper:
             new_noise_covar_factor_pot_grad_array,
             new_noise_covar_factor_with_hessian_array,
         ) = self.compute_noise_covar_factor_array(
-            new_train_x, new_hessian_data_point_index
+            new_train_x, 
+            new_hessian_data_point_index
         )
 
         # Normalize the potential, gradient and hessians
-        new_train_V, new_train_grad_q, new_train_hessian_q = (
+        new_train_V, new_train_grad_q, new_train_hessian_q, new_train_inputs = (
             self.Normalizer.normalization_transform(
-                new_train_V, new_train_grad_q, new_train_hessian_q
+                new_train_V, 
+                new_train_grad_q, 
+                new_train_hessian_q,
+                new_train_inputs
             )
         )
 
+        # Normalize the noise covar factor matrix.
+        (
+            new_noise_covar_factor_pot_grad_array, 
+            new_noise_covar_factor_with_hessian_array
+        ) = self.Normalizer.normalize_noise_covar_factor_array(
+            new_noise_covar_factor_pot_grad_array,
+            new_noise_covar_factor_with_hessian_array
+        )
+
         # normalize train_hessian_q 
-        normalized_train_hessian_q = self.train_hessian_q / self.Normalizer.V_range
+        normalized_train_hessian_q = self.Normalizer.normalization_transform_for_hessian(self.train_hessian_q)
         if len(self.train_hessian_q) > 0:
             # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
             self.FixingDofs.update_hessians_for_fixed_dofs(normalized_train_hessian_q)
@@ -1107,7 +1340,8 @@ class GPModelWithHessiansWrapper:
         )
         new_train_grad_q, new_train_hessian_q = (
             self.FixingDofs.transform_training_targets_to_free_moving_dofs(
-                new_train_grad_q, new_train_hessian_q
+                new_train_grad_q, 
+                new_train_hessian_q
             )
         )
         # filter fixed dofs from noise_covar_factor_array.
@@ -1150,7 +1384,7 @@ class GPModelWithHessiansWrapper:
             new_noise_covar_factor_with_hessian_array,
             retrain_bool=retrain_bool,
         )
-
+    
     def train_model(self, output_training_info=False):
         """
         function that trains the model
@@ -1165,9 +1399,13 @@ class GPModelWithHessiansWrapper:
             self.coordinate_transformer.get_internal_coordinate_q(beads_x)
         )
 
+        normalized_beads_internal_coordinate = self.Normalizer.normalization_transform_for_inputs(
+            beads_internal_coordinate
+        )
+
         free_moving_beads_internal_coordinate = (
             self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                beads_internal_coordinate
+                normalized_beads_internal_coordinate
             )
         )
 
@@ -1179,11 +1417,8 @@ class GPModelWithHessiansWrapper:
         check the length scale for Gaussian Process Regression model.
         """
         # the range of data in internal coordinate.
-        free_moving_dofs = self.FixingDofs.free_moving_dofs
-        input_range = np.max(self.train_inputs, axis=0) - np.min(
-            self.train_inputs, axis=0
-        )
-        input_range = input_range[free_moving_dofs]
+        moving_inputs = self.gpr_model.train_inputs[0].detach().numpy() 
+        input_range = np.max(moving_inputs, axis= 0) - np.min(moving_inputs, axis= 0)
 
         gpr_kernel_number = self.gpr_SE_kernel_number
 

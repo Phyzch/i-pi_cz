@@ -54,6 +54,8 @@ class non_redundant_coordinate_transformer:
         self.ref_U = ref_U  # left singular vector matrix. each column is one left singular vector.
         self.ref_UT = np.transpose(self.ref_U)
         self.ref_S = ref_S
+        self.nonzero_S_index_len = len(ref_S)
+        print(f"Number of nonzero dofs: {self.nonzero_S_index_len}") 
 
     # transformation x - > B_d  (Wilson's B matrix for redundant coordinate d)
     def _compute_redundant_gradient_matrix_B(self, x):
@@ -131,6 +133,9 @@ class non_redundant_coordinate_transformer:
                         zero_s_max, np.min(np.abs(nonzero_S))
                     )
                 )
+            
+        S_nonredundant = S[:-6]
+        print(f"All non-redundant singular values: {S_nonredundant}")
 
         # check the case that non-zero singular value becomes 0 (could because of the extra symmetry).
         # In this case, we will have internal coordinate number < 3n - 6.
@@ -141,6 +146,8 @@ class non_redundant_coordinate_transformer:
         U = U[:, :nonzero_S_index_len]
         Vh = Vh[:nonzero_S_index_len, :]
         S = S_clip
+
+        print(f"The non-redundant singular values we include {S}")
 
         return U, S
 
