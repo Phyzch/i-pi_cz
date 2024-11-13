@@ -71,9 +71,7 @@ class NormalizeTrainingData(object):
     """
     normalize the potential, force and hessian of the training data.
     This will enforce the potential V is in the range of [0, 1]
-    """
-    # FIXME: change code here.
-    # 
+    """ 
     def __init__(self, 
                  V: np.ndarray,
                  training_inputs: np.ndarray):
@@ -98,7 +96,6 @@ class NormalizeTrainingData(object):
         # the number of internal dofs.
         self.q_ndofs = np.shape(training_inputs)[1] 
 
-    # FIXME: change this code. 
     # re-scale the training inputs, gradients and hessians.
     def normalization_transform(
         self, 
@@ -122,7 +119,7 @@ class NormalizeTrainingData(object):
         V_normalized = (V - self.V_mean) / self.V_range
         grad_V_normalized = grad_V / self.V_range
 
-        # FIXME: transform the training_inputs, gradients and hessians.
+        # transform the training_inputs, gradients and hessians.
         train_inputs_normalized = (train_inputs - self.q_mean[np.newaxis, :]) / self.q_range[np.newaxis, :]
         grad_V_normalized = grad_V_normalized * self.q_range[np.newaxis, :]
         # diagonal matrix with q_range
@@ -137,7 +134,7 @@ class NormalizeTrainingData(object):
 
         return V_normalized, grad_V_normalized, hessian_V_normalized, train_inputs_normalized
     
-    #FIXME: New function. Perform normalization transformation for hessian.
+    # Perform normalization transformation for hessian.
     def normalization_transform_for_hessian(
             self,
             hessian_V: np.ndarray
@@ -147,7 +144,7 @@ class NormalizeTrainingData(object):
         """  
         if len(hessian_V) > 0:
             hessian_V_normalized = hessian_V / self.V_range 
-            # FIXME: transform hessian because we re-scale the input.
+            # transform hessian because we re-scale the input.
             q_range_diag_matrix = np.diag(self.q_range, k= 0)
             hessian_V_normalized = np.matmul(np.matmul(q_range_diag_matrix, hessian_V_normalized), q_range_diag_matrix)
         else:
@@ -155,7 +152,7 @@ class NormalizeTrainingData(object):
 
         return hessian_V_normalized
 
-    # FIXME: New function. Perform normalization transformation for inputs.
+    # New function. Perform normalization transformation for inputs.
     def normalization_transform_for_inputs(
             self,
             train_inputs: np.ndarray
@@ -233,7 +230,7 @@ class NormalizeTrainingData(object):
         pot_noise_var = normalized_pot_noise_var * np.power(self.V_range, 2)
         force_noise_var = normalized_force_noise_var * np.power(self.V_range, 2)
 
-        # FIXME: add code to inverse the normalization of the force and hessian.
+        # add code to inverse the normalization of the force and hessian.
         force_noise_var = force_noise_var / np.power(self.q_range, 2)
         inverse_square_q_range_diag_matrix = np.diag(1 / np.power(self.q_range, 2), k= 0)
 
@@ -251,8 +248,7 @@ class NormalizeTrainingData(object):
 
         return pot_noise_var, force_noise_var, hessian_noise_var
 
-    #FIXME: New code.
-    #FIXME: Normalize the noise covariance factor because we re-scale the training inputs.
+    # Normalize the noise covariance factor because we re-scale the training inputs.
     def normalize_noise_covar_factor_array(self,
                                            noise_covar_factor_pot_grad_array: np.ndarray,
                                            noise_covar_factor_with_hessian_array: np.ndarray):
@@ -849,17 +845,9 @@ class GPModelWithHessiansWrapper:
         B = self.coordinate_transformer._compute_redundant_gradient_matrix_B(
             np.array([x])
         )[0]
-
-        # FIXME: Use U matrix specific to Bq to do the transformation.
-        nonzero_s_len = np.shape(self.coordinate_transformer.ref_U)[1]
-        U, S, Vh = np.linalg.svd(B, full_matrices= False)
-        U = U[:, :nonzero_s_len]
-        UT = np.transpose(U)
-        # \partial q / \partial x. shape [3n - 6, 3n]
-        Bq = np.matmul(UT, B)
         
         # # \partial q / \partial x. shape [3n - 6, 3n]
-        # Bq = np.matmul(self.coordinate_transformer.ref_UT, B)
+        Bq = np.matmul(self.coordinate_transformer.ref_UT, B)
 
         # \partial x / \partial q.
         inverse_Bq_transpose = np.transpose(
