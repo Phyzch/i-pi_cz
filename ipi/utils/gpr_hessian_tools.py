@@ -603,6 +603,13 @@ class GPModelWithHessiansWrapper:
         :param: kernel_outputscale_initio_value: If set, we will initialize the output scale of kernel as this value.
         :param: constant_mean_func_bool: If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians. Otherwise, it will be Taylor expansion around ref point to second order.
         :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
+        
+        Several pre-processing steps:
+        (1) transform data from Cartesian coordinate into internal coordinate.
+        (2) compute noise in the internal coordinate.
+        (3) normalize the data (rescale potential and inputs, then scale gradient and hessian correspondingly).
+        (4) fix certain dofs that is not moving. only put free moving dofs into GPR modeling.
+        (5) transform potential, gradient and hessian into 1d data array.
         """
         M_H = len(training_data_hessian_data_point_index_array)
         hessian_fixdofs = np.array([])
@@ -679,18 +686,18 @@ class GPModelWithHessiansWrapper:
 
         # ----- normalize the input, potential, gradient and hessian. & noise of gradient & hessian -------
         normalized_train_inputs, normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q, \
+                noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array, \
                 pot_noise_var, grad_noise_var, hessian_noise_var, \
-                noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array \
                     = self.normalize_data(
                     train_inputs,
                     train_V,
                     train_grad_q,
                     train_hessian_q,
+                    noise_covar_factor_pot_grad_array,
+                    noise_covar_factor_with_hessian_array,
                     pot_noise_var,
                     grad_noise_var,
                     hessian_noise_var,
-                    noise_covar_factor_pot_grad_array,
-                    noise_covar_factor_with_hessian_array
                 )
         
         # Filter the fixed dofs in coordinate (q) and gradients & hessians.
@@ -1001,11 +1008,11 @@ class GPModelWithHessiansWrapper:
                        train_V,
                        train_grad_q,
                        train_hessian_q,
-                       pot_noise_var,
-                       grad_noise_var,
-                       hessian_noise_var,
                        noise_covar_factor_pot_grad_array,
-                       noise_covar_factor_with_hessian_array):
+                       noise_covar_factor_with_hessian_array,
+                       pot_noise_var= None,
+                       grad_noise_var= None,
+                       hessian_noise_var= None):
         """
         normalize the potential, gradient and hessian data.
         Also normalize the noise and  transformation matrix for noise.
@@ -1019,12 +1026,6 @@ class GPModelWithHessiansWrapper:
             )
         )
 
-        pot_noise_var, grad_noise_var, hessian_noise_var = (
-            self.Normalizer.normalize_noise_var(
-                pot_noise_var, grad_noise_var, hessian_noise_var
-            )
-        )
-
         noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array = (
             self.Normalizer.normalize_noise_covar_factor_array(
                 noise_covar_factor_pot_grad_array,
@@ -1032,9 +1033,20 @@ class GPModelWithHessiansWrapper:
             )
         )
 
-        return normalized_train_inputs, normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q, \
-                pot_noise_var, grad_noise_var, hessian_noise_var, \
-                noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array
+        if pot_noise_var != None:
+            pot_noise_var, grad_noise_var, hessian_noise_var = (
+                self.Normalizer.normalize_noise_var(
+                    pot_noise_var, grad_noise_var, hessian_noise_var
+                )
+            )
+
+            return normalized_train_inputs, normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q, \
+                    noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array, \
+                    pot_noise_var, grad_noise_var, hessian_noise_var
+
+        else:
+            return normalized_train_inputs, normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q, \
+                    noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array
 
     def filter_fixed_dof_from_data(self,
                                    train_inputs,
@@ -1290,6 +1302,65 @@ class GPModelWithHessiansWrapper:
                 hessian_var_sum,
             )
 
+
+    def update_variable_in_model(
+        self,
+        old_training_data_num,
+        new_hessian_data_point_index,
+        new_train_x,
+        new_train_V,
+        new_train_grad_x,
+        new_train_hessian_x_symmetrized,
+        new_train_inputs,
+        new_train_grad_q,
+        new_train_hessian_q
+    ):
+        """
+        update training_inputs, gradients, potential and hessians with the new data.
+        """
+        self.train_cartesian_input = np.concatenate(
+            [self.train_cartesian_input, new_train_x], axis=0
+        )
+        self.train_V = np.concatenate([self.train_V, new_train_V])
+        self.train_cartesian_gradient = np.concatenate(
+            [self.train_cartesian_gradient, new_train_grad_x], axis=0
+        )
+        if len(self.train_cartesian_hessian) > 0:
+            if len(new_train_hessian_x_symmetrized) > 0:
+                self.train_cartesian_hessian = np.concatenate(
+                    [self.train_cartesian_hessian, new_train_hessian_x_symmetrized],
+                    axis=0,
+                )
+        else:
+            self.train_cartesian_hessian = new_train_hessian_x_symmetrized
+
+        # update the index for data point that contains hessian information.
+        new_hessian_data_point_index_in_full_data_set = (
+            new_hessian_data_point_index + old_training_data_num
+        )  # the hessian index in full data set after concatnate new data
+        self.training_data_hessian_data_point_index = np.concatenate(
+            [
+                self.training_data_hessian_data_point_index,
+                new_hessian_data_point_index_in_full_data_set,
+            ],
+            axis=0,
+        )
+
+        # update coordinate, gradient & hessian data.
+        self.train_inputs = np.concatenate(
+            [self.train_inputs, new_train_inputs], axis=0
+        )
+        self.train_grad_q = np.concatenate(
+            [self.train_grad_q, new_train_grad_q], axis=0
+        )
+        if len(self.train_hessian_q) > 0:
+            if len(new_train_hessian_q) > 0:
+                self.train_hessian_q = np.concatenate(
+                    [self.train_hessian_q, new_train_hessian_q], axis=0
+                )
+        else:
+            self.train_hessian_q = new_train_hessian_q
+
     def update_model_with_new_data(
         self,
         new_train_x: np.ndarray,
@@ -1323,75 +1394,37 @@ class GPModelWithHessiansWrapper:
                 and np.shape(new_train_hessian_x)[2] == 3 * self.natom
             ), "the shape of hessian for input data is not 3 * natom"
 
-        # transform input data into internal coordinate
-        new_train_inputs = self.coordinate_transformer.get_internal_coordinate_q(
-            new_train_x
-        )
-        # transform the gradient & hessian into internal coordinate
-        new_train_grad_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
-            new_train_x, new_train_grad_x
-        )
-
+        # symmetrize the hessian.
         if len(new_train_hessian_x) > 0:
             new_train_hessian_x_symmetrized = (
                 np.transpose(new_train_hessian_x, (0, 2, 1)) + new_train_hessian_x
             ) / 2
-            new_train_hessian_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
-                new_train_x[new_hessian_data_point_index],
-                new_train_grad_x[new_hessian_data_point_index],
-                new_train_hessian_x_symmetrized,
-            )
-
         else:
-            new_train_hessian_q = np.array([])
             new_train_hessian_x_symmetrized = np.array([])
 
+        # --------  transform input data into internal coordinate  --------------------------        
+        new_train_inputs, new_train_grad_q, new_train_hessian_q = self.transform_data_into_internal_coordinate(
+            new_train_x,
+            new_train_grad_x,
+            new_train_hessian_x_symmetrized,
+            new_hessian_data_point_index
+        )
+
         # number of training data before adding data into model.
-        training_data_num = np.shape(self.train_cartesian_input)[0]
+        old_training_data_num = np.shape(self.train_cartesian_input)[0]
 
-        # update the recorded training inputs and targets
-        self.train_cartesian_input = np.concatenate(
-            [self.train_cartesian_input, new_train_x], axis=0
+        # ------ update the recorded training inputs and targets  ------ 
+        self.update_variable_in_model(
+            old_training_data_num,
+            new_hessian_data_point_index,
+            new_train_x,
+            new_train_V,
+            new_train_grad_x,
+            new_train_hessian_x_symmetrized,
+            new_train_inputs,
+            new_train_grad_q,
+            new_train_hessian_q
         )
-        self.train_V = np.concatenate([self.train_V, new_train_V])
-        self.train_cartesian_gradient = np.concatenate(
-            [self.train_cartesian_gradient, new_train_grad_x], axis=0
-        )
-        if len(self.train_cartesian_hessian) > 0:
-            if len(new_train_hessian_x_symmetrized) > 0:
-                self.train_cartesian_hessian = np.concatenate(
-                    [self.train_cartesian_hessian, new_train_hessian_x_symmetrized],
-                    axis=0,
-                )
-        else:
-            self.train_cartesian_hessian = new_train_hessian_x_symmetrized
-
-        # update the index for data point that contains hessian information.
-        new_hessian_data_point_index_in_full_data_set = (
-            new_hessian_data_point_index + training_data_num
-        )  # the hessian index in full data set after concatnate new data
-        self.training_data_hessian_data_point_index = np.concatenate(
-            [
-                self.training_data_hessian_data_point_index,
-                new_hessian_data_point_index_in_full_data_set,
-            ],
-            axis=0,
-        )
-
-        # update coordinate, gradient & hessian data.
-        self.train_inputs = np.concatenate(
-            [self.train_inputs, new_train_inputs], axis=0
-        )
-        self.train_grad_q = np.concatenate(
-            [self.train_grad_q, new_train_grad_q], axis=0
-        )
-        if len(self.train_hessian_q) > 0:
-            if len(new_train_hessian_q) > 0:
-                self.train_hessian_q = np.concatenate(
-                    [self.train_hessian_q, new_train_hessian_q], axis=0
-                )
-        else:
-            self.train_hessian_q = new_train_hessian_q
 
         # compute noise_covar_factor array for new training data. This new noise covar factor matrix will be added into Gaussian Process Regression model when we optimize hyper-parameters
         (
@@ -1402,50 +1435,32 @@ class GPModelWithHessiansWrapper:
             new_hessian_data_point_index
         )
 
-        # Normalize the potential, gradient and hessians
-        new_train_V, new_train_grad_q, new_train_hessian_q, new_train_inputs = (
-            self.Normalizer.normalization_transform(
-                new_train_V, 
-                new_train_grad_q, 
+        # ------  Normalize the potential, gradient and hessians and the noise covar factor matrix.  ------ 
+        new_train_inputs, new_train_V, new_train_grad_q, new_train_hessian_q, \
+        new_noise_covar_factor_pot_grad_array, new_noise_covar_factor_with_hessian_array = \
+            self.normalize_data(
+                new_train_inputs,
+                new_train_V,
+                new_train_grad_q,
                 new_train_hessian_q,
-                new_train_inputs
+                new_noise_covar_factor_pot_grad_array,
+                new_noise_covar_factor_with_hessian_array
             )
-        )
 
-        # Normalize the noise covar factor matrix.
-        (
-            new_noise_covar_factor_pot_grad_array, 
-            new_noise_covar_factor_with_hessian_array
-        ) = self.Normalizer.normalize_noise_covar_factor_array(
-            new_noise_covar_factor_pot_grad_array,
-            new_noise_covar_factor_with_hessian_array
-        )
-
-        # normalize train_hessian_q 
+        # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
         normalized_train_hessian_q = self.Normalizer.normalization_transform_for_hessian(self.train_hessian_q)
         if len(self.train_hessian_q) > 0:
-            # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
             self.FixingDofs.update_hessians_for_fixed_dofs(normalized_train_hessian_q)
 
-        # Filter the fixed dofs
-        new_train_inputs = (
-            self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                new_train_inputs
-            )
-        )
-        new_train_grad_q, new_train_hessian_q = (
-            self.FixingDofs.transform_training_targets_to_free_moving_dofs(
-                new_train_grad_q, 
-                new_train_hessian_q
-            )
-        )
-        # filter fixed dofs from noise_covar_factor_array.
-        (
+        # ------ Filter the fixed dofs for input, gradient, hessian and transformation matrix for noise. --------
+        new_train_inputs, new_train_grad_q, new_train_hessian_q, \
+        new_noise_covar_factor_pot_grad_array, new_noise_covar_factor_with_hessian_array = \
+        self.filter_fixed_dof_from_data(
+            new_train_inputs,
+            new_train_grad_q,
+            new_train_hessian_q,
             new_noise_covar_factor_pot_grad_array,
-            new_noise_covar_factor_with_hessian_array,
-        ) = self.FixingDofs.transform_noise_covar_factor_array_fixing_internal_dofs(
-            new_noise_covar_factor_pot_grad_array,
-            new_noise_covar_factor_with_hessian_array,
+            new_noise_covar_factor_with_hessian_array
         )
 
         # Transform the potential, gradient, hessians into 1d target data
@@ -1455,19 +1470,20 @@ class GPModelWithHessiansWrapper:
             )
         )
 
-        new_train_hessian_q_triu = take_upper_triangular_part(new_train_hessian_q)
         # transform the training inputs, training targets into tensor.Torch
-        new_train_inputs_tensor = torch.from_numpy(new_train_inputs)
-        new_train_targets_tensor = torch.from_numpy(new_train_targets)
-        new_hessian_data_point_index_tensor = torch.from_numpy(
-            new_hessian_data_point_index
-        )
-        new_noise_covar_factor_pot_grad_array = torch.from_numpy(
-            new_noise_covar_factor_pot_grad_array
-        )
-        new_noise_covar_factor_with_hessian_array = torch.from_numpy(
-            new_noise_covar_factor_with_hessian_array
-        )
+        (new_train_inputs_tensor, new_train_targets_tensor,\
+         new_hessian_data_point_index_tensor, \
+         new_noise_covar_factor_pot_grad_array, \
+         new_noise_covar_factor_with_hessian_array) = map(
+             torch.from_numpy,
+             (
+                 new_train_inputs,
+                 new_train_targets,
+                 new_hessian_data_point_index,
+                 new_noise_covar_factor_pot_grad_array,
+                 new_noise_covar_factor_with_hessian_array
+             )
+         )
 
         # update the Gaussian Process Regression model with new data.
         ipi.utils.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(
