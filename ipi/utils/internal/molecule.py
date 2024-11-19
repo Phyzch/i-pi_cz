@@ -340,61 +340,42 @@ class MyG(nx.Graph):
 
 
 class Molecule(object):
-    """ Lee-Ping's general file format conversion class.
-
-    The purpose of this class is to read and write chemical file formats in a
-    way that is convenient for research.  There are highly general file format
-    converters out there (e.g. catdcd, openbabel) but I find that writing
-    my own class can be very helpful for specific purposes.  Here are some things
-    this class can do:
-
-    - Convert a .gro file to a .xyz file, or a .pdb file to a .dcd file.
-    Data is stored internally, so any readable file can be converted into
-    any writable file as long as there is sufficient information to write
-    that file.
-
-    - Accumulate information from different files.  For example, we may read
-    A.gro to get a list of coordinates, add quantum settings from a B.in file,
-    and write A.in (this gives us a file that we can use to run QM calculations)
-
-    - Concatenate two trajectories together as long as they're compatible.  This
-    is done by creating two Molecule objects and then simply adding them.  Addition
-    means two things:  (1) Information fields missing from each class, but present
-    in the other, are added to the sum, and (2) Appendable or per-frame fields
-    (i.e. coordinates) are concatenated together.
-
-    - Slice trajectories using reasonable Python language.  That is to
-    say, MyMolecule[1:10] returns a new Molecule object that contains
-    frames 1 through 9 (inclusive and numbered starting from zero.)
-
-    Special variables:  These variables cannot be set manually because
-    there is a special method associated with getting them.
-
-    na = The number of atoms.  You'll get this if you use MyMol.na or MyMol['na'].
-    ns = The number of snapshots.  You'll get this if you use MyMol.ns or MyMol['ns'].
-
+    """ From Lee-Ping Wang's general file format conversion class.
     Unit system:  Angstroms.
-
+    
+    self.na: number of atoms.
+    self.xyz: coordinate of atoms in molecules. [Natoms, 3] 2d array.
+    self.elem: elements of atoms in molecules
     """
 
-    def __init__(self,  **kwargs):
+    def __init__(self,
+                 natoms: int, 
+                 xyz: np.ndarray, 
+                 elem: list,
+                 **kwargs):
         """
         Create a Molecule object.
 
         Parameters
         ----------
+        natoms: number of atoms.
+        xyz: xyz coordinate of atoms in the molecule. shape: [3 * natoms]. Need to reshape it to [Natoms, 3] when set it to self.xyz.
+        elem: elements of atoms. In ipi, this is self.beads.names
         build_topology : bool, optional
             Build the molecular topology consisting of: topology (overall connectivity graph),
             molecules (list of connected subgraphs), bonds (if not explicitly read in), default True
-        toppbc : bool, optional
-            Use periodic boundary conditions when building the molecular topology, default False
-            The build_topology code will attempt to determine this intelligently.
         Fac : float, optional
             Multiplicative factor to covalent radii criterion for deciding whether two atoms are bonded
             Default value of 1.2 is reasonable, 1.4 will produce lots of bonds
         """
         # bool that whether we have built bonds.
         self.built_bonds = False
+
+        # number of atoms.
+        self.na = natoms
+        self.xyz = np.reshape(xyz, [natoms, 3])
+        self.elem = elem 
+
         ## Topology settings
         self.top_settings = {'Fac' : kwargs.get('Fac', 1.2),
                              'read_bonds' : False,
@@ -421,7 +402,10 @@ class Molecule(object):
 
 
     def build_bonds(self):
-        """ Build the bond connectivity graph. """
+        """ 
+        Build the bond connectivity graph.
+        Simplified version without using grid algorithm.
+        """
         Fac = self.top_settings['Fac']  # 1.2 by default.
         mindist = 1.0 # Any two atoms that are closer than this distance are bonded.
 
@@ -432,11 +416,13 @@ class Molecule(object):
 
         # Create a list of 2-tuples corresponding to combinations of atomic indices.
         # This is much faster than using itertools.combinations.
+        # All unique atom pairs (i,j) where i < j in a Numpy array.
+        # For example: self.na = 4, output: [[0,1], [0,2], [0,3], [1,2], [1,3], [2,3]]
         AtomIterator = np.ascontiguousarray(np.vstack(
                                                         (np.fromiter(
                                                             itertools.chain(
                                                                 *[
-                                                                    [i]*(self.na-i-1) for i in range(self.na)
+                                                                    [i]*(self.na - i - 1) for i in range(self.na)
                                                                     ]
                                                                 ),dtype=np.int32
                                                             ), 
@@ -453,31 +439,43 @@ class Molecule(object):
         BT0 = R[AtomIterator[:,0]]
         BT1 = R[AtomIterator[:,1]]
         BondThresh = (BT0+BT1) * Fac
-        BondThresh = (BondThresh > mindist) * BondThresh + (BondThresh < mindist) * mindist  # mindist: any atom closer than this is bonded.
-        
-        dxij = AtomContact(self.xyzs[sn][np.newaxis, :], AtomIterator)[0]  # compute distance between atoms.
+        # mindist: any atom closer than this is bonded.
+        # BondThresh = (BondThresh > mindist) * BondThresh + (BondThresh < mindist) * mindist  
+        BondThresh = np.clip(BondThresh, a_min= mindist)
+
+        # compute distance between atoms.
+        dxij = AtomContact(self.xyz[np.newaxis, :], AtomIterator)[0]  
 
         # Create a list of atoms that each atom is bonded to.
         atom_bonds = [[] for i in range(self.na)]
         bond_bool = dxij < BondThresh
+
         for i, a in enumerate(bond_bool):
             if not a: continue
+            # i : index for bond.
+            # a : bool variable. If form the bond.
+            # ii. jj: index for atoms in molecule.
             (ii, jj) = AtomIterator[i]
             if ii == jj: continue
+
             atom_bonds[ii].append(jj)
             atom_bonds[jj].append(ii)
+
         bondlist = []
         for i, bi in enumerate(atom_bonds):
             for j in bi:
                 if i == j: continue
-                # Do not add a bond between resids if fragment is set to True.
-                if self.top_settings['fragment'] and 'resid' in self.Data.keys() and self.resid[i] != self.resid[j] : continue
-                elif i < j:
+
+                if i < j:
                     bondlist.append((i, j))
                 else:
                     bondlist.append((j, i))
+
         bondlist = sorted(list(set(bondlist)))
-        self.Data['bonds'] = sorted(list(set(bondlist))) # delete duplicate element in list and sort list.
+
+        # delete duplicate element in list and sort list.
+        # This data can be accessed as self.bonds.
+        self.Data['bonds'] = sorted(list(set(bondlist))) 
 
         self.built_bonds = True
 
@@ -500,14 +498,14 @@ class Molecule(object):
         # Build bonds from connectivity graph.
         self.build_bonds()
 
-        # Create a NetworkX graph object to hold the bonds.
+        # Create a NetworkX graph object to hold the bonds. Use self.bonds created in self.build_bonds()
         G = MyG()
         for i, a in enumerate(self.elem):
             G.add_node(i)
             if 'atomname' in self.Data:
                 nx.set_node_attributes(G,{i: self.atomname[i]}, name='n')  # atom name
-            nx.set_node_attributes(G,{i: a}, name='e')  # atom element
-            nx.set_node_attributes(G,{i:self.xyzs[sn][i]}, name='x') # atom coordinate.
+            nx.set_node_attributes(G,{i: a}, name='e')  # atom element. "H", "C", "O"
+            nx.set_node_attributes(G,{i:self.xyz[i]}, name='x') # atom coordinate.
 
         for (i, j) in self.bonds:  # here self.bonds: is self.Data['bonds']. see __getattr__ func
             G.add_edge(i, j)
