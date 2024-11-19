@@ -116,67 +116,6 @@ except ImportError:
 # |                                                                    |#
 # ======================================================================#
 
-# =========================================#
-# |     DECLARE VARIABLE NAMES HERE       |#
-# |                                       |#
-# |  Any member variable in the Molecule  |#
-# | class must be declared here otherwise |#
-# | the Molecule class won't recognize it |#
-# =========================================#
-# | Data attributes in FrameVariableNames |#
-# | must be a list along the frame axis,  |#
-# | and they must have the same length.   |#
-# =========================================#
-# xyzs       = List of arrays of atomic xyz coordinates
-# comms      = List of comment strings
-# boxes      = List of 3-element or 9-element arrays for periodic boxes
-# qm_grads   = List of arrays of gradients (i.e. negative of the atomistic forces) from QM calculations
-# qm_espxyzs = List of arrays of xyz coordinates for ESP evaluation
-# qm_espvals = List of arrays of ESP values
-# qm_zpe     = Zero point energy, kcal/mol (from a qchem freq calculation)
-# qm_entropy = Entropy contribution at STP, cal/mol.K (from a qchem freq calculation)
-# qm_enthalpy= Enthalpic contribution at STP, excluding electronic energy and ZPE, kcal/mol (from a qchem freq calculation)
-
-FrameVariableNames = {'xyzs', 'comms', 'boxes', 'qm_hessians', 'qm_grads', 'qm_energies', 'qm_interaction',
-                      'qm_espxyzs', 'qm_espvals', 'qm_extchgs', 'qm_mulliken_charges', 'qm_mulliken_spins', 'qm_zpe',
-                      'qm_entropy', 'qm_enthalpy', 'qm_bondorder'}
-#=========================================#
-#| Data attributes in AtomVariableNames  |#
-#| must be a list along the atom axis,   |#
-#| and they must have the same length.   |#
-#=========================================#
-# elem       = List of elements
-# partial_charge = List of atomic partial charges
-# atomname   = List of atom names (can come from MM coordinate file)
-# atomtype   = List of atom types (can come from MM force field)
-# tinkersuf  = String that comes after the XYZ coordinates in TINKER .xyz or .arc files
-# resid      = Residue IDs (can come from MM coordinate file)
-# resname    = Residue names
-# terminal   = List of true/false denoting whether this atom is followed by a terminal group.
-AtomVariableNames = {'elem', 'partial_charge', 'atomname', 'atomtype', 'tinkersuf', 'resid', 'resname', 'qcsuf',
-                     'qm_ghost', 'chain', 'altloc', 'icode', 'terminal'}
-#=========================================#
-#| This can be any data attribute we     |#
-#| want but it's usually some property   |#
-#| of the molecule not along the frame   |#
-#| atom axis.                            |#
-#=========================================#
-# bonds      = A list of 2-tuples representing bonds.  Carefully pruned when atom subselection is done.
-# fnm        = The file name that the class was built from
-# qcrems     = The Q-Chem 'rem' variables stored as a list of OrderedDicts
-# qctemplate = The Q-Chem template file, not including the coordinates or rem variables
-# charge     = The net charge of the molecule
-# mult       = The spin multiplicity of the molecule
-MetaVariableNames = {'fnm', 'ftype', 'qcrems', 'qctemplate', 'qcerr', 'charge', 'mult', 'bonds', 'topology',
-                     'molecules'}
-# Variable names relevant to quantum calculations explicitly
-QuantumVariableNames = {'qcrems', 'qctemplate', 'charge', 'mult', 'qcsuf', 'qm_ghost', 'qm_energies', 'qm_grads', 'qm_hessians',
-                        'qm_interaction', 'qm_espxyzs', 'qm_espvals', 'qm_extchgs', 'qm_mulliken_charges', 'qm_mulliken_spins',
-                        'qm_zpe', 'qm_entropy', 'qm_enthalpy','qm_bondorder'}
-# Superset of all variable names.
-AllVariableNames = QuantumVariableNames | AtomVariableNames | MetaVariableNames | FrameVariableNames
-
-
 # Covalent radii from Cordero et al. 'Covalent radii revisited' Dalton Transactions 2008, 2832-2838.
 Radii = [0.31, 0.28, # H and He
          1.28, 0.96, 0.84, 0.76, 0.71, 0.66, 0.57, 0.58, # First row elements
@@ -231,11 +170,10 @@ PeriodicTable = OrderedDict([("H", 1.007975), ("He", 4.002602), # First row
                              ("Rg", 280.), ("Cn", 285.), ("Nh", 284.), ("Fl", 289.), ("Mc", 288.), ("Lv", 293.), ("Ts", 292.), ("Og", 294.)])
 
 def getElement(mass):
+    """
+    Get element from the mass of an atom.
+    """
     return PeriodicTable.keys()[np.argmin([np.abs(m-mass) for m in PeriodicTable.values()])]
-
-def elem_from_atomname(atomname):
-    """ Given an atom name, attempt to get the element in most cases. """
-    return re.search('[A-Z][a-z]*',atomname).group(0)
 
 
 def nodematch(node1,node2):
@@ -361,9 +299,6 @@ class Molecule(object):
         natoms: number of atoms.
         xyz: xyz coordinate of atoms in the molecule. shape: [3 * natoms]. Need to reshape it to [Natoms, 3] when set it to self.xyz.
         elem: elements of atoms. In ipi, this is self.beads.names
-        build_topology : bool, optional
-            Build the molecular topology consisting of: topology (overall connectivity graph),
-            molecules (list of connected subgraphs), bonds (if not explicitly read in), default True
         Fac : float, optional
             Multiplicative factor to covalent radii criterion for deciding whether two atoms are bonded
             Default value of 1.2 is reasonable, 1.4 will produce lots of bonds
@@ -378,7 +313,6 @@ class Molecule(object):
 
         ## Topology settings
         self.top_settings = {'Fac' : kwargs.get('Fac', 1.2),
-                             'read_bonds' : False,
                              'fragment' : kwargs.get('fragment', False),
                              'radii' : kwargs.get('radii', {})}
 
@@ -394,9 +328,7 @@ class Molecule(object):
 
     def __setattr__(self, key, value):
         """ Whenever we try to get a class attribute, it first tries to get the attribute from the Data dictionary. """
-        ## These attributes return a list of attribute names defined in this class, that belong in the chosen category.
-        ## For example: self.FrameKeys should return set(['xyzs','boxes']) if xyzs and boxes exist in self.Data
-        if key in AllVariableNames:
+        if key in self.Data.keys():
             self.Data[key] = value
         return super(Molecule,self).__setattr__(key, value)
 
@@ -502,8 +434,6 @@ class Molecule(object):
         G = MyG()
         for i, a in enumerate(self.elem):
             G.add_node(i)
-            if 'atomname' in self.Data:
-                nx.set_node_attributes(G,{i: self.atomname[i]}, name='n')  # atom name
             nx.set_node_attributes(G,{i: a}, name='e')  # atom element. "H", "C", "O"
             nx.set_node_attributes(G,{i:self.xyz[i]}, name='x') # atom coordinate.
 
