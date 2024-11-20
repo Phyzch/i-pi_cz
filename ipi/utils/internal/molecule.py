@@ -1,3 +1,38 @@
+"""
+Modified from geomeTRIC molecule.py file. Copyright info below:
+molecule.py: construct the connectivity graph for atoms in the molecule using atom radius.
+
+Copyright 2016-2020 Regents of the University of California and the Authors
+
+Authors: Lee-Ping Wang, Chenchen Song
+
+Contributors: 
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software
+without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -190,7 +225,7 @@ def cartesian_product2(arrays):
 
 def AtomContact(xyz, pairs, box=None, displace=False):
     """
-    Compute distances between pairs of atoms.
+    Compute distances between pairs of atoms. Handles the case if we have periodic boundary condition.
 
     Parameters
     ----------
@@ -217,21 +252,25 @@ def AtomContact(xyz, pairs, box=None, displace=False):
     sel1 = parray[:,0]
     sel2 = parray[:,1]
     xyzpbc = xyz.copy()
+    
     # Minimum image convention: Place all atoms in the box
     # [0, xbox); [0, ybox); [0, zbox)
     if box is not None:
         xyzpbc /= box[:,np.newaxis,:]
         xyzpbc = xyzpbc % 1.0
+
     # Obtain atom selections for the pairs to be computed
     # These are typically longer than N but shorter than N^2.
     xyzsel1 = xyzpbc[:,sel1,:]
     xyzsel2 = xyzpbc[:,sel2,:]
     # Calculate xyz displacement
     dxyz = xyzsel2-xyzsel1
-    # Apply minimum image convention to displacements
+    
+    # Apply minimum image convention to displacements. If case we have pbc. 
     if box is not None:
         dxyz = np.mod(dxyz+0.5, 1.0) - 0.5
         dxyz *= box[:,np.newaxis,:]
+
     dr2 = np.sum(dxyz**2,axis=2)
     dr = np.sqrt(dr2)
     if displace:
@@ -445,3 +484,11 @@ class Molecule(object):
         self.molecules = [G.subgraph(c).copy() for c in nx.connected_components(G)]
         for g in self.molecules: g.__class__ = MyG
 
+    def distance_matrix(self, pbc=True):
+        """ Obtain distance matrix between all pairs of atoms. """
+        # (0,1), (0,2), ..., (0, self.na - 1), (1, 2), ... (1, self.na - 1)
+        AtomIterator = np.ascontiguousarray(np.vstack((np.fromiter(itertools.chain(*[[i]*(self.na-i-1) for i in range(self.na)]),dtype=np.int32),
+                                                    np.fromiter(itertools.chain(*[range(i+1,self.na) for i in range(self.na)]),dtype=np.int32))).T)
+
+        drij = AtomContact(self.xyz[np.newaxis, :], AtomIterator)[0]
+        return AtomIterator, list(drij)
