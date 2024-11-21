@@ -1458,10 +1458,10 @@ class OutOfPlane(PrimitiveCoordinate):
 
 # List of Primitive Internal Coordinate.
 
-def convert_angstroms_degrees(prims, values):
+def convert_bohrs_degrees(prims, values):
     """ Convert values of primitive ICs (or differences) from
-    weighted atomic units to Angstroms and degrees.
-    The unit of translation will be angstrom.
+    weighted atomic units to Bohrs and degrees.
+    The unit of translation will be Bohrs.
     The unit of rotation will be degrees. """
     converted = np.array(values).copy()
     for ic, c in enumerate(prims):
@@ -1472,7 +1472,7 @@ def convert_angstroms_degrees(prims, values):
         else:
             w = 1.0
         if type(c) in [TranslationX, TranslationY, TranslationZ, CartesianX, CartesianY, CartesianZ, Distance, LinearAngle, CentroidDistance]:
-            factor = bohr2ang
+            factor = 1  # here we assume the unit of translation will be Bohrs.
         elif c.isAngular:
             factor = 180.0 / np.pi
         converted[ic] /= w
@@ -1506,6 +1506,7 @@ class InternalCoordinates(object):
         """
         global CacheWarning
         t0 = time.time()
+        xyz = xyz.flatten()
         xhash = hash(xyz.tobytes())
         ht = time.time() - t0
         if xhash in self.stored_wilsonB:
@@ -1533,7 +1534,7 @@ class InternalCoordinates(object):
         BuBt = np.dot(Bmat,Bmat.T)
         return BuBt
 
-    def GInverse_SVD(self, xyz, sqrt=False, invMW=False):
+    def GInverse(self, xyz, sqrt=False, invMW=False):
         """
         Compute inverse of G: G^{-1}. 
         Here G= B * B^T.  
@@ -1688,20 +1689,18 @@ class InternalCoordinates(object):
 class PrimitiveInternalCoordinates(InternalCoordinates):
     """
     Primitive Redundant Internal Coordinate.
+    We do not implement TRIC and constraint in the current class. 
+    This is to simplify the implementation.
     """
-    def __init__(self, molecule: Molecule, connect=False, addcart=False, connect_isolated=True, **kwargs):
+    def __init__(self, molecule: Molecule, connect=False, addcart=False, **kwargs):
         super(PrimitiveInternalCoordinates, self).__init__()
         # connect = True corresponds to "traditional" internal coordinates with minimum spanning bonds
         # connect = False, addcart = True corresponds to HDLC
         # connect = False, addcart = False corresponds to TRIC
         self.connect = connect
         self.addcart = addcart
-        self.connect_isolated = connect_isolated
 
         self.Internals = []  # List of Primitive Internal coordinates.
-        
-        self.cPrims = []
-        self.cVals = []
 
         self.elem = molecule.elem
         # Atomic mass array
@@ -1994,12 +1993,6 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         # 5) 3
         return np.array(answer)
 
-    def GInverse(self, xyz):
-        """
-        Inverse of G matrix: G = B B^T
-        """
-        return self.GInverse_SVD(xyz)
-
     # Auxiliary function.
     def add(self, dof):
         if dof not in self.Internals:
@@ -2040,3 +2033,150 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
     def __ne__(self, other):
         return not self.__eq__(other)
 
+class DelocalizedInternalCoordinates(InternalCoordinates):
+    def __init__(self, molecule: Molecule,  connect=False, addcart=False):
+        super(DelocalizedInternalCoordinates, self).__init__()
+        # HDLC is given by (connect = False, addcart = True)
+        # Standard DLC is given by (connect = True, addcart = False)
+        # TRIC is given by (connect = False, addcart = False)
+        self.connect = connect
+        # Add Cartesian coordinates to all.
+        self.addcart = addcart
+
+        self.molecule = molecule
+        # The DLC contains an instance of primitive internal coordinates.
+        self.Prims = PrimitiveInternalCoordinates(molecule, connect=connect, addcart=addcart)
+        self.frags = self.Prims.frags
+        self.na = molecule.na
+        # Atomic mass array
+        self.mass = np.repeat([PeriodicTable[i] for i in molecule.elem], 3)
+
+        # Build the DLC's. This takes some time, so we have the option to turn it off.
+        # xyz in molecule.xyz is already in bohr unit.
+        xyz = molecule.xyz.flatten()
+        
+        self.build_dlc(xyz)
+    
+    def build_dlc(self, xyz):
+        """
+        Build delocalized internal coordinate.
+        param: xyz: Cartesian coordinate.
+        """
+        Bmat = self.wilsonB(xyz)
+        # SVD decomposition of Bmat
+        U, S, Vh = np.linalg.svd(Bmat, full_matrices= False)
+
+        natom = self.na
+        # If we do not include information about the position of 
+        # the center of mass and the orientation of molecular system.
+        # The number of nonzero eigenvalue should be 3N-6.
+        dlc_na = 3 * natom - 6
+        
+        assert (
+            np.size(S) >= dlc_na
+        ), "number of nonzero singular value of B is smaller than 3n-6. Wrong"
+
+        # sort singular value according to their absolute values. descending order
+        s_index = np.array(range(len(S)))
+        nonzero_S_index = s_index[: dlc_na]
+        nonzero_S = S[nonzero_S_index]
+
+        # sanity check in case we have zero sinuglar value number larger than 3n-6.
+        zero_S_index = s_index[dlc_na :]
+        zero_S = S[zero_S_index]
+        if np.size(zero_S) != 0:
+            zero_s_max = np.max(np.abs(zero_S))
+            if zero_s_max > np.power(10.0, -4) * np.min(np.abs(nonzero_S)):
+                # nonzero value is too large
+                raise (
+                    "zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(
+                        zero_s_max, np.min(np.abs(nonzero_S))
+                    )
+                )
+            
+        S_nonredundant = S[:-6]
+        print(f"All non-redundant singular values: {S_nonredundant}")
+
+        # truncate nonzero singular value.
+        U = U[:, :dlc_na]
+        Vh = Vh[:dlc_na, :]
+        S = S[:dlc_na]
+
+        # record U matrix and singular value matrix S.
+        self.ref_U = U  
+        self.ref_UT = U.T
+        self.S = S
+    
+
+    def calculate(self, coords):
+        """
+        Calculate Delocalized Internal Coordinate given the Cartesian coordinate.
+        """
+        # Primitive Internal Coordinate.
+        PrimVals = self.Prims.calculate(coords)
+        
+        vals = PrimVals @ self.ref_U 
+        
+        return vals 
+    
+    def derivatives(self, coords):
+        """
+        Calculate the change of the DLCs with respect to the Cartesian coordinates. 
+        The returned array has dimensions:
+        1) Number of delocalized internal coordinates
+        2) Number of atoms
+        3) 3
+        """
+        # shape: [Ninternal, natom, 3]
+        PrimDers = self.Prims.derivatives(coords)
+
+        ders = np.tensordot(self.ref_U, PrimDers, axes= (0,0))
+        return np.array(ders)
+    
+    def second_derivatives(self, coords):
+        """
+        Calculate the second derivatives of DLCs with respect to the Cartesian coordinate.
+        This array has dimensions:
+        1) Number of delocalized internal coordinates
+        2) Number of atoms
+        3) 3
+        4) Number of atoms
+        5) 3
+        """
+        PrimDers = self.Prims.second_derivatives(coords)
+        ders = np.tensordot(self.ref_U, PrimDers, axes= (0,0))
+
+        return ders
+
+    def inverse_second_derivatives(self, coords):
+        """
+        Calculate the d^x/dq^2. here q is DLC, x is cartesian coordinate.
+        d^x/dq^2 = (-1) (dx/dq)^3 (dq/dx)^2 = (-1) * ((B)^{-1})^3 * second_derivative
+        """
+        # d^2 q/ dx^2, shape: [3n-6, n, 3, n, 3]
+        ders = self.second_derivatives(coords)
+        
+        natom = self.na 
+        # shape: [3n-6, 3n, 3n]
+        hessian_q_xx = ders.reshape((ders.shape[0], natom * 3, natom * 3))
+
+        # dq/dx : shape[3n-6, 3n]
+        Bq = self.wilsonB(coords)
+        # shape: [3n, 3n-6]
+        inverse_Bq = np.linalg.pinv(Bq)
+        # shape: [3n-6, 3n-6, 3n]
+        h1 = np.einsum('ijk, jl -> ilk', hessian_q_xx, inverse_Bq)
+        # shape: [3n-6, 3n-6, 3n-6]
+        h2 = np.einsum('ijk, kl -> ijl', h1, inverse_Bq)
+        # shape: [3n, 3n-6, 3n -6]
+        h3 = np.einsum('ijk, li -> ljk', h2, inverse_Bq)
+
+        hessian_x_qq = (-1) * h3 
+
+        return hessian_x_qq 
+
+    def __eq__(self, other):
+        return self.Prims == other.Prims
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
