@@ -865,8 +865,8 @@ class LinearAngle(PrimitiveCoordinate):
         # Visualize the rotated unit vectors.
         answer = np.zeros((3, 3), dtype=float)
         answer[0, :] = xmean
-        answer[1, :] = xmean + e1*ang2bohr
-        answer[2, :] = xmean + e2*ang2bohr
+        answer[1, :] = xmean + e1
+        answer[2, :] = xmean + e2
         return answer
 
     def derivative(self, xyz):
@@ -1715,7 +1715,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         # build topology for molecules based on atom radius and distance between atoms. 
         molecule.build_topology() 
 
-        # coordinates in Angstrom
+        # reference coordinates in Bohr.
         coords = molecule.xyz.flatten()
         # Make a distance matrix mapping atom pairs to inter-atomic distances.
         AtomIterator, dxij = molecule.distance_matrix(pbc= False)
@@ -1741,7 +1741,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         # Add angle between bonded molecules.
         # Or bending internal coords corresponding to linear 
         # The angular internal coordinates is added to self.Internals
-        AngDict = self.add_angle(molecule, noncov, coords)
+        self.AngDict = self.add_angle(molecule, noncov, coords)
 
         # Out of Plane internal coordinate.
         # The out of plane internal coordinate is added to self.Internals.

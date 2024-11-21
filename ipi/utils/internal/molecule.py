@@ -315,6 +315,69 @@ class MyG(nx.Graph):
         coors = nx.get_node_attributes(self,'x')
         return np.array([coors[i] for i in self.L()])
 
+def union_topology(molecule_list, molecule_index= 0):
+    """
+    Create a Molecule object.
+    Take the union of topology of molecules (Molecule object) in the molecule_list as the topology of the new molecule.
+    Create fragments using the topology of the new molecule.
+    The coordinate of the new molecule is given by the xyz coordinate of the old molecule in molecule list:
+    molecule_list[molecule_index]
+    """
+    molecule_num = len(molecule_list)
+    if molecule_num <= molecule_index:
+        raise ValueError(f"The molecule index {molecule_index} is larger than the number of molecules: {molecule_num} in molecule_list.}")
+
+    new_molecule = copy.deepcopy(molecule_list[molecule_index])
+
+    # check natom, ele is the same:
+    for molecule in molecule_list:
+        assert molecule.elem == new_molecule.elem
+        assert molecule.na == new_molecule.na 
+
+    # take the union of bonds.
+    bond_list = []
+    for molecule in molecule_list:
+        bonds = molecule.bonds
+        bond_list = bond_list + bonds 
+
+    bond_list = sorted(list(set(bond_list)))
+    new_molecule.bonds = copy.deepcopy(bond_list)
+
+    # take the union of topology. Use nx.compose() function.
+    for index, molecule in enumerate(molecule_list):
+        if index == molecule_index: 
+            continue
+        # take union of topology.
+        new_molecule.topology = nx.compose(new_molecule.topology, molecule.topology)
+    
+    # create subgraph (fragments) from the new topology
+    G = new_molecule.topology
+    new_molecule.molecules = [G.subgraph(c).copy() for c in nx.connected_components(G)]
+    for g in new_molecule.molecules: g.__class__ = MyG 
+
+def create_molecule(natoms, elem, xyz_list, molecule_index= 0):
+    """
+    Create a Molecule object.
+    The topology of the object is the union of topology for all molecules, each with the coordinate in the xyz_list.
+    The xyz for new molecule is given by xyz_list[molecule_index].
+
+    This is used for the case that reactant , TS & product have different atom connectivity graph.
+    Therefore, we have to take union of them.
+    """
+    molecule_list = []
+    assert molecule_index < len(xyz_list), f"molecule index {molecule_index} > number of xyz coordinate: {len(xyz_list)}"
+    for xyz in xyz_list:
+        molecule = Molecule(natoms, xyz, elem)
+        # build topology
+        molecule.build_topology()
+
+        molecule_list.append(molecule)
+    
+    new_molecule = union_topology(molecule_list,
+                                  molecule_index)
+    
+    return new_molecule
+
 
 class Molecule(object):
     """ From Lee-Ping Wang's general file format conversion class.
@@ -371,6 +434,40 @@ class Molecule(object):
             self.Data[key] = value
         return super(Molecule,self).__setattr__(key, value)
 
+    def __deepcopy__(self):
+        """
+        Custom deepcopy method. Modified from geomeTRIC code.
+        """
+        New = Molecule(self.na,
+                       self.xyz,
+                       self.elem)
+        
+        # Copy over variables not contained in self.Data
+        New.built_bonds = self.built_bonds
+        New.top_settings = copy.deepcopy(self.top_settings)
+
+        New.na = self.na 
+        New.xyz = copy.deepcopy(self.xyz)
+        New.elem = copy.deepcopy(self.elem)
+
+        for key in self.Data:
+            if key in ['topology']:
+                # These are NetworkX graph objects or other variables with explicitly defined copy() methods.
+                New.Data[key] = self.Data[key].copy()
+            elif key in ['molecules']:
+                # fragments
+                New.Data[key] = []
+                for i in range(len(self.Data[key])):
+                    New.Data[key].append(self.Data[key][i].copy())
+            elif key in ['bonds']:
+                # List of lists of 2 integers.
+                New.Data[key] = []
+                for i in range(len(self.Data[key])):
+                    New.Data[key].append(self.Data[key][i][:])
+            else:
+                raise RuntimeError("Failed to copy key %s" % key)
+        
+        return New 
 
     def build_bonds(self):
         """ 
