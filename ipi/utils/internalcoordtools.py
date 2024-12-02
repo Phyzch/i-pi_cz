@@ -13,7 +13,9 @@ class non_redundant_coordinate_transformer:
     perform transformation between Cartesian coordinate and internal coordinate
     """
 
-    def __init__(self, natom, ref_x, singular_value_cutoff = np.power(10.0, -2)):
+    def __init__(self, natom, 
+                 ref_x, 
+                 singular_value_cutoff = np.power(10.0, -2)):
         """
         :param: natom: number of atoms for the molecule
         :param: ref_x: Cartesian coordinate of the reference point
@@ -32,10 +34,10 @@ class non_redundant_coordinate_transformer:
 
         # compute transformation matrix U between non_redundant_coordinate q and redundant_coordinate d for reference point
         # we can access U as self.ref_U
-        self.compute_transformation_matrix_U_for_ref_point(singular_value_cutoff)
+        self._compute_transformation_matrix_U_for_ref_point(singular_value_cutoff)
 
     # for reference point, compute transformation matrix U.
-    def compute_transformation_matrix_U_for_ref_point(self,
+    def _compute_transformation_matrix_U_for_ref_point(self,
                                                       singular_value_cutoff):
         """
         compute transformation matrix U for transformation between nonredundant coordinate q and redundant coordinate d.
@@ -52,7 +54,7 @@ class non_redundant_coordinate_transformer:
         )  # ref_U: shape [natom^2, internal_dof].   ref_S: eigenvalue matrix S, diagonal part is eigenvalue s_i.
 
         self.ref_U = ref_U  # left singular vector matrix. each column is one left singular vector.
-        self.ref_UT = np.transpose(self.ref_U)
+        self.ref_UT = self.ref_U.T
         self.ref_S = ref_S
         self.nonzero_S_index_len = len(ref_S)
         print(f"Number of nonzero dofs: {self.nonzero_S_index_len}") 
@@ -366,7 +368,7 @@ class non_redundant_coordinate_transformer:
 
         return H_x
 
-    # for training: g_x -> g_q
+    # g_x -> g_q
     def transform_cartesian_gradient_to_internal_gradient(self, x, g_x):
         """
         transform from Cartesian coordinate system's gradient g_x to internal coordinate gradient g_q.
@@ -460,7 +462,7 @@ class non_redundant_coordinate_transformer:
 
         return H_q
 
-    def compute_q_hessian_x(self, x):
+    def _compute_q_hessian_x(self, x):
         """
         compute the hessian of internal coordinate q for the reference point.
         d^2 q/ dx^2.
@@ -482,7 +484,7 @@ class non_redundant_coordinate_transformer:
         d^2 x/ dq^2
         """
         # d^2 q/ dx^2. shape: [3n-6, 3n, 3n]
-        hessian_q_xx = self.compute_q_hessian_x(x)
+        hessian_q_xx = self._compute_q_hessian_x(x)
 
         Bq = self.compute_delocalized_wilson_matrix_Bq(
             np.array([x])

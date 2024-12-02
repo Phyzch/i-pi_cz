@@ -315,7 +315,8 @@ class MyG(nx.Graph):
         coors = nx.get_node_attributes(self,'x')
         return np.array([coors[i] for i in self.L()])
 
-def union_topology(molecule_list, molecule_index= 0):
+def union_topology(molecule_list, 
+                   molecule_index= 0):
     """
     Create a Molecule object.
     Take the union of topology of molecules (Molecule object) in the molecule_list as the topology of the new molecule.
@@ -358,7 +359,7 @@ def union_topology(molecule_list, molecule_index= 0):
 def create_molecule(natoms, elem, xyz_list, molecule_index= 0):
     """
     Create a Molecule object.
-    The topology of the object is the union of topology for all molecules, each with the coordinate in the xyz_list.
+    The topology of the new molecule object is the union of topology for all molecules, each with the coordinate in the xyz_list.
     The xyz for new molecule is given by xyz_list[molecule_index].
 
     This is used for the case that reactant , TS & product have different atom connectivity graph.

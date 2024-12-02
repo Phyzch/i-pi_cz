@@ -1634,7 +1634,7 @@ class InternalCoordinates(object):
         Bmatp = deriv2.reshape(deriv2.shape[0], xyz.shape[0], xyz.shape[0])
         BptGq = np.einsum('pmn,p->mn',Bmatp,gradq)
         Hx = np.einsum('ai,ab,bj->ij', Bmat, hessq, Bmat, optimize=True)
-        Hx += BptGq
+        Hx = Hx + BptGq
         return Hx
     
     @property
@@ -1692,7 +1692,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
     We do not implement TRIC and constraint in the current class. 
     This is to simplify the implementation.
     """
-    def __init__(self, molecule: Molecule, connect=False, addcart=False, **kwargs):
+    def __init__(self, molecule: Molecule, connect=True, addcart=False, **kwargs):
         super(PrimitiveInternalCoordinates, self).__init__()
         # connect = True corresponds to "traditional" internal coordinates with minimum spanning bonds
         # connect = False, addcart = True corresponds to HDLC
@@ -1706,9 +1706,9 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         # Atomic mass array
         self.mass = np.repeat([PeriodicTable[i] for i in self.elem], 3)
         # Here each molecule object corresponds to one frame in geomeTRIC.
-        self.makePrimitives(molecule, connect, addcart)
+        self.makePrimitives(molecule)
 
-    def makePrimitives(self, molecule: Molecule, connect, addcart):
+    def makePrimitives(self, molecule: Molecule):
         """
         Make primitive internal coordinates based on atom connectivity topology of the molecule.
         """
@@ -2034,7 +2034,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         return not self.__eq__(other)
 
 class DelocalizedInternalCoordinates(InternalCoordinates):
-    def __init__(self, molecule: Molecule,  connect=False, addcart=False):
+    def __init__(self, molecule: Molecule,  connect= True, addcart=False):
         super(DelocalizedInternalCoordinates, self).__init__()
         # HDLC is given by (connect = False, addcart = True)
         # Standard DLC is given by (connect = True, addcart = False)
@@ -2081,7 +2081,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
         nonzero_S_index = s_index[: dlc_na]
         nonzero_S = S[nonzero_S_index]
 
-        # sanity check in case we have zero sinuglar value number larger than 3n-6.
+        # sanity check in case we have non-zero sinuglar value number larger than 3n-6.
         zero_S_index = s_index[dlc_na :]
         zero_S = S[zero_S_index]
         if np.size(zero_S) != 0:
@@ -2122,6 +2122,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
     def derivatives(self, coords):
         """
         Calculate the change of the DLCs with respect to the Cartesian coordinates. 
+        This computes derivatives for individual Cartesian coordinates.
         The returned array has dimensions:
         1) Number of delocalized internal coordinates
         2) Number of atoms
@@ -2162,7 +2163,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
 
         # dq/dx : shape[3n-6, 3n]
         Bq = self.wilsonB(coords)
-        # shape: [3n, 3n-6]
+        # shape: [3n, 3n-6]. (Bq)^-1.  (dq/dx)^(-1)
         inverse_Bq = np.linalg.pinv(Bq)
         # shape: [3n-6, 3n-6, 3n]
         h1 = np.einsum('ijk, jl -> ilk', hessian_q_xx, inverse_Bq)
@@ -2181,6 +2182,3 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
     def __ne__(self, other):
         return not self.__eq__(other)
 
-
-#TODO: Write a non-redundant internal transformer and make it the same as the one in internalcoordtools.py.
-#TODO: This way, we only need minimal change in the code when using coordinate transformer.
