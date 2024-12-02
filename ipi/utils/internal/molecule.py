@@ -325,7 +325,7 @@ def union_topology(molecule_list, molecule_index= 0):
     """
     molecule_num = len(molecule_list)
     if molecule_num <= molecule_index:
-        raise ValueError(f"The molecule index {molecule_index} is larger than the number of molecules: {molecule_num} in molecule_list.}")
+        raise ValueError(f"The molecule index {molecule_index} is larger than the number of molecules: {molecule_num} in molecule_list.")
 
     new_molecule = copy.deepcopy(molecule_list[molecule_index])
 

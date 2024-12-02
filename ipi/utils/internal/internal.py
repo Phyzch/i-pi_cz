@@ -2180,3 +2180,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
 
     def __ne__(self, other):
         return not self.__eq__(other)
+
+
+#TODO: Write a non-redundant internal transformer and make it the same as the one in internalcoordtools.py.
+#TODO: This way, we only need minimal change in the code when using coordinate transformer.

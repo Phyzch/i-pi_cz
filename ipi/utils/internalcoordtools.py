@@ -98,6 +98,25 @@ class non_redundant_coordinate_transformer:
 
         return B
 
+    def compute_delocalized_wilson_matrix_Bq(self, x):
+        """
+        compute how changes in Cartesian coordinate x will affect delocalized non-redundant coordinate q.
+        Bq == \\ partial q / \\partial x.
+        :param: x: Cartesian coordinate. size: [nbatch, 3 * natom]
+
+        :return: matrix Bq: delocalized non-redundant Wilson B matrix.  size: [nbatch, 3 * natom - 6, 3 * natom]
+        """
+        B = self._compute_redundant_gradient_matrix_B(
+            x
+        )  # \partial d / \partial x. shape: [nbatch, n^2, 3n]
+
+        # compute transformation matrix U for each point
+        Bq = np.matmul(
+            self.ref_UT, B
+        )  # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+        
+        return Bq 
+
     # SVD decomposition of B to obtain left singular vector matrix U.
     def _SVD_matrix_B(self, B, singular_value_cutoff):
         """
@@ -287,14 +306,9 @@ class non_redundant_coordinate_transformer:
 
         :return: g_x: gradient in cartesian coordinate. shape: [nbatch, 3 * natom]
         """
-        B = self._compute_redundant_gradient_matrix_B(
+        Bq = self.compute_delocalized_wilson_matrix_Bq(
             x
-        )  # \partial d / \partial x. shape: [nbatch, n^2, 3n]
-
-        # compute transformation matrix U for each point
-        Bq = np.matmul(
-            self.ref_UT, B
-        )  # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+        ) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
 
         Bq_T = np.transpose(
             Bq, axes=(0, 2, 1)
@@ -327,14 +341,9 @@ class non_redundant_coordinate_transformer:
             nbatch == np.shape(H_q)[0]
         ), "the number of data points with hessians for internal coordinate transform is wrong."
 
-        B = self._compute_redundant_gradient_matrix_B(
+        Bq = self.compute_delocalized_wilson_matrix_Bq(
             x
-        )  # \partial d / \partial x. shape: [nbatch, n^2, 3n]
-
-        # compute transformation matrix U for each point
-        Bq = np.matmul(
-            self.ref_UT, B
-        )  # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+        ) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
 
         Bq_T = np.transpose(
             Bq, axes=(0, 2, 1)
@@ -366,14 +375,9 @@ class non_redundant_coordinate_transformer:
 
         :return g_q: gradient in internal coordinate. shape:[nbatch, 3 * natom - 6]
         """
-        nbatch = np.shape(x)[0]
-        B = self._compute_redundant_gradient_matrix_B(
+        Bq = self.compute_delocalized_wilson_matrix_Bq(
             x
-        )  # \partial d / \partial x. shape: [nbatch, n^2 , 3n]
-
-        Bq = np.matmul(
-            self.ref_UT, B
-        )  # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+        ) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
 
         Bq_T = np.transpose(
             Bq, axes=(0, 2, 1)
@@ -413,13 +417,9 @@ class non_redundant_coordinate_transformer:
             nbatch == np.shape(H_x)[0]
         ), "the number of data points with hessians for internal coordinate transform is wrong."
 
-        B = self._compute_redundant_gradient_matrix_B(
+        Bq = self.compute_delocalized_wilson_matrix_Bq(
             x
-        )  # \partial d / \partial x. shape: [nbatch, n^2 , 3n]
-
-        Bq = np.matmul(
-            self.ref_UT, B
-        )  # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
+        ) # \partial q / \partial x. shape:[nbatch, 3n -6, 3n]
 
         Bq_T = np.transpose(
             Bq, axes=(0, 2, 1)
@@ -484,12 +484,12 @@ class non_redundant_coordinate_transformer:
         # d^2 q/ dx^2. shape: [3n-6, 3n, 3n]
         hessian_q_xx = self.compute_q_hessian_x(x)
 
-        B = self._compute_redundant_gradient_matrix_B(np.array([x]))[
+        Bq = self.compute_delocalized_wilson_matrix_Bq(
+            np.array([x])
+        )[
             0
-        ]  # \partial d / \partial x. shape: [n^2, 3n]
+        ] # \partial q / \partial x. shape:[3n -6, 3n]
 
-        # \partial q/ \partial x. shape: [3n -6, 3n]
-        Bq = np.matmul(self.ref_UT, B)  # \partial q / \partial x. shape:[3n -6, 3n]
         # \partial x / partial q. shape: [3n, 3n-6]
         inverse_Bq = np.linalg.pinv(Bq, rcond=np.power(10.0, -8))
 

@@ -852,12 +852,11 @@ class GPModelWithHessiansWrapper:
         below, we assume 0 represents blocks of potentials, 1 represents blocks of gradients and 2 represents blocks of hessians.
         """
         # covar_factor [1, 1] term.  inverse transpose of Wilson's B matrix
-        B = self.coordinate_transformer._compute_redundant_gradient_matrix_B(
+        Bq = self.coordinate_transformer.compute_delocalized_wilson_matrix_Bq(
             np.array([x])
-        )[0]
-        
-        # # \partial q / \partial x. shape [3n - 6, 3n]
-        Bq = np.matmul(self.coordinate_transformer.ref_UT, B)
+        )[
+            0
+        ]
 
         # \partial x / \partial q.
         inverse_Bq_transpose = np.transpose(
