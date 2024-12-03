@@ -7,7 +7,8 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 import torch
 import gpytorch
 import numpy as np
-from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+# from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
 from .gprGrad.rbf_grad_gp import GPModelWithDerivatives, train_gpr
 import os 
 import shutil

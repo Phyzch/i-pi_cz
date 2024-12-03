@@ -11,7 +11,8 @@ import ipi.utils.nebinstgprtool
 from ipi.utils.nebinstool import RK4
 import ipi.utils.nebinstool
 from ipi.utils.gpr_hessian_tools import GPModelWithHessiansWrapper
-import ipi.utils.internalcoordtools 
+# import ipi.utils.internalcoordtools
+import ipi.utils.internal.internaltools
 import shutil
 
 
@@ -1229,7 +1230,7 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
 def analyze_transformation_between_cartesian_coord_and_internal_coord(coord_x,
                                                                       grad_x,
                                                                       hessian_x,
-                                                                      coordinate_transformer: ipi.utils.internalcoordtools.non_redundant_coordinate_transformer):
+                                                                      coordinate_transformer: ipi.utils.internal.internaltools.non_redundant_coordinate_transformer):
     """
     analyze the transformation of gradient and hessian between the Cartesian coordinate
     and the internal coordinate. 

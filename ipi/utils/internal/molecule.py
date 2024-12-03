@@ -52,7 +52,7 @@ import numpy as np
 from numpy import sin, cos, arccos
 from numpy.linalg import multi_dot
 from ipi.utils.messages import warning, info 
-
+from ipi.utils.internal.nifty import ang2bohr
 try:
     import networkx as nx
 except ImportError:
@@ -151,7 +151,69 @@ except ImportError:
 # |                                                                    |#
 # ======================================================================#
 
+# =========================================#
+# |     DECLARE VARIABLE NAMES HERE       |#
+# |                                       |#
+# |  Any member variable in the Molecule  |#
+# | class must be declared here otherwise |#
+# | the Molecule class won't recognize it |#
+# =========================================#
+# | Data attributes in FrameVariableNames |#
+# | must be a list along the frame axis,  |#
+# | and they must have the same length.   |#
+# =========================================#
+# xyzs       = List of arrays of atomic xyz coordinates
+# comms      = List of comment strings
+# boxes      = List of 3-element or 9-element arrays for periodic boxes
+# qm_grads   = List of arrays of gradients (i.e. negative of the atomistic forces) from QM calculations
+# qm_espxyzs = List of arrays of xyz coordinates for ESP evaluation
+# qm_espvals = List of arrays of ESP values
+# qm_zpe     = Zero point energy, kcal/mol (from a qchem freq calculation)
+# qm_entropy = Entropy contribution at STP, cal/mol.K (from a qchem freq calculation)
+# qm_enthalpy= Enthalpic contribution at STP, excluding electronic energy and ZPE, kcal/mol (from a qchem freq calculation)
+
+FrameVariableNames = {'xyzs', 'comms', 'boxes', 'qm_hessians', 'qm_grads', 'qm_energies', 'qm_interaction',
+                      'qm_espxyzs', 'qm_espvals', 'qm_extchgs', 'qm_mulliken_charges', 'qm_mulliken_spins', 'qm_zpe',
+                      'qm_entropy', 'qm_enthalpy', 'qm_bondorder'}
+#=========================================#
+#| Data attributes in AtomVariableNames  |#
+#| must be a list along the atom axis,   |#
+#| and they must have the same length.   |#
+#=========================================#
+# elem       = List of elements
+# partial_charge = List of atomic partial charges
+# atomname   = List of atom names (can come from MM coordinate file)
+# atomtype   = List of atom types (can come from MM force field)
+# tinkersuf  = String that comes after the XYZ coordinates in TINKER .xyz or .arc files
+# resid      = Residue IDs (can come from MM coordinate file)
+# resname    = Residue names
+# terminal   = List of true/false denoting whether this atom is followed by a terminal group.
+AtomVariableNames = {'elem', 'partial_charge', 'atomname', 'atomtype', 'tinkersuf', 'resid', 'resname', 'qcsuf',
+                     'qm_ghost', 'chain', 'altloc', 'icode', 'terminal'}
+#=========================================#
+#| This can be any data attribute we     |#
+#| want but it's usually some property   |#
+#| of the molecule not along the frame   |#
+#| atom axis.                            |#
+#=========================================#
+# bonds      = A list of 2-tuples representing bonds.  Carefully pruned when atom subselection is done.
+# fnm        = The file name that the class was built from
+# qcrems     = The Q-Chem 'rem' variables stored as a list of OrderedDicts
+# qctemplate = The Q-Chem template file, not including the coordinates or rem variables
+# charge     = The net charge of the molecule
+# mult       = The spin multiplicity of the molecule
+MetaVariableNames = {'fnm', 'ftype', 'qcrems', 'qctemplate', 'qcerr', 'charge', 'mult', 'bonds', 'topology',
+                     'molecules'}
+# Variable names relevant to quantum calculations explicitly
+QuantumVariableNames = {'qcrems', 'qctemplate', 'charge', 'mult', 'qcsuf', 'qm_ghost', 'qm_energies', 'qm_grads', 'qm_hessians',
+                        'qm_interaction', 'qm_espxyzs', 'qm_espvals', 'qm_extchgs', 'qm_mulliken_charges', 'qm_mulliken_spins',
+                        'qm_zpe', 'qm_entropy', 'qm_enthalpy','qm_bondorder'}
+# Superset of all variable names.
+AllVariableNames = QuantumVariableNames | AtomVariableNames | MetaVariableNames | FrameVariableNames
+
+
 # Covalent radii from Cordero et al. 'Covalent radii revisited' Dalton Transactions 2008, 2832-2838.
+# Radii in Angstrom.
 Radii = [0.31, 0.28, # H and He
          1.28, 0.96, 0.84, 0.76, 0.71, 0.66, 0.57, 0.58, # First row elements
          0.00, 1.41, 1.21, 1.11, 1.07, 1.05, 1.02, 1.06, # Second row elements
@@ -330,7 +392,7 @@ def union_topology(molecule_list,
 
     new_molecule = copy.deepcopy(molecule_list[molecule_index])
 
-    # check natom, ele is the same:
+    # check natom, elem is the same:
     for molecule in molecule_list:
         assert molecule.elem == new_molecule.elem
         assert molecule.na == new_molecule.na 
@@ -355,6 +417,8 @@ def union_topology(molecule_list,
     G = new_molecule.topology
     new_molecule.molecules = [G.subgraph(c).copy() for c in nx.connected_components(G)]
     for g in new_molecule.molecules: g.__class__ = MyG 
+
+    return new_molecule 
 
 def create_molecule(natoms, elem, xyz_list, molecule_index= 0):
     """
@@ -406,6 +470,9 @@ class Molecule(object):
             Multiplicative factor to covalent radii criterion for deciding whether two atoms are bonded
             Default value of 1.2 is reasonable, 1.4 will produce lots of bonds
         """
+        # Data container.  All of the data is stored in here.
+        self.Data = {}
+
         # bool that whether we have built bonds.
         self.built_bonds = False
 
@@ -419,8 +486,7 @@ class Molecule(object):
                              'fragment' : kwargs.get('fragment', False),
                              'radii' : kwargs.get('radii', {})}
 
-        # Data container.  All of the data is stored in here.
-        self.Data = {}
+
 
     def __getattr__(self, key):
         """ Whenever we try to get a class attribute, it first tries to get the attribute from the Data dictionary. """
@@ -431,11 +497,11 @@ class Molecule(object):
 
     def __setattr__(self, key, value):
         """ Whenever we try to get a class attribute, it first tries to get the attribute from the Data dictionary. """
-        if key in self.Data.keys():
+        if key in AllVariableNames:
             self.Data[key] = value
         return super(Molecule,self).__setattr__(key, value)
 
-    def __deepcopy__(self):
+    def __deepcopy__(self, memo):
         """
         Custom deepcopy method. Modified from geomeTRIC code.
         """
@@ -465,6 +531,11 @@ class Molecule(object):
                 New.Data[key] = []
                 for i in range(len(self.Data[key])):
                     New.Data[key].append(self.Data[key][i][:])
+            elif key in ['elem']:
+                if not isinstance(self.Data[key], list):
+                    raise RuntimeError('Expected data attribute %s to be a list, but it is %s' % (key, str(type(self.Data[key]))))
+                # Lists of strings or floats.
+                New.Data[key] = self.Data[key][:]
             else:
                 raise RuntimeError("Failed to copy key %s" % key)
         
@@ -482,6 +553,8 @@ class Molecule(object):
         # Molecule object can have its own set of radii that overrides the global ones
         # Here .get(a, b) will return top_settings['radii'] if a exist, otherwise return b, which is default radii.
         R = np.array([self.top_settings['radii'].get(i, (Radii[Elements.index(i)-1] if i in Elements else 0.0)) for i in self.elem])
+        # convert R from angstrom to Bohr unit
+        R = R * ang2bohr
 
         # Create a list of 2-tuples corresponding to combinations of atomic indices.
         # This is much faster than using itertools.combinations.
@@ -510,7 +583,7 @@ class Molecule(object):
         BondThresh = (BT0+BT1) * Fac
         # mindist: any atom closer than this is bonded.
         # BondThresh = (BondThresh > mindist) * BondThresh + (BondThresh < mindist) * mindist  
-        BondThresh = np.clip(BondThresh, a_min= mindist)
+        BondThresh = np.clip(BondThresh, a_min= mindist, a_max= None)
 
         # compute distance between atoms.
         dxij = AtomContact(self.xyz[np.newaxis, :], AtomIterator)[0]  

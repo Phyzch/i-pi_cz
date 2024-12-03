@@ -1,8 +1,6 @@
-from internal.internal import DelocalizedInternalCoordinates
+from .internalcoord import DelocalizedInternalCoordinates
 import numpy as np
-from numpy.linalg import norm as npnorm
-import internal.molecule
-from internal.molecule import Molecule
+import ipi.utils.internal.molecule 
 
 class non_redundant_coordinate_transformer:
     """
@@ -30,7 +28,7 @@ class non_redundant_coordinate_transformer:
             )
 
         # create molecule object
-        molecule = internal.molecule.create_molecule(
+        molecule = ipi.utils.internal.molecule.create_molecule(
             natoms,
             elem,
             ref_x_list,

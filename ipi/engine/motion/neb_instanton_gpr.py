@@ -23,7 +23,8 @@ from ipi.utils.messages import verbosity, info, warning
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
 from ipi.utils.nebinstool import RK4
-from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+# from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
 import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
 import ipi.utils.nebinstool
@@ -527,9 +528,25 @@ class MAPNEBGPRMover(Motion):
         bead_index_at_transition_state = np.argmax(beads_pots)
         ref_x = dstrip(self.beads.q[bead_index_at_transition_state]).copy()
 
+        # FIXME: The best solution is to provide both the reactant and product state
+        # FIXME: as reference points to construct coordinate transformer.
+        # Now, we just use the poiont with lowest energy at reactant and product side.
+        ref_x_reactant = dstrip(self.beads.q[0]).copy() # coordinate at reactant side.
+        ref_x_product = dstrip(self.beads.q[-1]).copy() # coordinate at product side
+        ref_x_list = np.array([ref_x, ref_x_reactant, ref_x_product])
+
         # create coordinate_transformer, which handles the transformation from the Cartesian coordinate to internal coordinate.
+        # This is for Coulomb matrix type internal coordinate.
+        # self.coordinate_transformer = non_redundant_coordinate_transformer(
+        #     self.beads.natoms, ref_x
+        # )
+
+        names = dstrip(self.beads.names).copy().tolist()
+        # This is for internal coordinate that include bond angles and bond distance
         self.coordinate_transformer = non_redundant_coordinate_transformer(
-            self.beads.natoms, ref_x
+            self.beads.natoms,
+            ref_x_list,
+            names
         )
 
         # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force.

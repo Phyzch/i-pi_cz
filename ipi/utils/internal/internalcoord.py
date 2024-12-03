@@ -43,8 +43,8 @@ import numpy as np
 from numpy.linalg import multi_dot
 from ipi.utils.messages import warning, info 
 
-from internal.nifty import click, commadash, ang2bohr, bohr2ang, logger, pvec1d, pmat2d
-from internal.molecule import Molecule, PeriodicTable, Elements, Radii 
+from ipi.utils.internal.nifty import click, commadash, ang2bohr, bohr2ang, logger, pvec1d, pmat2d
+from ipi.utils.internal.molecule import Molecule, PeriodicTable, Elements, Radii 
 
 ## Some vector calculus functions
 def unit_vector(a):
