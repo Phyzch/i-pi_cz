@@ -1483,6 +1483,7 @@ def convert_bohrs_degrees(prims, values):
 class InternalCoordinates(object):
     def __init__(self):
         self.stored_wilsonB = OrderedDict()  # orderedDict, key: xyz. value: Wilson B matrix.
+        self.CacheWarning = False
 
     def addConstraint(self, cPrim, cVal):
         raise NotImplementedError("Constraints not supported with Cartesian coordinates")
@@ -1504,25 +1505,31 @@ class InternalCoordinates(object):
         Given Cartesian coordinates xyz, return the Wilson B-matrix
         given by dq_i/dx_j where x is flattened (i.e. x1, y1, z1, x2, y2, z2)
         """
-        global CacheWarning
         t0 = time.time()
         xyz = xyz.flatten()
-        xhash = hash(xyz.tobytes())
-        ht = time.time() - t0
-        if xhash in self.stored_wilsonB:
-            ans = self.stored_wilsonB[xhash]
-            return ans
+
+        # Currently, we disable the saving and loading of Wilson B matrix to avoid potential memory leak.
+        # load Wilson B-matrix in case it is already computed.
+        # xhash = hash(xyz.tobytes())
+        # if xhash in self.stored_wilsonB:
+        #     ans = self.stored_wilsonB[xhash]
+        #     return ans
+        
         WilsonB = []
         Der = self.derivatives(xyz)
         for i in range(Der.shape[0]):
             WilsonB.append(Der[i].flatten())
-        self.stored_wilsonB[xhash] = np.array(WilsonB)
-        if len(self.stored_wilsonB) > 1000 and not CacheWarning:
-            logger.warning("\x1b[91mWarning: more than 1000 B-matrices stored, memory leaks likely\x1b[0m\n")
-            CacheWarning = True
+
         ans = np.array(WilsonB)
         if invMW:
             ans /= np.tile(np.sqrt(self.mass), (len(self.Internals), 1))
+
+        # store the WilsonB matrix to avoid re-computing. 
+        # self.stored_wilsonB[xhash] = np.array(WilsonB)
+        # if len(self.stored_wilsonB) > 1000 and not self.CacheWarning:
+        #     logger.warning("\x1b[91mWarning: more than 1000 B-matrices stored, memory leaks likely\x1b[0m\n")
+        #     self.CacheWarning = True
+
         return ans
 
     def GMatrix(self, xyz, invMW=False):
@@ -1835,7 +1842,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
                             # LPW 2022-02-15: Linear angle ICs have been improved, and should no longer require resetting if the
                             # atoms in the angle go through a large rotation. They are currently being used.
                             if nnc == 0:
-                                # both (a,b) and (b,c) is not in noncov, which means that are covalent bond.
+                                # one of (a,b) and (b,c) is not in noncov, which means that are covalent bond.
                                 # Add two internal coordinates corresponding to the bending of the linear angle.
                                 self.add(LinearAngle(a, b, c, 0))
                                 self.add(LinearAngle(a, b, c, 1))
@@ -2046,7 +2053,6 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
         self.molecule = molecule
         # The DLC contains an instance of primitive internal coordinates.
         self.Prims = PrimitiveInternalCoordinates(molecule, connect=connect, addcart=addcart)
-        self.frags = self.Prims.frags
         self.na = molecule.na
         # Atomic mass array
         self.mass = np.repeat([PeriodicTable[i] for i in molecule.elem], 3)
@@ -2062,7 +2068,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
         Build delocalized internal coordinate.
         param: xyz: Cartesian coordinate.
         """
-        Bmat = self.wilsonB(xyz)
+        Bmat = self.Prims.wilsonB(xyz)
         # SVD decomposition of Bmat
         U, S, Vh = np.linalg.svd(Bmat, full_matrices= False)
 
@@ -2094,7 +2100,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
                     )
                 )
             
-        S_nonredundant = S[:-6]
+        S_nonredundant = S[nonzero_S_index]
         print(f"All non-redundant singular values: {S_nonredundant}")
 
         # truncate nonzero singular value.

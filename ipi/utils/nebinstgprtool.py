@@ -10,6 +10,7 @@ import os
 import ipi.utils.nebinstgprtool
 from ipi.utils.nebinstool import RK4
 import ipi.utils.nebinstool
+from ipi.utils.depend import dstrip
 from ipi.utils.gpr_hessian_tools import GPModelWithHessiansWrapper
 # import ipi.utils.internalcoordtools
 import ipi.utils.internal.internaltools
@@ -169,8 +170,9 @@ def check_gpr_fitting_error(
     ab_initio_force = gpr_forces.f[0]
     ab_initio_pot = gpr_forces.pots[0] - energy_shift
 
+    beads_q = dstrip(gpr_beads.q).copy()
     predicted_V_shift, predicted_V_grad, _, _ = gpr_model.predict_latent_function(
-        gpr_beads.q
+        beads_q
     )
     predicted_gpr_bead_force = -predicted_V_grad[0]
     predicted_V_shift = predicted_V_shift[0]

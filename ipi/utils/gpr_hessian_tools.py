@@ -871,8 +871,9 @@ class GPModelWithHessiansWrapper:
 
         # covar factor [2,1] d^2 x/ dq^2
         hessian_x_qq = self.coordinate_transformer.compute_x_hessian_q(
-            x
-        )  # d^2 x / dq^2. shape:[3n, 3n-6, 3n-6]
+            np.array([x])
+        )[0]  # d^2 x / dq^2. shape:[3n, 3n-6, 3n-6]
+        
         hessian_x_qq_up_triangle = np.transpose(
             take_upper_triangular_part(hessian_x_qq), (1, 0)
         )  # shape: [(3n-6)(3n-5) / 2, 3n]

@@ -661,5 +661,5 @@ class Molecule(object):
         AtomIterator = np.ascontiguousarray(np.vstack((np.fromiter(itertools.chain(*[[i]*(self.na-i-1) for i in range(self.na)]),dtype=np.int32),
                                                     np.fromiter(itertools.chain(*[range(i+1,self.na) for i in range(self.na)]),dtype=np.int32))).T)
 
-        drij = AtomContact(self.xyz[np.newaxis, :], AtomIterator)[0]
-        return AtomIterator, list(drij)
+        drij = AtomContact(self.xyz[np.newaxis, :], AtomIterator)
+        return AtomIterator, drij

@@ -9,9 +9,12 @@ import gpytorch
 import numpy as np
 # from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
 from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
+import ipi.utils.depend
+from ipi.utils.depend import dstrip
 from .gprGrad.rbf_grad_gp import GPModelWithDerivatives, train_gpr
 import os 
 import shutil
+
 
 def predict_latent_function_gp_with_derivative(
     model: GPModelWithDerivatives, test_inputs, covar_bool=False
@@ -705,28 +708,33 @@ class GPModelWithDerivativesWrapper:
                 var_V: uncertainty (variance) of potential energy.
                 var_grad_x_trace: trace of the covariance matrix in the Cartesian coordinate. This can be used as a measure of the force noise.
         """
+        if type(test_x) == ipi.utils.depend.depend_array:
+            test_x_array = dstrip(test_x).copy()
+        else:
+            test_x_array = test_x
+
         assert (
-            np.shape(test_x)[1] == 3 * self.natom
+            np.shape(test_x_array)[1] == 3 * self.natom
         ), "dim of coordinates for input data is not 3 * natom"
 
         # transform to internal coordinate q. normalization + filter fixed dofs.
-        moving_test_q = self.get_free_moving_internal_coordinate(test_x)
-        moving_test_q_tensor = torch.from_numpy(moving_test_q)
+        moving_test_q = self.get_free_moving_internal_coordinate(test_x_array)
+        moving_test_q = torch.from_numpy(moving_test_q)
 
         # use Gaussian process regression model to make prediction
-        moving_normalized_test_mean_tensor, moving_normalized_test_var_tensor = (
+        moving_normalized_test_mean, moving_normalized_test_var = (
             predict_latent_function_gp_with_derivative(
                 self.gpr_model, 
-                test_inputs=moving_test_q_tensor,
+                test_inputs= moving_test_q,
                 covar_bool=False
             )
         )
 
         moving_normalized_test_mean = (
-            moving_normalized_test_mean_tensor.detach().cpu().numpy()
+            moving_normalized_test_mean.detach().cpu().numpy()
         )
         moving_normalized_test_var = (
-            moving_normalized_test_var_tensor.detach().cpu().numpy()
+            moving_normalized_test_var.detach().cpu().numpy()
         )
 
         # attach test_mean and test_var (0) of fixed dofs
@@ -750,7 +758,7 @@ class GPModelWithDerivativesWrapper:
 
         # transform gradient from internal coordinate back to cartesian coordinate.
         grad_x = self.coordinate_transformer.transform_internal_gradient_to_cartesian_gradient(
-            test_x, grad_q
+            test_x_array, grad_q
         )
 
         var_V = test_var[:, 0]
