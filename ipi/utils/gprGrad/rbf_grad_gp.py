@@ -371,7 +371,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             return full_output.__class__(predictive_mean, predictive_covar)
 
 
-def train_gpr(model: GPModelWithDerivatives, training_error_cutoff=np.power(10.0, -3)):
+def train_gpr(model: GPModelWithDerivatives, 
+              training_error_cutoff= np.power(10.0, -2),
+              output_training_info= True):
     """
     the function that trains the model.
     :param: model: GPytorch model
@@ -403,6 +405,7 @@ def train_gpr(model: GPModelWithDerivatives, training_error_cutoff=np.power(10.0
     old_loss_value = 1000
 
     train_counts = 0
+    train_counts_output = 20
 
     loss_value_list = []
     loss_prior_list = []
@@ -442,5 +445,13 @@ def train_gpr(model: GPModelWithDerivatives, training_error_cutoff=np.power(10.0
         optimizer.step()
 
         train_counts = train_counts + 1
+
+        if output_training_info:
+            if train_counts % train_counts_output == 0:
+                print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
+    
+    if output_training_info:
+        print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
+        print(f"loss_value_list: {loss_value_list}")
 
     pass

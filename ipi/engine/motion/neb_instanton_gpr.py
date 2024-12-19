@@ -2630,7 +2630,7 @@ class RP_MAP(object):
             end_time = timer() 
             time_elapsed = (end_time - start_time) / 60
             print(f"the time used for construct \
-                  gpr model to predict force along instanton path is: {time_elapsed}")
+                  gpr model to predict force along instanton path is: {time_elapsed} min")
             pass
 
     def classical_dynamics_along_MAP(self):
@@ -2809,6 +2809,20 @@ class RP_MAP(object):
                 self.gpr_model, neb_final_gpr_folder
             )
         
+        # test training results.
+        _, predicted_grad, _, _ = (
+            self.gpr_model.predict_latent_function(
+                cartesian_coordinate_x
+            )
+        )
+        predicted_forces = - predicted_grad 
+        df = np.linalg.norm(
+            training_forces - predicted_forces, 
+            axis= 1
+        )
+        ab_initio_force_amplitude = np.linalg.norm(training_forces, axis= 1)
+        df_error = df / ab_initio_force_amplitude
+        print(f"@gpr_model: relative training error for force: {df_error}")
 
     def interpolate_ring_polymer_beads(self, t_list, v_list, x_list):
         """
@@ -3054,6 +3068,11 @@ class RP_MAP(object):
                 self.fixatoms 
             )
 
+            #FIXME: debug. For testing the error induced by forward and backward transformation of gradient and hessian.
+            ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
+                np.array([first_hessian_data_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
+            )
+
             # initially no hessian training data.
             hessian_data_list = np.array([])
             hessian_index_list = np.array([])
@@ -3082,11 +3101,6 @@ class RP_MAP(object):
                     gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
                     gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff
                 )
-            )
-
-            #FIXME: debug. For testing the error induced by forward and backward transformation of gradient and hessian.
-            ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
-                np.array([first_hessian_data_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
             )
 
             #FIXME: debug the code
@@ -3158,7 +3172,7 @@ class RP_MAP(object):
                     self.gpr_kernel_outputscale,
                     self.gpr_kernel_lengthscale_ratio,
                     self.gpr_noise_std,
-                    constant_mean_func_bool=False,
+                    constant_mean_func_bool=True,
                     ref_mean_x=ref_x,
                     ref_mean_V=ref_V_shifted,
                     ref_mean_grad_x=ref_grads,

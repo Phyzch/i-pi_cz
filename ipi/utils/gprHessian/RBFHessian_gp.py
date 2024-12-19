@@ -607,8 +607,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
 def train_gpr_model(
     model: GPModelWithHessians,
-    training_error_cutoff=np.power(10.0, -4),
-    output_training_info=False,
+    training_error_cutoff=np.power(10.0, -1),
+    output_training_info=True,
 ):
     """
     the function that train the GPR model.
@@ -646,6 +646,7 @@ def train_gpr_model(
 
     loss_value_list = []
     loss_prior_list = []
+    loss_mll_list = []
 
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor
@@ -661,6 +662,10 @@ def train_gpr_model(
         loss_prior = torch.tensor(0.0)
         loss_prior = -mll._add_other_terms(loss_prior, []) / M
         loss_prior_list.append(loss_prior.item())
+
+        # loss function from probability distribution. No contribution from prior. 
+        loss_mll = loss_value - loss_prior
+        loss_mll_list.append(loss_mll)
 
         # calculate the change of loss function to decide whether we will stop the loop.
         loss_func_change = np.abs(loss_value - old_loss_value)
@@ -681,7 +686,8 @@ def train_gpr_model(
 
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
-
+        print(f"loss_value_list: {loss_value_list}")
+        
     pass
 
 
