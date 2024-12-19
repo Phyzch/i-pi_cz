@@ -762,6 +762,7 @@ class GPModelWithHessiansWrapper:
             ref_mean_V_tensor,
             ref_mean_grad_q_tensor,
             ref_mean_hessian_q_tensor,
+            ref_mean_hessian_q_upper_triag_tensor,
         ) = self.compute_mean_function_param(
             ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x
         )
@@ -790,7 +791,7 @@ class GPModelWithHessiansWrapper:
             ref_mean_q_tensor,
             ref_mean_V_tensor,
             ref_mean_grad_q_tensor,
-            ref_mean_hessian_q_tensor,
+            ref_mean_hessian_q_upper_triag_tensor,
         )
 
         if train_bool:
@@ -1158,24 +1159,27 @@ class GPModelWithHessiansWrapper:
             ref_mean_grad_q = ref_mean_grad_q[0]
             ref_mean_hessian_q = ref_mean_hessian_q[0]
             # take upper triangle part of hessian (this is what we put in GPR model)
-            ref_mean_hessian_q = take_upper_triangular_part(ref_mean_hessian_q)
+            ref_mean_hessian_q_upper_triag = take_upper_triangular_part(ref_mean_hessian_q)
 
             ref_mean_q_tensor = torch.tensor(ref_mean_q)
             ref_mean_V_tensor = torch.tensor(ref_mean_V)
             ref_mean_grad_q_tensor = torch.tensor(ref_mean_grad_q)
             ref_mean_hessian_q_tensor = torch.tensor(ref_mean_hessian_q)
+            ref_mean_hessian_q_upper_triag_tensor = torch.tensor(ref_mean_hessian_q_upper_triag)
 
         else:
             ref_mean_q_tensor = torch.tensor([])
             ref_mean_V_tensor = torch.tensor([])
             ref_mean_grad_q_tensor = torch.tensor([])
             ref_mean_hessian_q_tensor = torch.tensor([])
+            ref_mean_hessian_q_upper_triag_tensor = torch.tensor([])
 
         return (
             ref_mean_q_tensor,
             ref_mean_V_tensor,
             ref_mean_grad_q_tensor,
             ref_mean_hessian_q_tensor,
+            ref_mean_hessian_q_upper_triag_tensor,
         )
 
     def rescale_likelihood_noise(self):

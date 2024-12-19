@@ -88,7 +88,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         :param: constant_mean_func_bool:
                 If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians.
                 Otherwise, it will be Taylor expansion around ref point to second order.
-        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:
+        :param: ref_mean_coordinate, ref_mean_V, ref_mean_grad, ref_mean_hessian (upper triangle):
                 this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         """
         # the data point index that contains the hessian information.
