@@ -16,6 +16,7 @@ from .gprHessian.RBFHessian_utils import (
 import ipi.utils.gprHessian.RBFHessian_gp
 import os 
 import shutil
+from ipi.utils.messages import  warning
 
 class TransformTrainingTarget(object):
     """
@@ -336,6 +337,15 @@ class FixInternalDofs(object):
         (u, sq, vh) = np.linalg.svd(Bq, full_matrices= False)
         # compute change of training data along Cartesian coordinate.
         train_x_change = np.max(train_x, axis= 0) - np.min(train_x, axis= 0)
+
+        # check the case that we do not fix cartesian dofs. 
+        # report error if these dofs are small
+        if len(cartesian_fix_dofs) == 0:
+            train_x_cutoff = pow(10.0, -3)
+            index = [i for i in range(len(train_x_change)) if train_x_change[i] < train_x_cutoff]
+            if len(index) != 0:
+                warning(f"@Warning: Planar molecules? The changes of cartesian coordinate are small.  dofs: {index}. change {train_x_change[index]}")
+
         # if cartesian dofs is fixed, we set its change to 0.
         train_x_change[cartesian_fix_dofs] = 0 
 
@@ -1532,11 +1542,11 @@ class GPModelWithHessiansWrapper:
             retrain_bool=retrain_bool,
         )
     
-    def train_model(self, output_training_info=False):
+    def train_model(self):
         """
         function that trains the model
         """
-        train_gpr_model(self.gpr_model, output_training_info=output_training_info)
+        train_gpr_model(self.gpr_model)
 
     def get_free_moving_internal_coordinate(self, beads_x):
         """

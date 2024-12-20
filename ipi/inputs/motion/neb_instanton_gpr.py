@@ -434,7 +434,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": int,
                 "default": 1,
-                "help": "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel. ",
+                "help": "Number of Squared Exponential (SE) kernel used in Gaussian Process kernel.",
             },
         ),
 
@@ -455,7 +455,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 1e-4,
+                "default": 1e-3,
                 "help": """
                 cutoff value for fixing internal dofs.
             """
