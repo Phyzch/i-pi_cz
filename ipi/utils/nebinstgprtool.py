@@ -884,6 +884,7 @@ def test_gpr_hessian_prediction(
     pots_with_hessian_before_shift,
     grads_with_hessian,
     hessians_data,
+    cartesian_fix_dofs,
     gpr_fix_internal_dofs_bool,
     gpr_fix_internal_dofs_cutoff
 ):
@@ -962,6 +963,7 @@ def test_gpr_hessian_prediction(
         hessian_data_point_index_in_training_data,
         natoms,
         coordinate_transformer,
+        cartesian_fix_dofs,
         gpr_model.gpr_SE_kernel_number,
         gpr_model.kernel_outputscale,
         gpr_model.kernel_lengthscale_ratio,
@@ -992,7 +994,7 @@ def test_gpr_hessian_prediction(
     ) = check_gpr_hessian_model_lengthscale(gpr_hessian_model)
 
     # test the prediction of hessian of training data.
-    predicted_train_hessian_q, ab_initio_train_hessian_q = (
+    ab_initio_train_hessian_q, predicted_train_hessian_q = (
         compare_ab_initio_hessian_and_predicted_hessian(
             cartesian_x_with_hessian,
             grads_with_hessian,
@@ -1005,7 +1007,7 @@ def test_gpr_hessian_prediction(
     )
 
     # test data case for hessians in internal coordinate.
-    predicted_test_hessian_q, ab_initio_test_hessian_q = (
+    ab_initio_test_hessian_q, predicted_test_hessian_q = (
         compare_ab_initio_hessian_and_predicted_hessian(
             cartesian_x_with_hessian,
             grads_with_hessian,
@@ -1018,7 +1020,7 @@ def test_gpr_hessian_prediction(
     )
 
     # test data case for hessians in Cartesian coordinate
-    predicted_test_hessian, ab_initio_test_hessian = (
+    ab_initio_test_hessian, predicted_test_hessian = (
         compare_ab_initio_hessian_and_predicted_hessian(
             cartesian_x_with_hessian,
             grads_with_hessian,

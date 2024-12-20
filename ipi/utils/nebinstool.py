@@ -340,29 +340,24 @@ def print_instanton_hess(prefix, hessian, output_maker):
         f.write("\n")
 
 
-def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1, fixatoms=[], d=0.001):
+def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1,  fixdofs = [], d=0.001):
     """
     Adapted from hesstool.py
     Compute hessian as finite difference of force.
     The intermediate steps are written as a temporary files so the full hessian calculations is only ONE step.
-
+    The hessian for fixed dofs will be set as 0 and we will skip its calculation.
     IN     rp_beads: bead object for ring polymer
            rp_forces: forces object for ring polymer
            x0       = position vector
            natoms   = number of atoms
            nbeads   = number of beads
-           fixatoms = indexes of fixed atoms
+           fix_dofs = indexes of fixed dofs
            d        = displacement
 
     OUT    h       = physical hessian ( (natoms-len(fixatoms) )*3 , nbeads*( natoms-len(fixatoms) )*3)
     """
 
     info(" @get_hessian: Computing hessian", verbosity.low)
-    fixdofs = list()
-    for i in fixatoms:
-        fixdofs.extend(
-            [3 * i, 3 * i + 1, 3 * i + 2]
-        )  # add all fixdofs attached to fix atoms.
     ii = natoms * 3
     activedof = np.delete(np.arange(ii), fixdofs)
     ncalc = ii - len(fixdofs)  # for each bead, # of free dofs need calculation.

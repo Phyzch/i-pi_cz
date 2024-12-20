@@ -306,24 +306,42 @@ class FixInternalDofs(object):
 
     we also record the gradient and hessians along certain fixed dofs.
     These results will add back to the prediction of GPR model, then it will be transformed back to get gradients and hessians in Cartesian coordinate.
+    
+    :param: train_x: training data in Cartesian coordinate.
+    :param: cartesian_fix_dofs: dofs in cartesian coordinate that will be fixed.
+    :param: train_inputs: training data in internal coordinate.
+    :param: grads: gradients in internal coordinate.
+    :param: hessians: hessians in internal coordinate.
+    :param: gpr_fix_internal_dofs_bool: bool variable. Fix internal dofs or not.
+    :param: gpr_fix_internal_dofs_cutoff: if change of inputs along certain dof is small than certain value, it is fixed.
     """
 
     def __init__(
-        self, train_inputs: np.ndarray,
+        self,
+        train_x: np.ndarray,
+        cartesian_fix_dofs: np.ndarray,
+        coordinate_transformer: non_redundant_coordinate_transformer,
         grads: np.ndarray,
         hessians: np.ndarray,
         gpr_fix_internal_dofs_bool: bool,
         gpr_fix_internal_dofs_cutoff: float
     ):
-        self.input_dim = train_inputs.shape[1]
+        self.input_dim = grads.shape[1]
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
 
         # check whether coordinate alng certain internal dofs need to be fixed.
-        train_inputs_change = np.max(train_inputs, axis=0) - np.min(
-            train_inputs, axis=0
-        )
+        # the change along internal coordinate will be computed using Wilson's B matrix. (any coordinate should be fine.)
+        # This is to fix the problem for the planar molecule
+        Bq = coordinate_transformer.compute_delocalized_wilson_matrix_Bq(np.array([train_x[0]]))[0]
+        (u, sq, vh) = np.linalg.svd(Bq, full_matrices= False)
+        # compute change of training data along Cartesian coordinate.
+        train_x_change = np.max(train_x, axis= 0) - np.min(train_x, axis= 0)
+        # if cartesian dofs is fixed, we set its change to 0.
+        train_x_change[cartesian_fix_dofs] = 0 
 
-        if np.min(train_inputs_change) < 1e-6 and (not gpr_fix_internal_dofs_bool):
+        train_inputs_change = np.abs(sq * (vh @ train_x_change))
+
+        if np.min(train_inputs_change) < 1e-5 and (not gpr_fix_internal_dofs_bool):
             print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
             raise(RuntimeError, "Certain internal dofs of input data is fixed.\
                    Should turn gpr_fix_internal_dofs_bool on.")
@@ -572,6 +590,7 @@ class GPModelWithHessiansWrapper:
         training_data_hessian_data_point_index_array: np.ndarray,
         natom: int,
         coordinate_transformer: non_redundant_coordinate_transformer,
+        cartesian_fix_dofs: np.ndarray,
         gpr_SE_kernel_number: int,
         kernel_outputscale: np.ndarray,
         kernel_lengthscale_ratio: np.ndarray,
@@ -594,16 +613,26 @@ class GPModelWithHessiansWrapper:
         :param: train_hessians_x: [M_H, 3 * natom, 3 * natom].  hessians of initial M_H training data.
         :param: training_data_hessian_data_point_index: index of M_H data points that have hessians.
         :param: natom: number of atoms.
-        :param: coordinate_transformer: an instance of class: non_redundnat_coordinate_transformer. Responsible for transformation between Cartesian coordinates and internal coordinates.
+        :param: coordinate_transformer: an instance of class: non_redundnat_coordinate_transformer. 
+                                        Responsible for transformation between Cartesian coordinates and internal coordinates.
+        :param: cartesian_fix_dofs: cartesian dofs that will keep as fixed. 
+                                    The internal coordinates correspond to these cartesian dofs will not be included 
+                                    in the GPR model.
         :param: gpr_SE_kernel_number: number of squared exponential kernels that is used to construct the covariance function.
         :param: kernel_outputscale: output scale of each squared exponential kernels in Gaussian Process Regression model.
-        :param: kernel_lengthscale_ratio: the ratio of length scale over the range of input data for each squared exponential kernels in Gaussian Process Regression model.
-        :param: noise_std: the noise of likelihood function p(y|f).  y = f + epsilon.  Note the potential V, force f and hessian H have different noise.
-                           The noise for force and hessian is defined in Cartesian coordinate. We need to transform it into the internal coordinate.
+        :param: kernel_lengthscale_ratio: the ratio of length scale over the range of input data for each squared exponential kernels 
+                                          in Gaussian Process Regression model.
+        :param: noise_std: the noise of likelihood function p(y|f).  y = f + epsilon.  
+                            Note the potential V, force f and hessian H have different noise.
+                            The noise for force and hessian is defined in Cartesian coordinate. 
+                            We need to transform it into the internal coordinate.
         :param: kernel_lengthscale_initio_value: If set, we will initialize the length scale of gpr kernel as this value.
         :param: kernel_outputscale_initio_value: If set, we will initialize the output scale of kernel as this value.
-        :param: constant_mean_func_bool: If true, we will set the mean function of GPR model as function with constant value & zero gradient / hessians. Otherwise, it will be Taylor expansion around ref point to second order.
-        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
+        :param: constant_mean_func_bool: If true, we will set the mean function of GPR model as function with constant value 
+                                            & zero gradient / hessians. 
+                                            Otherwise, it will be Taylor expansion around ref point to second order.
+        :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  
+        this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         
         Several pre-processing steps:
         (1) transform data from Cartesian coordinate into internal coordinate.
@@ -704,7 +733,9 @@ class GPModelWithHessiansWrapper:
         # Filter the fixed dofs in coordinate (q) and gradients & hessians.
         # For fixing dofs, we use the train_inputs before we normalize it.
         self.FixingDofs = FixInternalDofs(
-            train_inputs, 
+            train_x,
+            cartesian_fix_dofs,
+            self.coordinate_transformer,  
             normalized_train_grad_q, 
             normalized_train_hessians_q,
             gpr_fix_internal_dofs_bool,

@@ -43,6 +43,15 @@ class InputNebInstGPR(InputDictionary):
     }
 
     fields = {
+        "fix_dofs":(
+            InputArray,
+            {
+                "dtype": int,
+                "default": input_default(factory= np.zeros, args=(0,)),
+                "help": "degrees of freedom in molecules to be fixed. Used for planar molecule case",
+            }
+        ),
+
         "tolerances": (
             InputDictionary,
             {
@@ -433,7 +442,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": bool,
-                "default": False,
+                "default": True,
                 "help": """
                 bool variable to decide whether we fix certain internal dofs.
                 This is for the case that certain internal dofs of training data is fixed.
@@ -652,6 +661,7 @@ class InputNebInstGPR(InputDictionary):
         )
 
         # optarrays
+        self.fix_dofs.store(optarrays["fix_dofs"])
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
         self.kappa.store(optarrays["kappa"])

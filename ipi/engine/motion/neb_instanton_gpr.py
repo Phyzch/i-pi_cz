@@ -62,6 +62,7 @@ class MAPNEBGPRMover(Motion):
         self,
         fixcom=False,
         fixatoms=None,
+        fix_dofs= np.array([]),
         mode="verlet",
         prefix="neb_instanton",
         tolerances={"gradient": 5e-3, 
@@ -108,7 +109,7 @@ class MAPNEBGPRMover(Motion):
             "hessian_noise_prior": 1e-3,
         },
         gpr_SE_kernel_number=1,
-        gpr_fix_internal_dofs_bool= False,
+        gpr_fix_internal_dofs_bool= True,
         gpr_fix_internal_dofs_cutoff= 1e-4,
         read_initial_gpr_training_data=False,
         test_gpr_model_along_instanton_path= False,
@@ -172,6 +173,7 @@ class MAPNEBGPRMover(Motion):
 
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
+        self.optarrays["fix_dofs"] = fix_dofs  # the cartesian dofs of molecules to be fixed. 
         self.optarrays["energy_shift"] = energy_shift
 
         self.optarrays["neb_inner_loop_step_max"] = neb_inner_loop_step_max
@@ -300,6 +302,11 @@ class MAPNEBGPRMover(Motion):
             self.fixatoms_mask[3 * self.fixatoms] = 0
             self.fixatoms_mask[3 * self.fixatoms + 1] = 0
             self.fixatoms_mask[3 * self.fixatoms + 2] = 0
+
+        # check if fix_dofs is out of range.
+        fix_dofs = self.optarrays["fix_dofs"]
+        if np.any(fix_dofs >= (3 * self.beads.natoms)):
+            raise ValueError("dofs to be fixed is larger than 3 * natoms, this is wrong.")
 
         # create bead object that is used to add training data to GPR model.
         # We use One Image evaluation method, each time only update bead for one image.
@@ -476,7 +483,7 @@ class MAPNEBGPRMover(Motion):
             self.options["stage"] = "converged"
 
         else:
-            raise (
+            raise ValueError(
                 "unrecognized stage parameter. The stage has to be neb or instanton or converged"
             )
 
@@ -1645,6 +1652,7 @@ class MAPNEBGPRMover(Motion):
         test the performance of gaussian process regression model that predicts hessians.
         We randomly sample data around the center coordinate & separate data into training data and test data.
         """
+        fix_dofs = np.array(self.optarrays["fix_dofs"])
         train_data_number = 20
         test_data_number = 2
         train_data_with_hessian_number = 2
@@ -1703,7 +1711,7 @@ class MAPNEBGPRMover(Motion):
             np.copy(beads2.q),
             beads2.natoms,
             beads2.nbeads,
-            self.fixatoms,
+            fix_dofs
         )
 
         hessians = np.transpose(
@@ -1721,6 +1729,7 @@ class MAPNEBGPRMover(Motion):
         ref_V = np.array([train_pots[0]])
         ref_grad_x = train_gradients[0]
         ref_hessian_x = train_ab_initio_hessians[0]
+
         self.gpr_hessian_model = ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
             train_data_coordinate,
             train_pots,
@@ -1729,6 +1738,7 @@ class MAPNEBGPRMover(Motion):
             train_hessian_data_point_index_array,
             self.beads.natoms,
             self.coordinate_transformer,
+            fix_dofs,
             self.options["gpr_SE_kernel_number"],
             self.optarrays["gpr_kernel_outputscale"],
             self.optarrays["gpr_kernel_lengthscale_ratio"],
@@ -2547,6 +2557,8 @@ class RP_MAP(object):
             self.fixatoms_mask[3 * nebmover.fixatoms + 1] = 0
             self.fixatoms_mask[3 * nebmover.fixatoms + 2] = 0
 
+        self.fix_dofs = np.array(nebmover.optarrays["fix_dofs"])
+
         # ring polymer beads.
         self.rp_bead_number = nebmover.optarrays[
             "instanton_bead_number"
@@ -2871,7 +2883,7 @@ class RP_MAP(object):
                 rp_beads_q,
                 self.rp_beads.natoms,
                 self.rp_beads.nbeads,
-                self.fixatoms,
+                self.fix_dofs,
             )
 
             self.rp_beads.q = rp_beads_q
@@ -3065,7 +3077,7 @@ class RP_MAP(object):
                 np.copy(new_beads.q),
                 self.neb_beads.natoms, 
                 1,
-                self.fixatoms 
+                self.fix_dofs 
             )
 
             #FIXME: debug. For testing the error induced by forward and backward transformation of gradient and hessian.
@@ -3088,6 +3100,7 @@ class RP_MAP(object):
                     hessian_index_list,
                     self.rp_beads.natoms,
                     self.coordinate_transformer,
+                    self.fix_dofs,
                     self.gpr_SE_kernel_number,
                     self.gpr_kernel_outputscale,
                     self.gpr_kernel_lengthscale_ratio,
@@ -3168,6 +3181,7 @@ class RP_MAP(object):
                     hessian_index_list,
                     self.rp_beads.natoms,
                     self.coordinate_transformer,
+                    self.fix_dofs,
                     self.gpr_SE_kernel_number,
                     self.gpr_kernel_outputscale,
                     self.gpr_kernel_lengthscale_ratio,
@@ -3292,7 +3306,7 @@ class RP_MAP(object):
                     np.copy(new_beads.q),
                     natoms,
                     new_hessian_data_num,
-                    self.fixatoms,
+                    self.fix_dofs
                 )
 
                 new_hessians = np.transpose(
@@ -3559,8 +3573,15 @@ class RP_MAP(object):
                 hessians = self.rp_hessian
                 
                 # ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(
-                #     self.gpr_model, self.energy_shift, x, pots, grads, hessians,
-                #     self.gpr_fix_internal_dofs_bool, self.gpr_fix_internal_dofs_cutoff
+                #     self.gpr_model, 
+                #     self.energy_shift, 
+                #     x, 
+                #     pots,
+                #     grads, 
+                #     hessians,
+                #     np.copy(self.fix_dofs),
+                #     self.gpr_fix_internal_dofs_bool, 
+                #     self.gpr_fix_internal_dofs_cutoff
                 # )
 
             else:
