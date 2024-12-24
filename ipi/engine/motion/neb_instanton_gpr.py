@@ -3112,6 +3112,8 @@ class RP_MAP(object):
                 )
             )
 
+            # test the training error of GPR model.
+            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
 
             # After train the model with only potential and gradient,
             # the hyper-parameter should be close to the minimum point after adding hessian data.

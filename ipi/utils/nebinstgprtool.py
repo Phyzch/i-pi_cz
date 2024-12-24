@@ -1280,7 +1280,8 @@ def analyze_transformation_between_cartesian_coord_and_internal_coord(coord_x,
 
 def perturb_training_point(bead_path_x: np.ndarray,
                            new_data_index: np.ndarray,
-                           gpr_hessian_model: GPModelWithHessiansWrapper):
+                           gpr_hessian_model: GPModelWithHessiansWrapper,
+                           perturb_amplitude: np.ndarray = 0.1):
     """
     Add perturbation to the training data point.
     To avoid causing trouble to the GPR model, we do not perturb the training point along the fixed internal dofs.
@@ -1292,27 +1293,26 @@ def perturb_training_point(bead_path_x: np.ndarray,
     """
     coordinate_transformer = gpr_hessian_model.coordinate_transformer
     # the total number of candidate data points
-    n = bead_path_x.shape[0]
     x_ref = np.copy(bead_path_x[new_data_index])
     # transform cartesian coordinate into internal coordinate.
     bead_path_q = coordinate_transformer.get_internal_coordinate_q(bead_path_x)
     # the coordinate of data points that we are going to perturb
-    q = np.copy(bead_path_q[new_data_index])
+    q_ref = np.copy(bead_path_q[new_data_index])
     new_data_point_num = len(new_data_index)
 
     free_moving_dofs = gpr_hessian_model.FixingDofs.free_moving_dofs
     free_moving_ndofs = len(free_moving_dofs)
 
     bead_path_q_range = np.max(bead_path_q, axis= 0) - np.min(bead_path_q, axis= 0)
-    dq = bead_path_q_range / n 
+    dq = bead_path_q_range * perturb_amplitude 
 
     # perturbation for data point along free moving dofs
     q_perturb = dq[free_moving_dofs] * np.random.uniform(-1, 1, (new_data_point_num, free_moving_ndofs))
     # add perturbation
-    perturbed_q = np.copy(q)
-    perturbed_q[free_moving_dofs] = q[free_moving_dofs] + q_perturb 
+    perturbed_q = np.copy(q_ref)
+    perturbed_q[:, free_moving_dofs] = q_ref[:, free_moving_dofs] + q_perturb 
 
     # transform back to the Cartesian coordinate.
-    perturbed_x = coordinate_transformer.get_cartesian_coordinate_x(x_ref, q, q_cutoff= pow(10.0, -4))
+    perturbed_x = coordinate_transformer.get_cartesian_coordinate_x(x_ref, perturbed_q, q_cutoff= pow(10.0, -4))
 
     return perturbed_x 

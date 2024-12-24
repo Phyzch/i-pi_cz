@@ -116,7 +116,7 @@ class non_redundant_coordinate_transformer:
             old_error = error
             error = np.linalg.norm(q - q_solve)
             if error < old_error:
-                step_factor = np.min(1, 1.25 * step_factor)
+                step_factor = np.min([1, 1.25 * step_factor])
             else:
                 step_factor = step_factor / 2 
         
@@ -128,7 +128,7 @@ class non_redundant_coordinate_transformer:
         Need to iteratively solve x.
         Here x_ref, q_solve is an array of size [nbatch]
         """
-        nbatch = np.shape(x_ref_list)
+        nbatch = np.shape(x_ref_list)[0]
         x_list = []
         for i in range(nbatch):
             x = self.get_cartesian_coordinate_x_subroutine(x_ref_list[i], q_solve_list[i], q_cutoff)

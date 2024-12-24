@@ -309,6 +309,7 @@ class FixInternalDofs(object):
     These results will add back to the prediction of GPR model, then it will be transformed back to get gradients and hessians in Cartesian coordinate.
     
     :param: train_x: training data in Cartesian coordinate.
+    :param: train_inputs: the transformed internal coordinate.
     :param: cartesian_fix_dofs: dofs in cartesian coordinate that will be fixed.
     :param: train_inputs: training data in internal coordinate.
     :param: grads: gradients in internal coordinate.
@@ -320,6 +321,7 @@ class FixInternalDofs(object):
     def __init__(
         self,
         train_x: np.ndarray,
+        train_inputs: np.ndarray,
         cartesian_fix_dofs: np.ndarray,
         coordinate_transformer: non_redundant_coordinate_transformer,
         grads: np.ndarray,
@@ -349,7 +351,11 @@ class FixInternalDofs(object):
         # if cartesian dofs is fixed, we set its change to 0.
         train_x_change[cartesian_fix_dofs] = 0 
 
-        train_inputs_change = np.abs(sq * (vh @ train_x_change))
+        train_inputs_change1 = np.abs(sq * (vh @ train_x_change))
+        train_inputs_change2 = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
+        # we use whichever is smaller : the change within internal coordinate or the change infered from cartesian coordinate
+        # as the criterion to fix internal dofs.
+        train_inputs_change = np.min([train_inputs_change1, train_inputs_change2], axis= 0)
 
         if np.min(train_inputs_change) < 1e-5 and (not gpr_fix_internal_dofs_bool):
             print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
@@ -744,6 +750,7 @@ class GPModelWithHessiansWrapper:
         # For fixing dofs, we use the train_inputs before we normalize it.
         self.FixingDofs = FixInternalDofs(
             train_x,
+            train_inputs,
             cartesian_fix_dofs,
             self.coordinate_transformer,  
             normalized_train_grad_q, 
