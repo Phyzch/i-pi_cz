@@ -3282,7 +3282,13 @@ class RP_MAP(object):
 
             if len(self.new_hessian_data_index) > 0:
                 # the new data point that we will compute hessian.
-                new_hessian_point_x = candidate_hessian_point_x[self.new_hessian_data_index]
+                # FIXME: add perturbation to the candidate training data point that contains hessian information.
+                perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_hessian_point_x,
+                                                                                  self.new_hessian_data_index,
+                                                                                  self.gpr_hessian_model)
+                
+                new_hessian_point_x = perturbed_new_x 
+                # new_hessian_point_x = candidate_hessian_point_x[self.new_hessian_data_index]
                 new_hessian_data_num = len(new_hessian_point_x)
                 # beads & forces object to call the server to compute hessians.
                 natoms = self.neb_beads.natoms
@@ -3369,8 +3375,13 @@ class RP_MAP(object):
                     len(common_index) == 0
                     ), "At least one data point in new_grad_data_index coincide with the one point that we have already computed grads.\
                         please double check new_grad_data_index entry in input.xml" 
-
-            new_grad_point_x = candidate_grad_point_x[self.new_grad_data_index]
+            
+            # FIXME: add perturbation to the candidate training data point.
+            perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_grad_point_x,
+                                                                              self.new_grad_data_index,
+                                                                              self.gpr_hessian_model)
+            new_grad_point_x = perturbed_new_x
+            # new_grad_point_x = candidate_grad_point_x[self.new_grad_data_index]
             new_grad_point_num = len(self.new_grad_data_index)
 
             natoms = self.neb_beads.natoms 

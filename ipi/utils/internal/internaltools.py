@@ -69,7 +69,7 @@ class non_redundant_coordinate_transformer:
         transform Cartesian coordinate x to internal coordinate q.
         :param: x: Cartesian coordinate. shape: [nbatch, 3 * natom]
         
-        :return: q: internal coordinate. shape: [nbatch, internal_dof_#]
+        :return: q: internal coordinate. shape: [nbatch, # of internal dof]
         """
         nbatch = np.shape(x)[0]
         q = [] 
@@ -81,7 +81,63 @@ class non_redundant_coordinate_transformer:
         q = np.array(q)
 
         return q 
-    
+
+    def get_cartesian_coordinate_x_subroutine(self, x_ref, q_solve, q_cutoff):
+        """
+        transform the new internal coordinate q (which is perturbed from q_ref) to Cartesian coordinate x.
+        Need to iteratively solve x.  
+        :param: q_solve: the internal coordinate whose Cartesian coordinate is to be sought. shape: [# of internal dof]
+        :param: x_ref: the reference cartesian coordinate. shape: [3 * natom] 
+
+        :return: x: Cartesian coordinate for q_solve. shape [3 * natom].
+
+        """
+        x = np.copy(x_ref)
+        q = self.get_internal_coordinate_q(np.array([x]))[0]
+        Bq = self.dlc_coord.wilsonB(x) # Wilson B matrix
+        # we choose distance in internal coordinate as the error function.
+        error = np.linalg.norm(q - q_solve)
+        step_factor = 1 
+
+        while(1):
+            # iteratively solve x.
+            q_distance = np.linalg.norm(q - q_solve)
+            if q_distance < q_cutoff:
+                break 
+
+            dq = q_solve - q 
+            dx = step_factor * np.linalg.pinv(Bq) @ dq 
+            x = x + dx 
+
+            q = self.get_internal_coordinate_q(np.array([x]))[0]
+            Bq = self.dlc_coord.wilsonB(x) #Wilson B matrix.
+
+            # adjust step factor.
+            old_error = error
+            error = np.linalg.norm(q - q_solve)
+            if error < old_error:
+                step_factor = np.min(1, 1.25 * step_factor)
+            else:
+                step_factor = step_factor / 2 
+        
+        return x 
+            
+    def get_cartesian_coordinate_x(self, x_ref_list, q_solve_list, q_cutoff = pow(10.0, -4)):
+        """
+        transform the new internal coordinate q (which is perturbed from q_ref) to Cartesian coordinate x.
+        Need to iteratively solve x.
+        Here x_ref, q_solve is an array of size [nbatch]
+        """
+        nbatch = np.shape(x_ref_list)
+        x_list = []
+        for i in range(nbatch):
+            x = self.get_cartesian_coordinate_x_subroutine(x_ref_list[i], q_solve_list[i], q_cutoff)
+            x_list.append(x)
+        
+        x_list = np.array(x_list)
+
+        return x_list
+
     # transformation between gradients and hessian. g_x <-> g_q.  h_x <-> h_q
     # g_x -> g_q
     def transform_cartesian_gradient_to_internal_gradient(self, x_list, g_x_list):
