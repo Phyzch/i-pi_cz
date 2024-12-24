@@ -617,11 +617,7 @@ class MAPNEBGPRMover(Motion):
         ab_initio_forces = self.forces.f
 
         # check length scale for possible over-fitting
-        learned_kernel_length_scale = self.gpr_model.output_kernel_lengthscale()
-        internal_input_range = np.max(
-            self.gpr_model.output_free_moving_training_internal_inputs(), axis=0
-        ) - np.min(self.gpr_model.output_free_moving_training_internal_inputs(), axis=0)
-        scaled_kernel_lengthscale = learned_kernel_length_scale / internal_input_range
+        scaled_kernel_lengthscale = self.gpr_model.output_kernel_lengthscale()
 
         # check the size of covariance function (kernel).
         kernel_output_scale_var = self.gpr_model.output_kernel_outputscale()
@@ -3080,7 +3076,7 @@ class RP_MAP(object):
                 self.fix_dofs 
             )
 
-            #FIXME: debug. For testing the error induced by forward and backward transformation of gradient and hessian.
+            # For testing the error induced by forward and backward transformation of gradient and hessian.
             ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
                 np.array([first_hessian_data_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
             )
@@ -3116,9 +3112,6 @@ class RP_MAP(object):
                 )
             )
 
-            #FIXME: debug the code
-            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
-            pass
 
             # After train the model with only potential and gradient,
             # the hyper-parameter should be close to the minimum point after adding hessian data.
@@ -3139,7 +3132,7 @@ class RP_MAP(object):
                 retrain_bool= self.train_hessian_model_bool
             )
 
-            #FIXME: debug the code
+            # test the training error of GPR model.
             ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
             pass
 
@@ -3167,7 +3160,7 @@ class RP_MAP(object):
             ref_grads = training_grads[hessian_index_list[0]]
             ref_hessians = hessian_data_list[0]
             
-            #FIXME: debug. For testing the error induced by forward and backward transformation of gradient and hessian.
+            #For testing the error induced by forward and backward transformation of gradient and hessian.
             ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
                 np.array([ref_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
             )
@@ -3186,7 +3179,7 @@ class RP_MAP(object):
                     self.gpr_kernel_outputscale,
                     self.gpr_kernel_lengthscale_ratio,
                     self.gpr_noise_std,
-                    constant_mean_func_bool=True,
+                    constant_mean_func_bool=False,
                     ref_mean_x=ref_x,
                     ref_mean_V=ref_V_shifted,
                     ref_mean_grad_x=ref_grads,
@@ -3197,6 +3190,8 @@ class RP_MAP(object):
                 )
             )
 
+            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+
             model_hyperparameter_exists = \
                 ipi.utils.nebinstgprtool.load_training_hyperparameter_for_gpr_hessian_model(
                     self.gpr_hessian_model,
@@ -3204,26 +3199,25 @@ class RP_MAP(object):
             )
 
             # FIXME: for debugging. Temperarily disable loading hyper-parameters for gpr hessian model.
-            # if model_hyperparameter_exists:
-            #     # the hyper-parameter of the gpr hessian model exists.
-            #     # we do not have to train it.
-            #     # however, if desired (setting train_hessian_model_bool == True), we can train it.
-            #     if (not self.add_new_hessian_data_bool) and self.train_hessian_model_bool:
-            #         print("We are going to train the gpr model with hessian data.\
-            #        This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
-            #         self.gpr_hessian_model.train_model() 
-            #         ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
-            #             self.gpr_hessian_model, self.read_gpr_hessian_folder
-            #         )
-            # else:
-            #     # the hyper-parameter of the gpr hessian model does not exist. Must train the model.
-            #     raise(RuntimeError, "The model hyper-parameter gpr_hessian.pth does not exist. Optimizing hessian data directly\
-            #           without pre-trained hyper-parameter can be inefficient. Please make sure to provide pre-trained hyper-parameter")
-
-            #FIXME: debug the code
-            print("We are going to train the gpr model with hessian data.\
+            if model_hyperparameter_exists:
+                # the hyper-parameter of the gpr hessian model exists.
+                # we do not have to train it.
+                # however, if desired (setting train_hessian_model_bool == True), we can train it.
+                if (not (self.add_new_hessian_data_bool or self.add_new_grad_data_bool)) and self.train_hessian_model_bool:
+                    print("We are going to train the gpr model with hessian data.\
                    This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
-            self.gpr_hessian_model.train_model() 
+                    self.gpr_hessian_model.train_model() 
+                    ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
+                        self.gpr_hessian_model, self.read_gpr_hessian_folder
+                    )
+            else:
+                print("We are going to train the gpr model with hessian data.\
+                       This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
+                self.gpr_hessian_model.train_model() 
+
+                ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
+                        self.gpr_hessian_model, self.read_gpr_hessian_folder
+                )
 
             ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
             pass
