@@ -294,6 +294,32 @@ def store_training_data_with_hessian(
 
             f.write("\n")
 
+def store_fixed_internal_dofs_gpr_model(gpr_model: GPModelWithDerivativesWrapper,
+                              prefix):
+    """
+    store fixed internal dofs in gpr_hessian_model
+    """
+    fixed_internal_dofs = gpr_model.output_fixed_internal_dofs()
+    
+    file_path = os.path.join(prefix, "fixed_internal_dofs.txt")
+    with open(file_path, "w") as f:
+        for dof in fixed_internal_dofs:
+            f.write(str(dof) + " ")
+        f.write('\n')
+
+def store_fixed_internal_dofs_gpr_hessian_model(gpr_hessian_model: GPModelWithHessiansWrapper,
+                              prefix):
+    """
+    store fixed internal dofs in gpr_hessian_model
+    """
+    fixed_internal_dofs = gpr_hessian_model.output_fixed_internal_dofs()
+    
+    file_path = os.path.join(prefix, "fixed_internal_dofs.txt")
+    with open(file_path, "w") as f:
+        for dof in fixed_internal_dofs:
+            f.write(str(dof) + " ")
+        f.write('\n')
+    
 
 def store_candidate_hessian_data_coordinate(
     candidate_hessian_point_x, used_hessian_index_in_candidate_list, prefix
@@ -392,6 +418,23 @@ def extract_number_from_line(line):
 
     return line
 
+def read_fixed_internal_dofs(prefix):
+    """
+    read fixed internal dofs from file.
+    If file exists, read the data.
+    else: return None.
+    """
+    file_path = os.path.join(prefix, "fixed_internal_dofs.txt")
+    
+    fixed_internal_dofs = None
+    if os.path.exists(file_path):
+        with open (file_path, "r") as f:
+            lines = f.readlines()
+            fixed_internal_dofs = extract_number_from_line(lines[0])
+            fixed_internal_dofs = np.array(list(map(int, fixed_internal_dofs)))
+    
+    return fixed_internal_dofs
+
 
 def read_training_data(prefix):
     """
@@ -459,7 +502,6 @@ def read_training_data(prefix):
 
     return cartesian_coordinate_x, training_V, training_forces
 
-
 def read_hessian_data(prefix, ndofs):
     """
     """
@@ -493,6 +535,7 @@ def read_hessian_data(prefix, ndofs):
     hessian_data_list = np.array(hessian_data_list)
 
     return hessian_index_list, hessian_data_list 
+
 
 def read_training_data_with_hessian(prefix):
     """
@@ -1118,7 +1161,7 @@ def store_training_data_in_gpr_hessian_model(
     prefix = "grad# " + str(gradients_num) + " hessian# " + str(hessians_num)
 
     store_training_data_with_hessian(
-        cartesian_x, pots, forces, hessian_index_list, hessians, prefix=prefix
+        cartesian_x, pots, forces, hessian_index_list, hessians, prefix= prefix
     )
 
     return prefix
@@ -1264,12 +1307,6 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
                     print(f"internal dof {i}")
                     print(f"@debug hessian: internal coordinate: ab initio hessian q [{i}, :] = {ab_initio_hessian_q[i]}" )
                     print(f"@debug hessian: internal coordinate: predicted hessian q [{i}, :] = {predicted_hessian_q[i]}")
-         
-            
-        
-        
-    
-
 
     pass 
 

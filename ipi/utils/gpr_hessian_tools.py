@@ -327,7 +327,8 @@ class FixInternalDofs(object):
         grads: np.ndarray,
         hessians: np.ndarray,
         gpr_fix_internal_dofs_bool: bool,
-        gpr_fix_internal_dofs_cutoff: float
+        gpr_fix_internal_dofs_cutoff: float,
+        gpr_fixed_internal_dofs = None
     ):
         self.input_dim = grads.shape[1]
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
@@ -371,13 +372,18 @@ class FixInternalDofs(object):
     
 
         if gpr_fix_internal_dofs_bool:
-            self.fixed_internal_dofs = np.array(
-                [
-                    i
-                    for i in range(self.input_dim)
-                    if train_inputs_change[i] < self.fix_internal_dofs_cutoff
-                ]
-            )
+            if gpr_fixed_internal_dofs is None:
+                self.fixed_internal_dofs = np.array(
+                    [
+                        i
+                        for i in range(self.input_dim)
+                        if train_inputs_change[i] < self.fix_internal_dofs_cutoff
+                    ]
+                )
+            else:
+                self.fixed_internal_dofs = gpr_fixed_internal_dofs
+                print("@gpr_hessian_model: load fixed internal dofs.")
+
             print(f"@gpr_hessian_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
         else:
             self.fixed_internal_dofs = np.array(
@@ -629,6 +635,7 @@ class GPModelWithHessiansWrapper:
         train_bool= True,
         gpr_fix_internal_dofs_bool= False,
         gpr_fix_internal_dofs_cutoff= 1e-4,
+        gpr_fixed_internal_dofs= None
     ):
         """
         :param: train_x: [M, 3 * natom]. initial M training points x in Cartesian coordinate.
@@ -764,7 +771,8 @@ class GPModelWithHessiansWrapper:
             normalized_train_grad_q, 
             normalized_train_hessians_q,
             gpr_fix_internal_dofs_bool,
-            gpr_fix_internal_dofs_cutoff
+            gpr_fix_internal_dofs_cutoff,
+            gpr_fixed_internal_dofs
         )
 
         # ------- filter certain dofs that is not changing ------   
@@ -1652,3 +1660,9 @@ class GPModelWithHessiansWrapper:
         else:
             raise(FileExistsError, f"unable to load the gpr model in gpr_hessian_tools.py at file location: {file_path}")
     
+    def output_fixed_internal_dofs(self):
+        """
+        output internal dofs that are fixed and excluded from GPR modeling.
+        """
+        fixed_internal_dofs = np.copy(self.FixingDofs.fixed_internal_dofs)
+        return fixed_internal_dofs

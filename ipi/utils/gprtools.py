@@ -212,7 +212,9 @@ class FixInternalDofs(object):
                  cartesian_fix_dofs: np.ndarray,
                  coordinate_transformer: non_redundant_coordinate_transformer,
                  gpr_fix_internal_dofs_bool: bool, 
-                 gpr_fix_internal_dofs_cutoff: float):
+                 gpr_fix_internal_dofs_cutoff: float,
+                 gpr_fixed_internal_dofs= None):
+        
         self.input_dim = np.shape(train_inputs)[1]
         self.output_dim = np.shape(train_targets)[1]
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
@@ -252,13 +254,16 @@ class FixInternalDofs(object):
                    Should turn gpr_fix_internal_dofs_bool on.")
 
         if gpr_fix_internal_dofs_bool:
-            self.fixed_internal_dofs = np.array(
-                [
-                    i
-                    for i in range(self.input_dim)
-                    if train_inputs_change[i] < self.fix_internal_dofs_cutoff
-                ]
-            )
+            if gpr_fixed_internal_dofs is None:
+                self.fixed_internal_dofs = np.array(
+                    [
+                        i
+                        for i in range(self.input_dim)
+                        if train_inputs_change[i] < self.fix_internal_dofs_cutoff
+                    ]
+                )
+            else:
+                self.fixed_internal_dofs = gpr_fixed_internal_dofs
         else:
             self.fixed_internal_dofs =  np.array(
                 []
@@ -499,7 +504,8 @@ class GPModelWithDerivativesWrapper:
         noise_std,
         train_bool= True,
         gpr_fix_internal_dofs_bool= False,
-        gpr_fix_internal_dofs_cutoff = 1e-4
+        gpr_fix_internal_dofs_cutoff = 1e-4,
+        gpr_fixed_internal_dofs= None
     ):
         """
         initialize the model.
@@ -596,7 +602,8 @@ class GPModelWithDerivativesWrapper:
                                           cartesian_fix_dofs,
                                           coordinate_transformer,
                                           gpr_fix_internal_dofs_bool,
-                                          gpr_fix_internal_dofs_cutoff
+                                          gpr_fix_internal_dofs_cutoff,
+                                          gpr_fixed_internal_dofs
                                           )
         
         moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = self.fix_internal_dofs(
@@ -1006,6 +1013,14 @@ class GPModelWithDerivativesWrapper:
         ) - np.min(free_moving_normalized_force, axis=0)
 
         return free_moving_normalized_force_range
+
+    def output_fixed_internal_dofs(self):
+        """
+        output the internal dofs we fix. These dofs will not be included in the GPR model.
+        """
+        fixed_internal_dofs = np.copy(self.FixingDofs.fixed_internal_dofs)
+        return fixed_internal_dofs
+
 
     def get_free_moving_internal_coordinate(self, beads_x):
         """

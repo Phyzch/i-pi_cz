@@ -578,6 +578,8 @@ class MAPNEBGPRMover(Motion):
         else:
             train_x, train_V, train_grad = self.read_initial_training_data()
 
+        gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(prefix= "neb_final_gpr_training")
+
         fix_dofs = self.optarrays["fix_dofs"]
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
             train_x,
@@ -592,7 +594,8 @@ class MAPNEBGPRMover(Motion):
             noise_std=self.optarrays["gpr_noise_std"],
             train_bool= False,
             gpr_fix_internal_dofs_bool= self.options["gpr_fix_internal_dofs_bool"],
-            gpr_fix_internal_dofs_cutoff= self.options["gpr_fix_internal_dofs_cutoff"] 
+            gpr_fix_internal_dofs_cutoff= self.options["gpr_fix_internal_dofs_cutoff"],
+            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs 
         )
         
         if read_gpr_training_data_bool:
@@ -2792,10 +2795,14 @@ class RP_MAP(object):
         """
         neb_final_gpr_folder = "neb_final_gpr_training"
         cartesian_coordinate_x, training_V, training_forces = (
-            ipi.utils.nebinstgprtool.read_training_data(prefix=neb_final_gpr_folder)
+            ipi.utils.nebinstgprtool.read_training_data(prefix= neb_final_gpr_folder)
         )
         training_V_shifted = training_V - self.energy_shift
         training_grad = -training_forces
+
+        gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(
+            neb_final_gpr_folder
+        )
 
         # initialize GPR model with training data read from the end of 'neb' stage run.
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
@@ -2811,7 +2818,8 @@ class RP_MAP(object):
             noise_std=self.gpr_noise_std,
             train_bool= False,
             gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-            gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff 
+            gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
+            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs 
         )
 
         model_hyperparameter_exists = ipi.utils.nebinstgprtool.load_training_hyperparameter_in_gpr_model(
@@ -2825,6 +2833,12 @@ class RP_MAP(object):
                 self.gpr_model, neb_final_gpr_folder
             )
         
+        # store fixed internal dofs.
+        ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_model(
+            self.gpr_model,
+            prefix= neb_final_gpr_folder
+        )
+
         # test training results.
         _, predicted_grad, _, _ = (
             self.gpr_model.predict_latent_function(
@@ -3162,6 +3176,8 @@ class RP_MAP(object):
                 self.read_gpr_hessian_folder
             )
 
+            gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(self.read_gpr_hessian_folder)
+
             training_V_shifted = training_V - self.energy_shift
             training_grads = -training_forces
             # choose the first data point with hessian information as the reference point for mean function.
@@ -3196,7 +3212,8 @@ class RP_MAP(object):
                     ref_mean_hessian_x=ref_hessians,
                     train_bool= False,
                     gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-                    gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff
+                    gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
+                    gpr_fixed_internal_dofs= gpr_fixed_internal_dofs
                 )
             )
 
@@ -3226,6 +3243,12 @@ class RP_MAP(object):
                 ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
                         self.gpr_hessian_model, self.read_gpr_hessian_folder
                 )
+
+            # store fixed internal dofs.
+            ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_hessian_model(
+                self.gpr_hessian_model,
+                self.read_gpr_hessian_folder
+            )
 
             ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
             pass
@@ -3437,6 +3460,11 @@ class RP_MAP(object):
             ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
                 self.gpr_hessian_model, self.data_destination_folder
             )
+            # store fixed internal dofs in the gpr model
+            ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_hessian_model(
+                self.gpr_hessian_model,
+                self.data_destination_folder
+            )
 
             if self.add_new_hessian_data_bool:
                 # store the coordinate of candidate data point for hessian calculation
@@ -3521,7 +3549,7 @@ class RP_MAP(object):
 
             ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
             pass
-
+            
             # store the computed ab inito gradient and hessian data if we compute new data point. 
             self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,
                                                     candidate_grad_point_x,
