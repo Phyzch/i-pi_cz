@@ -641,7 +641,7 @@ def train_gpr_model(
     loss_func_change = 1000
     old_loss_value = 1000
 
-    train_counts = 0
+    train_counts = -1
     train_counts_output = 20
 
     loss_value_list = []
@@ -686,7 +686,6 @@ def train_gpr_model(
 
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
-        print(f"loss_value_list: {loss_value_list}")
         
     pass
 

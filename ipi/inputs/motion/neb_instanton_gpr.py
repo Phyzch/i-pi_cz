@@ -548,6 +548,16 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
+        "perturb_amplitude": (
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.1,
+                "help": "The amplitude to perturb the newly added training data into model. \
+                    The value here is the ratio to the path distance."
+            }
+        ),
+
         "train_hessian_model_bool": (
             InputValue,
             {
@@ -703,6 +713,7 @@ class InputNebInstGPR(InputDictionary):
         # about computing hessian for gpr model & rate calculation.
         self.new_hessian_data_index.store(optarrays["new_hessian_data_index"])
         self.new_grad_data_index.store(optarrays["new_grad_data_index"])
+        self.perturb_amplitude.store(optarrays["perturb_amplitude"])
 
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()

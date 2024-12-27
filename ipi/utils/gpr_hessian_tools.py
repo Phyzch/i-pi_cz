@@ -342,11 +342,12 @@ class FixInternalDofs(object):
 
         # check the case that we do not fix cartesian dofs. 
         # report error if these dofs are small
-        if len(cartesian_fix_dofs) == 0:
-            train_x_cutoff = pow(10.0, -3)
-            index = [i for i in range(len(train_x_change)) if train_x_change[i] < train_x_cutoff]
-            if len(index) != 0:
-                warning(f"@Warning: Planar molecules? The changes of cartesian coordinate are small.  dofs: {index}. change {train_x_change[index]}")
+
+        train_x_cutoff = pow(10.0, -3)
+        index = [i for i in range(len(train_x_change)) if train_x_change[i] < train_x_cutoff]
+        if len(index) != 0:
+            warning(f"@Warning: Planar molecules? The changes of cartesian coordinate are small.  dofs: {index}. cartesian coordinate change {train_x_change[index]}")
+            print(f"Currently fixed cartesian dofs: {cartesian_fix_dofs}")
 
         # if cartesian dofs is fixed, we set its change to 0.
         train_x_change[cartesian_fix_dofs] = 0 
@@ -356,6 +357,12 @@ class FixInternalDofs(object):
         # we use whichever is smaller : the change within internal coordinate or the change infered from cartesian coordinate
         # as the criterion to fix internal dofs.
         train_inputs_change = np.min([train_inputs_change1, train_inputs_change2], axis= 0)
+
+        self.train_inputs_change = train_inputs_change 
+
+        # output information for selecting fix internal dofs value.
+        print(f"@For Fixing internal dofs: for reference, train_inputs_change: {train_inputs_change}.")
+        print(f"Make sure cutoff value for fixing internal dofs is appropriate. Current value: {gpr_fix_internal_dofs_cutoff}")
 
         if np.min(train_inputs_change) < 1e-5 and (not gpr_fix_internal_dofs_bool):
             print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
@@ -371,6 +378,7 @@ class FixInternalDofs(object):
                     if train_inputs_change[i] < self.fix_internal_dofs_cutoff
                 ]
             )
+            print(f"@gpr_hessian_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
         else:
             self.fixed_internal_dofs = np.array(
                 []

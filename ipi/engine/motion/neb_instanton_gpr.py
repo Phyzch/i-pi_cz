@@ -122,7 +122,8 @@ class MAPNEBGPRMover(Motion):
         new_hessian_data_index=np.zeros(0, int),
         add_new_grad_data_bool= False,
         candidate_grad_data_number= 100,
-        new_grad_data_index= np.zeros(0, int)
+        new_grad_data_index= np.zeros(0, int),
+        perturb_amplitude = 0.1
     ):
         """Initialises NEBMover.
 
@@ -208,6 +209,9 @@ class MAPNEBGPRMover(Motion):
 
         # for store ab initio grads along the path used for gpr hessian model.
         self.optarrays["new_grad_data_index"] = new_grad_data_index
+
+        # for perturbation amplitude of newly added training data
+        self.optarrays["perturb_amplitude"] = perturb_amplitude
 
         self.nebgm = LINEBGradientMapper()
         self.actiongm = ActionGradientMapper()
@@ -574,12 +578,14 @@ class MAPNEBGPRMover(Motion):
         else:
             train_x, train_V, train_grad = self.read_initial_training_data()
 
+        fix_dofs = self.optarrays["fix_dofs"]
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
             train_x,
             train_V,
             train_grad,
             self.beads.natoms,
             self.coordinate_transformer,
+            fix_dofs,
             gpr_SE_kernel_number=self.options["gpr_SE_kernel_number"],
             kernel_outputscale=self.optarrays["gpr_kernel_outputscale"],
             kernel_lengthscale_ratio=self.optarrays["gpr_kernel_lengthscale_ratio"],
@@ -1739,7 +1745,7 @@ class MAPNEBGPRMover(Motion):
             self.optarrays["gpr_kernel_outputscale"],
             self.optarrays["gpr_kernel_lengthscale_ratio"],
             self.optarrays["gpr_noise_std"],
-            constant_mean_func_bool=False,
+            constant_mean_func_bool= False,
             train_bool= True,
             ref_mean_x=ref_x,
             ref_mean_V=ref_V,
@@ -2609,6 +2615,7 @@ class RP_MAP(object):
         self.add_new_grad_data_bool= nebmover.options["add_new_grad_data_bool"]
         self.candidate_grad_data_number = nebmover.options["candidate_grad_data_number"]
         self.new_grad_data_index = nebmover.optarrays["new_grad_data_index"]
+        self.perturb_amplitude = nebmover.optarrays["perturb_amplitude"]
 
         self.train_hessian_model_bool = nebmover.options["train_hessian_model_bool"]
 
@@ -2797,6 +2804,7 @@ class RP_MAP(object):
             training_grad,
             self.rp_beads.natoms,
             self.coordinate_transformer,
+            self.fix_dofs,
             gpr_SE_kernel_number=self.gpr_SE_kernel_number,
             kernel_outputscale=self.gpr_kernel_outputscale,
             kernel_lengthscale_ratio=self.gpr_kernel_lengthscale_ratio,
@@ -3181,7 +3189,7 @@ class RP_MAP(object):
                     self.gpr_kernel_outputscale,
                     self.gpr_kernel_lengthscale_ratio,
                     self.gpr_noise_std,
-                    constant_mean_func_bool=False,
+                    constant_mean_func_bool= False,
                     ref_mean_x=ref_x,
                     ref_mean_V=ref_V_shifted,
                     ref_mean_grad_x=ref_grads,
@@ -3191,8 +3199,6 @@ class RP_MAP(object):
                     gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff
                 )
             )
-
-            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
 
             model_hyperparameter_exists = \
                 ipi.utils.nebinstgprtool.load_training_hyperparameter_for_gpr_hessian_model(
@@ -3285,12 +3291,13 @@ class RP_MAP(object):
             if len(self.new_hessian_data_index) > 0:
                 # the new data point that we will compute hessian.
                 # FIXME: add perturbation to the candidate training data point that contains hessian information.
-                perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_hessian_point_x,
-                                                                                  self.new_hessian_data_index,
-                                                                                  self.gpr_hessian_model)
+                # perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_hessian_point_x,
+                #                                                                   self.new_hessian_data_index,
+                #                                                                   self.gpr_hessian_model,
+                #                                                                   perturb_amplitude= self.perturb_amplitude)
                 
-                new_hessian_point_x = perturbed_new_x 
-                # new_hessian_point_x = candidate_hessian_point_x[self.new_hessian_data_index]
+                # new_hessian_point_x = perturbed_new_x 
+                new_hessian_point_x = candidate_hessian_point_x[self.new_hessian_data_index]
                 new_hessian_data_num = len(new_hessian_point_x)
                 # beads & forces object to call the server to compute hessians.
                 natoms = self.neb_beads.natoms
@@ -3379,11 +3386,12 @@ class RP_MAP(object):
                         please double check new_grad_data_index entry in input.xml" 
             
             # FIXME: add perturbation to the candidate training data point.
-            perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_grad_point_x,
-                                                                              self.new_grad_data_index,
-                                                                              self.gpr_hessian_model)
-            new_grad_point_x = perturbed_new_x
-            # new_grad_point_x = candidate_grad_point_x[self.new_grad_data_index]
+            # perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_grad_point_x,
+            #                                                                   self.new_grad_data_index,
+            #                                                                   self.gpr_hessian_model,
+            #                                                                   perturb_amplitude= self.perturb_amplitude)
+            # new_grad_point_x = perturbed_new_x
+            new_grad_point_x = candidate_grad_point_x[self.new_grad_data_index]
             new_grad_point_num = len(self.new_grad_data_index)
 
             natoms = self.neb_beads.natoms 
@@ -3511,15 +3519,14 @@ class RP_MAP(object):
             time_elapsed = (end_t - start_t) / 60
             print(f"the elapsed time for re-training the model is {time_elapsed} min.")
 
-        #FIXME: debug the code
-        ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
-        pass
+            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+            pass
 
-        # store the computed ab inito gradient and hessian data if we compute new data point. 
-        self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,
-                                                   candidate_grad_point_x,
-                                                   ab_initio_hessian_file_exists,
-                                                   candidate_hessian_point_x)
+            # store the computed ab inito gradient and hessian data if we compute new data point. 
+            self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,
+                                                    candidate_grad_point_x,
+                                                    ab_initio_hessian_file_exists,
+                                                    candidate_hessian_point_x)
 
     def predict_ring_polymer_hessians_using_gpr(self):
         """

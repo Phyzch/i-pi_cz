@@ -14,7 +14,7 @@ from ipi.utils.depend import dstrip
 from .gprGrad.rbf_grad_gp import GPModelWithDerivatives, train_gpr
 import os 
 import shutil
-
+from ipi.utils.messages import  warning
 
 def predict_latent_function_gp_with_derivative(
     model: GPModelWithDerivatives, test_inputs, covar_bool=False
@@ -205,20 +205,48 @@ class FixInternalDofs(object):
     class that fix certain internal dofs in the training data before feeding data into the Gaussian Process Regression model
     """
 
-    def __init__(self, train_inputs: np.ndarray, 
+    def __init__(self,
+                 train_x: np.ndarray, 
+                 train_inputs: np.ndarray, 
                  train_targets: np.ndarray,
+                 cartesian_fix_dofs: np.ndarray,
+                 coordinate_transformer: non_redundant_coordinate_transformer,
                  gpr_fix_internal_dofs_bool: bool, 
                  gpr_fix_internal_dofs_cutoff: float):
         self.input_dim = np.shape(train_inputs)[1]
         self.output_dim = np.shape(train_targets)[1]
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
+        # check whether coordinate alng certain internal dofs need to be fixed.
+        # the change along internal coordinate will be computed using Wilson's B matrix. (any coordinate should be fine.)
+        # This is to fix the problem for the planar molecule
+        Bq = coordinate_transformer.compute_delocalized_wilson_matrix_Bq(np.array([train_x[0]]))[0]
+        (u, sq, vh) = np.linalg.svd(Bq, full_matrices= False)
+        # compute change of training data along Cartesian coordinate.
+        train_x_change = np.max(train_x, axis= 0) - np.min(train_x, axis= 0)
 
-        # check whether coordinate along certain internal dof is fixed
-        train_inputs_change = np.max(train_inputs, axis=0) - np.min(
-            train_inputs, axis=0
-        )
+        # check the case that we do not fix cartesian dofs. 
+        # report error if these dofs are small
+        train_x_cutoff = pow(10.0, -3)
+        index = [i for i in range(len(train_x_change)) if train_x_change[i] < train_x_cutoff]
+        if len(index) != 0:
+            warning(f"@Warning: Planar molecules? The changes of cartesian coordinate are small.  dofs: {index}.Cartesian coordinate change {train_x_change[index]}")
+
+        # if cartesian dofs is fixed, we set its change to 0.
+        train_x_change[cartesian_fix_dofs] = 0 
+
+        train_inputs_change1 = np.abs(sq * (vh @ train_x_change))
+        train_inputs_change2 = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
+        # we use whichever is smaller : the change within internal coordinate or the change infered from cartesian coordinate
+        # as the criterion to fix internal dofs.
+        train_inputs_change = np.min([train_inputs_change1, train_inputs_change2], axis= 0)
         
-        if np.min(train_inputs_change) < 1e-6 and (not gpr_fix_internal_dofs_bool):
+        self.train_inputs_change = train_inputs_change
+
+        # output information for selecting fix internal dofs value.
+        print(f"@For Fixing internal dofs: for reference, train_inputs_change: {train_inputs_change}.")
+        print(f"Make sure cutoff value for fixing internal dofs is appropriate. Current value: {gpr_fix_internal_dofs_cutoff}")
+
+        if np.min(train_inputs_change) < 1e-5 and (not gpr_fix_internal_dofs_bool):
             print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
             raise(RuntimeError, "Certain internal dofs of input data is fixed.\
                    Should turn gpr_fix_internal_dofs_bool on.")
@@ -464,6 +492,7 @@ class GPModelWithDerivativesWrapper:
         train_grad_x: np.ndarray,
         natom: int,
         coordinate_transformer: non_redundant_coordinate_transformer,
+        cartesian_fix_dofs: np.ndarray,
         gpr_SE_kernel_number: int,
         kernel_outputscale: np.ndarray,
         kernel_lengthscale_ratio: np.ndarray,
@@ -561,8 +590,11 @@ class GPModelWithDerivativesWrapper:
         # -------- Fixing certain dofs ----------------
         # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
         # To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
-        self.FixingDofs = FixInternalDofs(train_inputs, 
+        self.FixingDofs = FixInternalDofs(train_x,
+                                          train_inputs, 
                                           normalized_train_targets,
+                                          cartesian_fix_dofs,
+                                          coordinate_transformer,
                                           gpr_fix_internal_dofs_bool,
                                           gpr_fix_internal_dofs_cutoff
                                           )

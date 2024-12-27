@@ -106,22 +106,36 @@ class non_redundant_coordinate_transformer:
                 break 
 
             dq = q_solve - q 
-            dx = step_factor * np.linalg.pinv(Bq) @ dq 
-            x = x + dx 
+            dx = step_factor * np.linalg.pinv(Bq) @ dq
+            
+            old_x = np.copy(x)
+            old_q = np.copy(q)
+            old_Bq = np.copy(Bq)
 
+            x = x + dx 
             q = self.get_internal_coordinate_q(np.array([x]))[0]
             Bq = self.dlc_coord.wilsonB(x) #Wilson B matrix.
 
             # adjust step factor.
             old_error = error
             error = np.linalg.norm(q - q_solve)
+
+            pass
+
             if error < old_error:
                 step_factor = np.min([1, 1.25 * step_factor])
             else:
+                # decrease step size and reverse the change of x. 
                 step_factor = step_factor / 2 
+                if step_factor < 0.01:
+                    raise ValueError("step factor is too small. The coordinate system breaks down.")
+                x = old_x 
+                q = old_q 
+                Bq = old_Bq 
+                error = old_error 
         
         return x 
-            
+    
     def get_cartesian_coordinate_x(self, x_ref_list, q_solve_list, q_cutoff = pow(10.0, -4)):
         """
         transform the new internal coordinate q (which is perturbed from q_ref) to Cartesian coordinate x.

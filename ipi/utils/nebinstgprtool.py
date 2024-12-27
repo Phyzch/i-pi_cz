@@ -1209,14 +1209,6 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     ab_initio_train_V = gpr_hessian_model.train_V 
     ab_initio_train_cartesian_gradient = gpr_hessian_model.train_cartesian_gradient
 
-    if len(ab_initio_training_hessians) > 0:
-        # compute the relative error in training hessian data.
-        relative_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
-            predicted_hessians, ab_initio_training_hessians
-        )
-
-        print(f"train data: relative hessian error for ring polymer beads: {relative_hessian_error}")
-
     # compute the relative error in training potential
     V_error = np.abs(ab_initio_train_V - predicted_pots) / np.abs(ab_initio_train_V)
     print(f"train data: error of potential prediction: {V_error}")
@@ -1227,6 +1219,57 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     df_error = df / ab_initio_force_amplitude
 
     print(f"train data: error of force prediction: {df_error}")
+
+    # for debug gradient error
+    ab_initio_grad_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+        coord,
+        ab_initio_train_cartesian_gradient
+    )
+
+    predicted_grad_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+        coord,
+        predicted_grads
+    )
+
+    if len(ab_initio_training_hessians) > 0:
+        # compute the relative error in training hessian data.
+        relative_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
+            predicted_hessians, ab_initio_training_hessians
+        )
+
+        print(f"train data: relative hessian error for ring polymer beads: {relative_hessian_error}")
+
+        # check if certain internal dof is causing trouble
+        if np.any(relative_hessian_error > 1): 
+            internal_train_inputs_change = gpr_hessian_model.FixingDofs.train_inputs_change
+            
+            ab_initio_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
+                coord[hessian_data_point_index],
+                ab_initio_train_cartesian_gradient[hessian_data_point_index], 
+                ab_initio_training_hessians
+                )[0]
+            
+            predicted_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
+                coord[hessian_data_point_index], 
+                predicted_grads[hessian_data_point_index], 
+                predicted_hessians
+                )[0]
+            
+            
+            input_dim = gpr_hessian_model.input_dim 
+            print(f"@debug hessian: internal train inputs change: {internal_train_inputs_change}")   
+            for i in range(input_dim):
+                error = np.linalg.norm(ab_initio_hessian_q[i] - predicted_hessian_q[i]) / np.linalg.norm(ab_initio_hessian_q[i])
+                if error > 0.1:
+                    print(f"internal dof {i}")
+                    print(f"@debug hessian: internal coordinate: ab initio hessian q [{i}, :] = {ab_initio_hessian_q[i]}" )
+                    print(f"@debug hessian: internal coordinate: predicted hessian q [{i}, :] = {predicted_hessian_q[i]}")
+         
+            
+        
+        
+    
+
 
     pass 
 
@@ -1277,6 +1320,27 @@ def analyze_transformation_between_cartesian_coord_and_internal_coord(coord_x,
 
     print(f"relative hessian error after forward & backward transform of hessian: {relative_hessian_error}")
 
+def compute_path_tangent_vector(bead_path: np.ndarray, fixed_dofs):
+    """
+    compute the tangent vector along the path.
+    """
+    bead_number = np.shape(bead_path)[0]
+    tangent_vector = np.zeros(bead_path.shape)
+    
+    tangent_vector[0] = bead_path[1] - bead_path[0]
+    tangent_vector[0, fixed_dofs] = 0
+    tangent_vector[0] = tangent_vector[0] / np.linalg.norm(tangent_vector[0])
+
+    tangent_vector[-1] = bead_path[-1] - bead_path[-2]
+    tangent_vector[-1, fixed_dofs] = 0
+    tangent_vector[-1] = tangent_vector[-1] / np.linalg.norm(tangent_vector[-1])
+
+    for index in range(1, bead_number - 1):
+        tangent_vector[index] = bead_path[index + 1] - bead_path[index - 1]
+        tangent_vector[index, fixed_dofs] = 0
+        tangent_vector[index] = tangent_vector[index] / np.linalg.norm(tangent_vector[index])
+    
+    return tangent_vector
 
 def perturb_training_point(bead_path_x: np.ndarray,
                            new_data_index: np.ndarray,
@@ -1300,17 +1364,29 @@ def perturb_training_point(bead_path_x: np.ndarray,
     q_ref = np.copy(bead_path_q[new_data_index])
     new_data_point_num = len(new_data_index)
 
+    fixed_dofs = gpr_hessian_model.FixingDofs.fixed_internal_dofs
     free_moving_dofs = gpr_hessian_model.FixingDofs.free_moving_dofs
     free_moving_ndofs = len(free_moving_dofs)
 
+    # determine radius for perturbation = perturb_amplitude * path_r
     bead_path_q_range = np.max(bead_path_q, axis= 0) - np.min(bead_path_q, axis= 0)
-    dq = bead_path_q_range * perturb_amplitude 
+    dq = bead_path_q_range * perturb_amplitude
 
     # perturbation for data point along free moving dofs
-    q_perturb = dq[free_moving_dofs] * np.random.uniform(-1, 1, (new_data_point_num, free_moving_ndofs))
+    ndofs = bead_path_q.shape[1]
+    q_perturb = np.zeros([new_data_point_num, ndofs])
+    q_perturb[:,free_moving_dofs] = dq[free_moving_dofs] * np.random.uniform(-1, 1, (new_data_point_num, free_moving_ndofs))
+    # compute the tangent vector along bead path.
+    tangent_vector_q = compute_path_tangent_vector(bead_path_q, 
+                                                   fixed_dofs)[new_data_index]
+     
+    # do not perturb along the tangent vector direction of the path.
+    for i in range(new_data_point_num):
+        q_perturb[i] = q_perturb[i] - np.dot(tangent_vector_q[i], q_perturb[i]) * tangent_vector_q[i]
+
     # add perturbation
     perturbed_q = np.copy(q_ref)
-    perturbed_q[:, free_moving_dofs] = q_ref[:, free_moving_dofs] + q_perturb 
+    perturbed_q = q_ref + q_perturb 
 
     # transform back to the Cartesian coordinate.
     perturbed_x = coordinate_transformer.get_cartesian_coordinate_x(x_ref, perturbed_q, q_cutoff= pow(10.0, -4))
