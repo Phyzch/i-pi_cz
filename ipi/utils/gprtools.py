@@ -264,6 +264,9 @@ class FixInternalDofs(object):
                 )
             else:
                 self.fixed_internal_dofs = gpr_fixed_internal_dofs
+                print("@gpr_model: load fixed internal dofs.")
+            
+            print(f"@gpr_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
         else:
             self.fixed_internal_dofs =  np.array(
                 []
