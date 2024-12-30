@@ -455,9 +455,20 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 1e-3,
+                "default": 1e-4,
                 "help": """
                 cutoff value for fixing internal dofs.
+            """
+            }
+        ),
+
+        "gpr_fix_internal_dofs_cutoff_for_hessian":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 1e-4,
+                "help": """
+                cutoff value for fixing internal dofs for fitting hessian data with gpr model.
             """
             }
         ),
@@ -668,6 +679,10 @@ class InputNebInstGPR(InputDictionary):
 
         self.gpr_fix_internal_dofs_cutoff.store(
             options["gpr_fix_internal_dofs_cutoff"]
+        )
+
+        self.gpr_fix_internal_dofs_cutoff_for_hessian.store(
+            options["gpr_fix_internal_dofs_cutoff_for_hessian"]
         )
 
         # optarrays

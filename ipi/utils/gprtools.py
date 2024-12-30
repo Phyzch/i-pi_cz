@@ -1057,7 +1057,7 @@ class GPModelWithDerivativesWrapper:
 
         # save state dict.
         if os.path.exists(file_path + "#"):
-            shutil.rmtree(file_path + "#")
+            os.remove(file_path + "#")
         if os.path.exists(file_path):
             os.rename(file_path, file_path + "#")
         torch.save(state_dict, file_path)
