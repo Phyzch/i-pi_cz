@@ -110,8 +110,8 @@ class MAPNEBGPRMover(Motion):
         },
         gpr_SE_kernel_number=1,
         gpr_fix_internal_dofs_bool= True,
-        gpr_fix_internal_dofs_cutoff= 1e-4,
-        gpr_fix_internal_dofs_cutoff_for_hessian= 1e-2,
+        gpr_fix_internal_dofs_cutoff= 1e-3,
+        gpr_rigid_internal_dofs_cutoff= 5e-2,
         read_initial_gpr_training_data=False,
         test_gpr_model_along_instanton_path= False,
         final_hessian_bool=False,
@@ -165,7 +165,7 @@ class MAPNEBGPRMover(Motion):
         
         self.options["gpr_fix_internal_dofs_bool"] = gpr_fix_internal_dofs_bool 
         self.options["gpr_fix_internal_dofs_cutoff"] = gpr_fix_internal_dofs_cutoff
-        self.options["gpr_fix_internal_dofs_cutoff_for_hessian"] = gpr_fix_internal_dofs_cutoff_for_hessian
+        self.options["gpr_rigid_internal_dofs_cutoff"] = gpr_rigid_internal_dofs_cutoff
         # minimum value for allowed trust region ratio.
         # This is to prevent the algorithm making the trust region ratio too small.
         self.options["minimum_trust_region"] = minimum_trust_region
@@ -2601,8 +2601,7 @@ class RP_MAP(object):
 
         self.gpr_fix_internal_dofs_bool = nebmover.options["gpr_fix_internal_dofs_bool"]
         self.gpr_fix_internal_dofs_cutoff = nebmover.options["gpr_fix_internal_dofs_cutoff"]
-        self.gpr_fix_internal_dofs_cutoff_for_hessian = nebmover.options["gpr_fix_internal_dofs_cutoff_for_hessian"]
-
+        self.gpr_rigid_internal_dofs_cutoff = nebmover.options["gpr_rigid_internal_dofs_cutoff"]
         # bind the distance cutoff for training data for the gpr model
         self.distance_cutoff_for_training_data = (
             nebmover.options["distance_cutoff_for_training_data"]
@@ -3135,7 +3134,8 @@ class RP_MAP(object):
                     ref_mean_hessian_x= ref_hessians,
                     train_bool= True,
                     gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-                    gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff_for_hessian
+                    gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
+                    gpr_rigid_internal_dofs_cutoff= self.gpr_rigid_internal_dofs_cutoff
                 )
             )
 
@@ -3217,7 +3217,8 @@ class RP_MAP(object):
                     ref_mean_hessian_x=ref_hessians,
                     train_bool= False,
                     gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-                    gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff_for_hessian,
+                    gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
+                    gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
                     gpr_fixed_internal_dofs= gpr_fixed_internal_dofs
                 )
             )

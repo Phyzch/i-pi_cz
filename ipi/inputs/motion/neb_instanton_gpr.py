@@ -455,21 +455,22 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 1e-4,
+                "default": 1e-3,
                 "help": """
                 cutoff value for fixing internal dofs.
             """
             }
         ),
 
-        "gpr_fix_internal_dofs_cutoff_for_hessian":(
+        "gpr_rigid_internal_dofs_cutoff":(
             InputValue,
             {
                 "dtype": float,
-                "default": 1e-4,
-                "help": """
-                cutoff value for fixing internal dofs for fitting hessian data with gpr model.
-            """
+                "default": 5e-2,
+                "help":
+                """
+                cutoff value for rigid internal dofs. We will use Linear Regression fitting for gradient along rigid internal dofs.
+                """
             }
         ),
 
@@ -681,8 +682,8 @@ class InputNebInstGPR(InputDictionary):
             options["gpr_fix_internal_dofs_cutoff"]
         )
 
-        self.gpr_fix_internal_dofs_cutoff_for_hessian.store(
-            options["gpr_fix_internal_dofs_cutoff_for_hessian"]
+        self.gpr_rigid_internal_dofs_cutoff.store(
+            options["gpr_rigid_internal_dofs_cutoff"]
         )
 
         # optarrays
