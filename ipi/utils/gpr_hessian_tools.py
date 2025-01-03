@@ -425,6 +425,7 @@ class FixInternalDofs(object):
                 np.arange(self.input_dim), 
                 self.constrained_internal_dofs
             )
+            print(f"@gpr_hessian_model: free moving dofs {self.free_moving_dofs}")
             self.free_moving_dofs_2d_index = np.meshgrid(
                 self.free_moving_dofs, self.free_moving_dofs, indexing="ij"
             )
@@ -456,7 +457,7 @@ class FixInternalDofs(object):
         """
         fit the gradient along the rigid internal dof using Linear regression model.
         """
-        x = train_inputs[:, self.rigid_internal_dofs]
+        x = train_inputs
         y = grads[:, self.rigid_internal_dofs]
         reg_model = LinearRegression().fit(x,y)
 
@@ -469,8 +470,7 @@ class FixInternalDofs(object):
         """
         predict the gradient along the rigid internal dofs using Linear regression model.
         """
-        predict_inputs_rigid_dof = predict_inputs[:, self.rigid_internal_dofs]
-        predicted_grad = self.reg_model.predict(predict_inputs_rigid_dof)
+        predicted_grad = self.reg_model.predict(predict_inputs)
 
         return predicted_grad 
 
