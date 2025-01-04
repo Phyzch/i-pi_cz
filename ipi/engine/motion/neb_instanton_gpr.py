@@ -1719,8 +1719,7 @@ class MAPNEBGPRMover(Motion):
             forces2,
             np.copy(beads2.q),
             beads2.natoms,
-            beads2.nbeads,
-            fix_dofs
+            beads2.nbeads
         )
 
         hessians = np.transpose(
@@ -2904,8 +2903,7 @@ class RP_MAP(object):
                 self.rp_forces,
                 rp_beads_q,
                 self.rp_beads.natoms,
-                self.rp_beads.nbeads,
-                self.fix_dofs,
+                self.rp_beads.nbeads
             )
 
             self.rp_beads.q = rp_beads_q
@@ -3098,8 +3096,7 @@ class RP_MAP(object):
                 new_forces,
                 np.copy(new_beads.q),
                 self.neb_beads.natoms, 
-                1,
-                self.fix_dofs 
+                1
             )
 
             # For testing the error induced by forward and backward transformation of gradient and hessian.
@@ -3343,8 +3340,7 @@ class RP_MAP(object):
                     new_forces,
                     np.copy(new_beads.q),
                     natoms,
-                    new_hessian_data_num,
-                    self.fix_dofs
+                    new_hessian_data_num
                 )
 
                 new_hessians = np.transpose(
