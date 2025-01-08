@@ -176,11 +176,10 @@ def Read_instanton_data(inputt, V00, temp, quiet):
     omega2 = (temp * nbeads * kb / hbar) ** 2
 
     h = 0
-    if not quiet:
-        spring = SpringMapper.spring_hessian(
-            natoms, nbeads, m3_one_bead, omega2, mode = "full"
-        )
-        h = np.add(hessian, spring)
+    spring = SpringMapper.spring_hessian(
+        natoms, nbeads, m3_one_bead, omega2, mode = "full"
+    )
+    h = np.add(hessian, spring)
 
     return neb_beads, m, nbeads, natoms, temp2, pots_half_rp, full_rp_beads_q, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2
 
@@ -397,11 +396,20 @@ def compute_instanton_rate():
             print(
                 "Please check that this you don't have any unwanted zero frequency"
             )
+
         logQvib = (
             -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, 1)))))
             + nzeros * np.log(nbeads)
             + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
         )
+
+        logQvib1 = (
+            -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[3:]))))
+            + nzeros * np.log(nbeads)
+            + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+        )
+        print(f"For debug: logQvib with contribution excluding first 3 eigenvalues {logQvib1}")
+
     else:
         logQvib = 0.0
 

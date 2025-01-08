@@ -533,6 +533,14 @@ elif case == "instanton":
                 + nzeros * np.log(nbeads)
                 + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353 
             )
+
+            logQvib1 = (
+            -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[3:]))))
+            + nzeros * np.log(nbeads)
+            + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+            )
+            
+            print(f"For debug: logQvib with contribution excluding first 3 eigenvalues {logQvib1}")
         else:
             logQvib = 0.0
 

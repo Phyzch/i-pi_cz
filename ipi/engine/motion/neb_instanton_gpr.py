@@ -3611,10 +3611,10 @@ class RP_MAP(object):
                 # Only use this option for benchmark.
                 self.compute_ring_polymer_hessian()
 
-                x = self.rp_beads.q
-                pots = self.rp_forces.pots
-                grads = -np.copy(dstrip(self.rp_forces.f))
-                hessians = self.rp_hessian
+                # x = self.rp_beads.q
+                # pots = self.rp_forces.pots
+                # grads = -np.copy(dstrip(self.rp_forces.f))
+                # hessians = self.rp_hessian
                 
                 # ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(
                 #     self.gpr_model, 
