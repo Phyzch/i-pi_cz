@@ -1934,6 +1934,11 @@ class LINEBGradientMapper(object):
         # Forces for free moving dofs.
         self.rbf = beads_forces.copy()[:, self.fixatoms_mask]
 
+        # mass weighted force
+        self.mscaled_f = self.rbf / np.sqrt(
+            self.dbeads.m3[:, self.fixatoms_mask]
+        )  # 1/sqrt(m) * f: mass scaled force.
+
     def get_gpr_potential_and_forces(self):
         """
         Get potential and forces for all beads using the Gaussian Process Regression model.
@@ -1945,7 +1950,7 @@ class LINEBGradientMapper(object):
             self.gpr_model.predict_latent_function(test_x)
         )
 
-        beads_forces = -beads_potential_grad_x
+        beads_forces = - beads_potential_grad_x
         # the predicted potential is the one relative to the energy shift.
         beads_potential = beads_potential_shift + self.energy_shift
 
@@ -1958,6 +1963,24 @@ class LINEBGradientMapper(object):
             if np.linalg.norm(self.ab_initio_force[i]) != 0:
                 beads_forces[i] = self.ab_initio_force[i]
                 self.ab_initio_force[i] = np.zeros([3 * self.dbeads.natoms])
+        
+        # For Simpson's rule 
+        midpoint_test_x = (self.rbeads.q[:-1] + self.rbeads.q[1:]) / 2
+        midpoint_potential_shift, midpoint_grad_x, _, _ = (
+            self.gpr_model.predict_latent_function(
+                midpoint_test_x
+            )
+        )
+        
+        midpoint_forces = - midpoint_grad_x 
+        midpoint_beads_energy = midpoint_potential_shift + self.energy_shift
+        
+        nimage = self.dbeads.nbeads
+        self.midpoint_beads_energy = midpoint_beads_energy
+        self.midpoint_rbf = midpoint_forces.copy()[:, self.fixatoms_mask]
+        self.mscaled_midpoint_f = self.midpoint_rbf / np.sqrt(
+            self.dbeads.m3[:nimage - 1, self.fixatoms_mask]
+        )
 
         return beads_potential, beads_forces
 
@@ -1981,10 +2004,7 @@ class LINEBGradientMapper(object):
         # mass scaled coordinate.
         self.mscaled_q = np.copy(mscaled_q)
 
-        # mass weighted force
-        self.mscaled_f = self.rbf / np.sqrt(
-            self.dbeads.m3[:, self.fixatoms_mask]
-        )  # 1/sqrt(m) * f: mass scaled force.
+        self.mscaled_midpoint_q = (mscaled_q[:-1] + mscaled_q[1:]) / 2
 
         # Number of images
         nimage = self.dbeads.nbeads
@@ -1996,12 +2016,15 @@ class LINEBGradientMapper(object):
         self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
 
         # abbreviated action for the ring polymer instanton path.
-        self.action = self.compute_neb_action(nimage)
+        # self.action = self.compute_neb_action(nimage)
 
         # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
         self.action_forces = self.compute_neb_action_force(
             nimage, natom
         )
+
+        # TODO: Change code above to implement Simpson's rule
+        self.action = self.compute_neb_action_Simpson_rule(nimage)
 
         # compute direction of tangent vector, using either improved methods.
         btau = self.compute_tangent_vector(nimage, natom)
@@ -2067,10 +2090,9 @@ class LINEBGradientMapper(object):
     def compute_neb_action(self, nimage):
         """
         compute abbreviated action W. See eq.(10) in J. Chem. Phys. 148, 102334 (2018)
-        Note in atomic unit, hbar = kb = 1.
+        Note: in atomic unit, hbar = kb = 1.
 
         :param: nimage: number of images (replicas)
-        :param: mscaled_q: mass weighted coordinates for free moving atoms [nimag, 3 * natom]
 
         :return: action: abbreviated action of the ring polymer path
         """
@@ -2099,6 +2121,56 @@ class LINEBGradientMapper(object):
             )
 
         return action
+    
+    def compute_neb_action_Simpson_rule(self, nimage):
+        """
+        compute abbreviated action W using Simpson's rule. (need potential of mid point beads.)
+        Note: in atomic unit, hbar = kb = 1.
+
+        :param: nimage: number of images (replicas)
+
+        """
+        mscaled_q = np.copy(self.mscaled_q)
+        beads_energy = np.copy(self.beads_energy)
+
+        mscaled_midpoint_q = np.copy(self.mscaled_midpoint_q)
+        midpoint_beads_energy = np.copy(self.midpoint_beads_energy)
+        
+        action = 0
+
+        # sqrt(2 (V - E))
+        action_each_bead = np.zeros([nimage])
+        for i in range(nimage):
+            if beads_energy[i] < self.instanton_path_energy:
+                action_each_bead[i] = 0
+            else:
+                action_each_bead[i] = np.sqrt(
+                    2 * (beads_energy[i] - self.instanton_path_energy)
+                )
+        
+        # sqrt(2 (V-E))
+        midpoint_action_each_bead = np.zeros([nimage - 1])
+        for i in range(nimage - 1):
+            if midpoint_beads_energy[i] < self.instanton_path_energy:
+                midpoint_action_each_bead[i] = 0
+            else:
+                midpoint_action_each_bead[i] = np.sqrt(
+                    2 * (midpoint_beads_energy[i] - self.instanton_path_energy)
+                )
+        
+        # compute action using Simpson's rule
+        for j in range(1, nimage):
+            rj = mscaled_q[j]
+            rj_1 = mscaled_q[j - 1]
+            r_dist = npnorm(rj - rj_1)
+            
+            action = (
+                action  
+                + 1 / 6 * r_dist * (action_each_bead[j] + action_each_bead[j - 1] + 4 * midpoint_action_each_bead[j - 1])
+            )
+        
+        return action 
+
 
     def compute_neb_action_force(self, nimage, natom):
         """

@@ -987,7 +987,7 @@ class GPModelWithDerivativesWrapper:
         """
         free_moving_train_inputs = (
             self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                np.copy(self.train_inputs)
+                np.copy(self.normalized_train_inputs)
             )
         )
 
