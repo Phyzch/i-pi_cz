@@ -737,8 +737,6 @@ class MAPNEBGPRMover(Motion):
             verbosity.debug,
         )
 
-        grad_max_inner_bead = 1000
-        grad_max_end_bead = 1000
         tolerances = self.options[
             "tolerances"
         ]  # tolerances for converging the LI-NEB calculation.
@@ -1981,13 +1979,12 @@ class LINEBGradientMapper(object):
         self.initialize_force(q)
 
         # mass scaled coordinate.
-        self.mscaled_q = mscaled_q
+        self.mscaled_q = np.copy(mscaled_q)
 
         # mass weighted force
-        mscaled_f = self.rbf / np.sqrt(
+        self.mscaled_f = self.rbf / np.sqrt(
             self.dbeads.m3[:, self.fixatoms_mask]
         )  # 1/sqrt(m) * f: mass scaled force.
-        self.mscaled_f = mscaled_f
 
         # Number of images
         nimage = self.dbeads.nbeads
@@ -1999,33 +1996,30 @@ class LINEBGradientMapper(object):
         self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
 
         # abbreviated action for the ring polymer instanton path.
-        self.action = self.compute_neb_action(nimage, mscaled_q)
+        self.action = self.compute_neb_action(nimage)
 
         # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
         self.action_forces = self.compute_neb_action_force(
-            nimage, natom, mscaled_q, mscaled_f
+            nimage, natom
         )
 
         # compute direction of tangent vector, using either improved methods.
-        btau = self.compute_tangent_vector(nimage, natom, mscaled_q)
+        btau = self.compute_tangent_vector(nimage, natom)
 
         # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
-        neb_optimization_force = self.compute_neb_optimization_force(
-            nimage, natom, btau, mscaled_q, mscaled_f
+        self.neb_optimization_force = self.compute_neb_optimization_force(
+            nimage, natom, btau
         )
 
         # sum of action forces for all internal beads 
         # (the action force for the end bead is set to be 0)
         self.action_forces_sum_amplitude = np.linalg.norm(np.sum(self.action_forces, axis= 0))
 
-        self.neb_optimization_force = np.copy(neb_optimization_force)
+        self.neb_optimization_gradient = - self.neb_optimization_force
 
-        neb_optimization_gradient = -neb_optimization_force
-        self.neb_optimization_gradient = neb_optimization_gradient
+        return self.action, np.copy(self.neb_optimization_gradient)
 
-        return self.action, neb_optimization_gradient
-
-    def compute_tangent_vector(self, nimage, natom, mscaled_q):
+    def compute_tangent_vector(self, nimage, natom):
         """
         we used the improved tangent direction:
         J. Chem. Phys. 113, 9978 (2000); https://doi.org/10.1063/1.1323224
@@ -2035,6 +2029,7 @@ class LINEBGradientMapper(object):
 
         :return: btau: unit director for tangent vector of all internal beads in mass_scaled coordinates. (We do not need tangent vector for beads at two ends.)
         """
+        mscaled_q = np.copy(self.mscaled_q)
         beads_energy = self.beads_energy
         btau = np.zeros((nimage, 3 * natom), float)  # tangent direction.
 
@@ -2069,7 +2064,7 @@ class LINEBGradientMapper(object):
 
         return btau
 
-    def compute_neb_action(self, nimage, mscaled_q):
+    def compute_neb_action(self, nimage):
         """
         compute abbreviated action W. See eq.(10) in J. Chem. Phys. 148, 102334 (2018)
         Note in atomic unit, hbar = kb = 1.
@@ -2079,6 +2074,7 @@ class LINEBGradientMapper(object):
 
         :return: action: abbreviated action of the ring polymer path
         """
+        mscaled_q = np.copy(self.mscaled_q)
         beads_energy = self.beads_energy
 
         action = 0
@@ -2104,7 +2100,7 @@ class LINEBGradientMapper(object):
 
         return action
 
-    def compute_neb_action_force(self, nimage, natom, mscaled_q, mscaled_f):
+    def compute_neb_action_force(self, nimage, natom):
         """
         compute the negative gradient of abbreviated action W. (for scaled coordinates.) See eq. (11) in J. Chem. Phys. 148, 102334 (2018).
         Note I will use the same symbol as given in the eq.(11) in the paper.
@@ -2116,6 +2112,8 @@ class LINEBGradientMapper(object):
 
         :return: action_force:  the negative gradient of abbreviated action W. (for scaled coordinates) size: [nimag, 3 * natom].
         """
+        mscaled_q = np.copy(self.mscaled_q)
+        mscaled_f = np.copy(self.mscaled_f)
         beads_energy = self.beads_energy
         
         bead_displs_vector = (
@@ -2240,18 +2238,18 @@ class LINEBGradientMapper(object):
 
         return spring_force
 
-    def compute_neb_optimization_force(self, nimage, natom, btau, mscaled_q, mscaled_f):
+    def compute_neb_optimization_force(self, nimage, natom, btau):
         """
         compute the optimization forces for nudged elastic band beads. See eq.(15 - 22) in J. Chem. Phys. 148, 102334 (2018).
 
         :param: nimag: number of images (replica). scalar
         :param: natom: number of freely moving atoms. scalar
         :param: btau: tangent vector for internal beads.  size: [nimag, 3 * natoms]
-        :param: mscaled_q: mass weighted coordinates for free moving atoms. size: [nimag, 3 * natom]
-        :param: mscaled_f: mass scaled forces for all beads. size: [nimag, 3 * natom]
 
         :return: optimization_force: the optimization force for nudged elastic band. size: [nimag, 3 * natom]
         """
+        mscaled_q = np.copy(self.mscaled_q)
+        mscaled_f = np.copy(self.mscaled_f)
         beads_energy = self.beads_energy
 
         # kappa: restraint force back to iso-energy contour.
