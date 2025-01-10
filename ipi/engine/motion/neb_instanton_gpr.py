@@ -2494,6 +2494,41 @@ class ActionGradientMapper(LINEBGradientMapper):
         self.gpr_model = ens.gpr_model
         self.coordinate_transformer = ens.coordinate_transformer
     
+    def get_gpr_potential_and_forces(self):
+        """
+        Get potential and forces for all beads using the Gaussian Process Regression model.
+        When there is ab-initio potential and force available, we use the ab initio value.
+        return: potential for all beads.
+        """
+        test_x = np.copy(self.rbeads.q)
+        beads_potential_shift, beads_potential_grad_x, _, _ = (
+            self.gpr_model.predict_latent_function(test_x)
+        )
+
+        beads_forces = - beads_potential_grad_x
+        # the predicted potential is the one relative to the energy shift.
+        beads_potential = beads_potential_shift + self.energy_shift
+
+        # For Simpson's rule 
+        midpoint_test_x = (self.rbeads.q[:-1] + self.rbeads.q[1:]) / 2
+        midpoint_potential_shift, midpoint_grad_x, _, _ = (
+            self.gpr_model.predict_latent_function(
+                midpoint_test_x
+            )
+        )
+        
+        midpoint_forces = - midpoint_grad_x 
+        midpoint_beads_energy = midpoint_potential_shift + self.energy_shift
+        
+        nimage = self.dbeads.nbeads
+        self.midpoint_beads_energy = midpoint_beads_energy
+        self.midpoint_rbf = midpoint_forces.copy()[:, self.fixatoms_mask]
+        self.mscaled_midpoint_f = self.midpoint_rbf / np.sqrt(
+            self.dbeads.m3[:nimage - 1, self.fixatoms_mask]
+        )
+        return beads_potential, beads_forces
+
+
     def __call__(self, mscaled_q):
         """
         Return the action and gradient of the action. 
@@ -2508,12 +2543,6 @@ class ActionGradientMapper(LINEBGradientMapper):
 
         # mass scaled coordinate.
         self.mscaled_q = mscaled_q
-
-        # mass weighted force
-        mscaled_f = self.rbf / np.sqrt(
-            self.dbeads.m3[:, self.fixatoms_mask]
-        )  # 1/sqrt(m) * f: mass scaled force.
-        self.mscaled_f = mscaled_f
 
         # Number of images
         nimage = self.dbeads.nbeads
@@ -2539,10 +2568,10 @@ class ActionGradientMapper(LINEBGradientMapper):
         # we set the same action forces for all beads for it to drift.
         action_forces_mean = np.repeat(action_forces_mean[np.newaxis, :], nimage, axis= 0)
 
-        f0 = mscaled_f[0] / np.linalg.norm(mscaled_f[0])
-        f1 = mscaled_f[-1] / np.linalg.norm(mscaled_f[-1])
-        action_forces_mean[0] = action_forces_mean[0] - np.dot(f0, action_forces_mean[0]) * f0 
-        action_forces_mean[-1] = action_forces_mean[-1] - np.dot(f1, action_forces_mean[-1]) * f1 
+        # f0 = self.mscaled_f[0] / np.linalg.norm(self.mscaled_f[0])
+        # f1 = self.mscaled_f[-1] / np.linalg.norm(self.mscaled_f[-1])
+        # action_forces_mean[0] = action_forces_mean[0] - np.dot(f0, action_forces_mean[0]) * f0 
+        # action_forces_mean[-1] = action_forces_mean[-1] - np.dot(f1, action_forces_mean[-1]) * f1 
 
         action_gradient_mean = -action_forces_mean
 
