@@ -1052,6 +1052,7 @@ class MAPNEBGPRMover(Motion):
                 message="Only projected velocity verlet (verlet), conjugate gradient (cg) and FIRE are currently implemented. set mode == 'verlet' ",
             )
 
+
         if (grad_max_inner_bead <= self.options["tolerances"] ["gradient"] 
                 and grad_max_end_bead <= self.options["tolerances"]["gradient_end_bead"]):
             # move all beads at once along the negative gradient direction of the action.
@@ -1067,6 +1068,7 @@ class MAPNEBGPRMover(Motion):
                 self.drift_Ndn = 0 
                 self.drift_Nup = 0 
                 self.drift_time_step = self.optarrays["drift_time_step"]
+
 
 
 
@@ -1191,9 +1193,9 @@ class MAPNEBGPRMover(Motion):
             self.beads.m3[:, self.fixatoms_mask]
         )
 
-        action, action_gradient_mean = self.actiongm(x_mscaled)
+        action, drift_gradient = self.actiongm(x_mscaled)
 
-        fdf0 = (action, action_gradient_mean)
+        fdf0 = (action, drift_gradient)
 
         if self.options["mode"] == "FIRE":
             # one step using FIRE
@@ -1220,11 +1222,11 @@ class MAPNEBGPRMover(Motion):
                 )
         else:
             drift_time_step = self.optarrays["drift_time_step"]
-            x_mscaled, self.drift_velocity_mscaled, self.action, action_gradient_mean = \
+            x_mscaled, self.drift_velocity_mscaled, self.action, drift_gradient = \
                 ipi.utils.nebinstool.projected_verlet(
                     x_mscaled,
                     self.drift_velocity_mscaled,
-                    (action, action_gradient_mean),
+                    (action, drift_gradient),
                     self.actiongm,
                     drift_time_step
                 )
@@ -1842,7 +1844,7 @@ class LINEBGradientMapper(object):
         self.neb_optimization_force = (
             None  # neb force for optimization of action with constraints at two ends.
         )
-        self.neb_transverse_force = (
+        self.action_force = (
             None  # neb force for interior beads along transverse direction
         )
 
@@ -2021,24 +2023,24 @@ class LINEBGradientMapper(object):
         #     nimage, natom
         # )
 
-        # TODO: Change code above to implement Simpson's rule
+        # Change code above to implement Simpson's rule
         self.action = self.compute_neb_action_Simpson_rule(nimage)
 
         self.action_forces = self.compute_neb_action_force_Simpson_rule(
             nimage, natom
         )
 
-        # compute direction of tangent vector, using either improved methods.
-        btau = self.compute_tangent_vector(nimage, natom)
+        # compute direction of tangent vector, using improved methods.
+        self.btau = self.compute_tangent_vector(nimage, natom)
 
         # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
         self.neb_optimization_force = self.compute_neb_optimization_force(
-            nimage, natom, btau
+            nimage, natom, self.btau
         )
 
-        # sum of action forces for all internal beads 
+        # sum of transverse forces for all internal beads 
         # (the action force for the end bead is set to be 0)
-        self.action_forces_sum_amplitude = np.linalg.norm(np.sum(self.action_forces, axis= 0))
+        self.action_forces_sum_amplitude = np.linalg.norm(np.sum(self.action_forces[1: -1], axis= 0))
 
         self.neb_optimization_gradient = - self.neb_optimization_force
 
@@ -2404,7 +2406,7 @@ class LINEBGradientMapper(object):
         right_kappa = self.kappa["right"]  # kappa for the right end beads.
 
         neb_optimization_force = np.zeros([nimage, 3 * natom])
-        self.neb_transverse_force = np.zeros([nimage, 3 * natom])
+        self.action_force = np.zeros([nimage, 3 * natom])
 
         spring_force = self.compute_spring_force(
             nimage, natom, mscaled_q, mscaled_f, btau
@@ -2436,7 +2438,7 @@ class LINEBGradientMapper(object):
             )
 
         
-        self.neb_transverse_force = (
+        self.action_force = (
             np.copy(neb_optimization_force)  # transverse gradient for interior neb beads.
         )
 
@@ -2528,6 +2530,37 @@ class ActionGradientMapper(LINEBGradientMapper):
         )
         return beads_potential, beads_forces
 
+    def compute_transverse_forces(self, nimage, natom, btau):
+        """
+        """
+        neb_transverse_force = np.zeros([nimage, 3 * natom])
+        for ii in range(1, nimage - 1):
+            neb_transverse_force[ii] = (
+                self.action_forces[ii]
+                - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
+            )
+        
+        return neb_transverse_force
+        
+    def compute_drift_forces(self, nimage, natom, neb_transverse_force, transverse_forces_mean_amplitude):
+        """
+        compute drift forces which is action_forces_mean_amplitude * transverse_force_direction.
+        The drift direction of end beads are chosen to be parallel to the drift direction of bead connected to it.
+        :param: nimage: number of ring polymer images 
+        :param: natom: number of atoms.
+        :param: btau: tangent direction of instanton path.
+        :param: transverse_forces_mean_amplitude: the amplitude of the mean value of the action forces. 
+        """
+        drift_forces = np.zeros([nimage, 3 * natom])
+        for ii in range(1, nimage - 1):
+            drift_forces[ii] = (neb_transverse_force[ii] / 
+                                np.linalg.norm(neb_transverse_force[ii])) * transverse_forces_mean_amplitude
+        
+        drift_forces[0] = drift_forces[1]
+        drift_forces[nimage - 1] = drift_forces[nimage - 2]
+
+        return drift_forces 
+
 
     def __call__(self, mscaled_q):
         """
@@ -2564,18 +2597,25 @@ class ActionGradientMapper(LINEBGradientMapper):
             nimage, natom
         )
 
-        action_forces_mean = np.mean(self.action_forces[1:-1], axis= 0)
-        # we set the same action forces for all beads for it to drift.
-        action_forces_mean = np.repeat(action_forces_mean[np.newaxis, :], nimage, axis= 0)
+        # compute direction of tangent vector, using improved methods.
+        btau = self.compute_tangent_vector(nimage, natom)
 
-        # f0 = self.mscaled_f[0] / np.linalg.norm(self.mscaled_f[0])
-        # f1 = self.mscaled_f[-1] / np.linalg.norm(self.mscaled_f[-1])
-        # action_forces_mean[0] = action_forces_mean[0] - np.dot(f0, action_forces_mean[0]) * f0 
-        # action_forces_mean[-1] = action_forces_mean[-1] - np.dot(f1, action_forces_mean[-1]) * f1 
+        neb_transverse_force = self.compute_transverse_forces(nimage, natom, btau)
 
-        action_gradient_mean = -action_forces_mean
+        transverse_forces_mean = np.mean(neb_transverse_force[1:-1], axis= 0)
+        # # we set the same action forces for all beads for it to drift.
+        drift_forces = np.repeat(transverse_forces_mean[np.newaxis, :], nimage, axis= 0)
 
-        return self.action, action_gradient_mean
+        # transverse_forces_mean_amplitude = np.linalg.norm(transverse_forces_mean)
+
+        # drift_forces = self.compute_drift_forces(nimage, 
+        #                                          natom, 
+        #                                          neb_transverse_force, 
+        #                                          transverse_forces_mean_amplitude)
+        
+        drift_gradient = - drift_forces
+
+        return self.action, drift_gradient
 
 
 class RP_MAP(object):
