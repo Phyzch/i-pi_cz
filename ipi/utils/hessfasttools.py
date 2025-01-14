@@ -10,6 +10,7 @@ For flexible internal dofs, we compute hessian for all beads provided. """
 from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
 import torch
 import numpy as np
+from ipi.utils.messages import verbosity, info
 
 class SelectiveHessianCalculation:
     """
@@ -144,7 +145,13 @@ class SelectiveHessianCalculation:
             self.rigid_hessian_component_bool = True 
             assert np.shape(train_x)[0] == 1, "The shape of train_x passed to compute hessians along rigid dofs is not 1."
 
-            for index_q in self.rigid_internal_dofs:
+            info(" @get hessian: rigid mode. Computing hessians.")
+            rigid_ndofs = len(self.rigid_internal_dofs)
+            for index, index_q in enumerate(self.rigid_internal_dofs):
+                info(
+                    "@get hessian: rigid mode. Computing hessian: %d of %d" %(index, rigid_ndofs),
+                    verbosity= "low"
+                )
                 self.get_internal_coordinate_hessian_component(
                     train_x,
                     train_q,
@@ -204,7 +211,13 @@ class SelectiveHessianCalculation:
             hess_q[:,:, index_q]  = hess_q_rigid[:, :, index_q]
         
         # compute hessian along flexible modes. Results store in hess_q
-        for index_q in self.flexible_internal_dofs:
+        info(" @get hessian: Flexible modes: Computing hessian", verbosity.low)
+        flexible_ndofs = len(self.flexible_internal_dofs)
+        for index, index_q in enumerate(self.flexible_internal_dofs):
+            info(
+                " @get_hessian: flexible modes: Computing hessian: %d of %d" %(index, flexible_ndofs),
+                verbosity.low
+            )
             self.get_internal_coordinate_hessian_component(x0, q, rp_beads, rp_forces, hess_q, index_q, d= d)
 
         # transform hessian from internal coordinate q back to the Cartesian coordinate x.
