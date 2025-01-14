@@ -356,7 +356,6 @@ def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1,  fixdofs = [], d=0.00
 
     OUT    h       = physical hessian ( (natoms-len(fixatoms) )*3 , nbeads*( natoms-len(fixatoms) )*3)
     """
-    # TODO: Make the fixed_dofs part of hessian = 0.
     info(" @get_hessian: Computing hessian", verbosity.low)
     ii = natoms * 3
     activedof = np.delete(np.arange(ii), fixdofs)

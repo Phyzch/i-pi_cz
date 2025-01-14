@@ -336,7 +336,7 @@ class FixInternalDofs(object):
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
 
         # check whether coordinate alng certain internal dofs need to be fixed.
-        # the change along internal coordinate will be computed using Wilson's B matrix. (any coordinate should be fine.)
+        # the change along internal coordinate will be computed using Wilson's B matrix. 
         # This is to fix the problem for the planar molecule
         Bq = coordinate_transformer.compute_delocalized_wilson_matrix_Bq(np.array([train_x[0]]))[0]
         (u, sq, vh) = np.linalg.svd(Bq, full_matrices= False)
@@ -431,7 +431,7 @@ class FixInternalDofs(object):
             )
             self.grads_for_fixed_dofs = np.mean(grads, axis=0)[self.fixed_internal_dofs]
             
-            #TODO: linear regression fit for gradient in rigid dof.
+            #linear regression fit for gradient in rigid dof.
             self.reg_model = self.linear_regression_fit_grad(train_inputs,
                                             grads)
 
