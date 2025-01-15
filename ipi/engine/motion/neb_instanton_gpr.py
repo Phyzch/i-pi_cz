@@ -33,6 +33,7 @@ import ipi.utils.mintools
 import os
 from timeit import default_timer as timer
 import threading 
+import ipi.utils.hessfasttools
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
@@ -124,6 +125,7 @@ class MAPNEBGPRMover(Motion):
         add_new_grad_data_bool= False,
         candidate_grad_data_number= 100,
         new_grad_data_index= np.zeros(0, int),
+        selective_hessian_bool= False,
         perturb_amplitude = 0.1
     ):
         """Initialises NEBMover.
@@ -173,6 +175,9 @@ class MAPNEBGPRMover(Motion):
         # The cutoff for the scaled internal coordinate distnace for training data.
         # The training data is not allowed to be too close to each other, which will make the kernel matrix ill-conditioned.
         self.options["distance_cutoff_for_training_data"] = distance_cutoff_for_training_data
+
+        # Whether compute hessians in the internal coordinate and compute only 1 hessian for rigid modes. 
+        self.options["selective_hessian_bool"] = selective_hessian_bool
 
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
@@ -2726,6 +2731,10 @@ class RP_MAP(object):
 
         self.train_hessian_model_bool = nebmover.options["train_hessian_model_bool"]
 
+        # options to use compute selective hessians in the internal coordinate.
+        # we define the rigid mode in the internal coordinate and only compute hessians for 1 bead along rigid mode.
+        self.selective_hessian_bool = nebmover.options["selective_hessian_bool"]
+
     def initialize(self, neb_beads, neb_final_step):
         """
         initialize the RP_MAP dynamics. This should be called after beads have converged to minimum action path using line integral nudged elastic band method.
@@ -3156,6 +3165,16 @@ class RP_MAP(object):
         construct the gpr_hessian model, which will predict hessian information using Gaussian Process Regression.
         """
         start_time = timer()
+
+        candidate_hessian_point_x, _ = (
+            ipi.utils.nebinstool.path_equal_distance_interpolation(
+                np.copy(self.neb_beads.q), self.candidate_hessian_data_number
+            )
+        )
+
+        single_rp_beads = Beads(self.rp_beads.natoms, 1)
+        single_rp_forces = self.rp_forces.copy(single_rp_beads, self.dcell)
+        
         if self.read_gpr_hessian_folder == "None":
             # create gpr_hessian model using data from gpr model
             print(
@@ -3175,11 +3194,6 @@ class RP_MAP(object):
             if len(self.new_hessian_data_index) == 0:
                 raise("Must provide the index of new hessian data point if add_new_hessian_data_bool = True")
 
-            candidate_hessian_point_x, _ = (
-                ipi.utils.nebinstool.path_equal_distance_interpolation(
-                    np.copy(self.neb_beads.q), self.candidate_hessian_data_number
-                )
-            )
             
             # use the first data point as the reference point for mean function 
             # when constructing gpr model with hessian
@@ -3191,14 +3205,33 @@ class RP_MAP(object):
             
             ref_V_shifted = dstrip(new_forces.pots).copy() - self.energy_shift
             ref_grads = -dstrip(new_forces.f).copy()[0] 
-            # only 1 bead, so no need to transform the hessian.
-            ref_hessians = ipi.utils.nebinstool.get_hessian(
-                new_beads,
-                new_forces,
-                np.copy(new_beads.q),
-                self.neb_beads.natoms, 
-                1
-            )
+
+            # TODO: add options to use selective method to compute hessian.
+            if self.selective_hessian_bool:
+                self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
+                    candidate_hessian_point_x,
+                    self.coordinate_transformer,
+                    self.gpr_rigid_internal_dofs_cutoff,
+                    single_rp_beads,
+                    single_rp_forces
+                    )
+                
+                ref_hessians = self.selective_hessian_calculator.get_hessian(
+                    new_beads,
+                    new_forces,
+                    np.copy(new_beads.q)
+                )
+                ref_hessians = ref_hessians[0]
+
+            else:
+                # only 1 bead, so no need to transform the hessian.
+                ref_hessians = ipi.utils.nebinstool.get_hessian(
+                    new_beads,
+                    new_forces,
+                    np.copy(new_beads.q),
+                    self.neb_beads.natoms, 
+                    1
+                )
 
             # For testing the error induced by forward and backward transformation of gradient and hessian.
             ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
@@ -3294,6 +3327,26 @@ class RP_MAP(object):
                 np.array([ref_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
             )
 
+            if self.selective_hessian_bool:
+                self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
+                    candidate_hessian_point_x,
+                    self.coordinate_transformer,
+                    self.gpr_rigid_internal_dofs_cutoff,
+                    single_rp_beads,
+                    single_rp_forces   
+                )
+
+                # load hessians corresponding to rigid dofs in internal mode.
+                train_x = cartesian_coordinate_x[hessian_index_list]
+                grad_x = training_grads[hessian_index_list]
+                hessian_x = hessian_data_list
+                
+                self.selective_hessian_calculator.load_rigid_dofs_hessian(
+                    train_x,
+                    grad_x,
+                    hessian_x
+                )
+
             self.gpr_hessian_model = (
                 ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
                     cartesian_coordinate_x,
@@ -3327,7 +3380,6 @@ class RP_MAP(object):
                     self.read_gpr_hessian_folder
             )
 
-            # FIXME: for debugging. Temperarily disable loading hyper-parameters for gpr hessian model.
             if model_hyperparameter_exists:
                 # the hyper-parameter of the gpr hessian model exists.
                 # we do not have to train it.
@@ -3417,6 +3469,7 @@ class RP_MAP(object):
 
             if len(self.new_hessian_data_index) > 0:
                 # the new data point that we will compute hessian.
+                
                 # FIXME: add perturbation to the candidate training data point that contains hessian information.
                 # perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_hessian_point_x,
                 #                                                                   self.new_hessian_data_index,
@@ -3436,20 +3489,27 @@ class RP_MAP(object):
                 new_grads = -dstrip(new_forces.f).copy()
 
                 # compute ab initio hessians of new data points.
-                new_hessians = ipi.utils.nebinstool.get_hessian(
-                    new_beads,
-                    new_forces,
-                    np.copy(new_beads.q),
-                    natoms,
-                    new_hessian_data_num
-                )
+                if self.selective_hessian_bool:
+                    new_hessians = self.selective_hessian_calculator.get_hessian(
+                        new_beads,
+                        new_forces,
+                        np.copy(new_beads.q)
+                    )
+                else:
+                    new_hessians = ipi.utils.nebinstool.get_hessian(
+                        new_beads,
+                        new_forces,
+                        np.copy(new_beads.q),
+                        natoms,
+                        new_hessian_data_num
+                    )
 
-                new_hessians = np.transpose(
-                    np.reshape(
-                        new_hessians, [3 * natoms, new_hessian_data_num, 3 * natoms]
-                    ),
-                    (1, 0, 2),
-                )
+                    new_hessians = np.transpose(
+                        np.reshape(
+                            new_hessians, [3 * natoms, new_hessian_data_num, 3 * natoms]
+                        ),
+                        (1, 0, 2),
+                    )
 
 
                 ipi.utils.nebinstgprtool.add_hessian_data_to_model(

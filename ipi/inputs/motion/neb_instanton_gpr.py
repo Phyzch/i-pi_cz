@@ -618,6 +618,17 @@ class InputNebInstGPR(InputDictionary):
                     k_max specify the spring constant at two end beads",
             },
         ),
+        "selective_hessian_bool":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help": """ Bool variable. if True, we will compute hessians in internal coordinate, and 
+                save computational cost by only compute 1 hessian for components along rigid modes.
+                If false, we compute hessians in Cartesian coordinate.
+                """
+            }
+        )
     }
 
     dynamic = {}
@@ -684,6 +695,10 @@ class InputNebInstGPR(InputDictionary):
 
         self.gpr_rigid_internal_dofs_cutoff.store(
             options["gpr_rigid_internal_dofs_cutoff"]
+        )
+
+        self.selective_hessian_bool.store(
+            options["selective_hessian_bool"]
         )
 
         # optarrays
