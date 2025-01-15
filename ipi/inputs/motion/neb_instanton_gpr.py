@@ -466,7 +466,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 5e-2,
+                "default": 1e-2,
                 "help":
                 """
                 cutoff value for rigid internal dofs. We will use Linear Regression fitting for gradient along rigid internal dofs.

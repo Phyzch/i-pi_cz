@@ -112,7 +112,7 @@ class MAPNEBGPRMover(Motion):
         gpr_SE_kernel_number=1,
         gpr_fix_internal_dofs_bool= True,
         gpr_fix_internal_dofs_cutoff= 1e-3,
-        gpr_rigid_internal_dofs_cutoff= 5e-2,
+        gpr_rigid_internal_dofs_cutoff= 1e-2,
         read_initial_gpr_training_data=False,
         test_gpr_model_along_instanton_path= False,
         final_hessian_bool=False,

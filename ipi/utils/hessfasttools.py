@@ -59,7 +59,7 @@ class SelectiveHessianCalculation:
 
         self.train_inputs_change = train_inputs_change 
 
-        print(f"@hessian calculation: determining rigid internal dofs for ring polymers, 
+        print(f"@hessian calculation: determining rigid internal dofs for ring polymers, \
               for reference, train_inputs_change: {train_inputs_change}")
         
         print(f"The cutoff value for determining rigid internal dofs is: {rigid_internal_dofs_cutoff}")
@@ -74,6 +74,7 @@ class SelectiveHessianCalculation:
 
         self.flexible_internal_dofs = np.delete(np.arange(input_dim), self.rigid_internal_dofs)
 
+        print(f"@hessian calculation: flexible internal dofs: {self.flexible_internal_dofs}")
         self.rigid_hessian_component_bool = False 
         self.rigid_hessian_component = np.zeros([input_dim, input_dim])
     
@@ -107,8 +108,9 @@ class SelectiveHessianCalculation:
             ]
         )
 
-        dx = inverse_Bq @ dq[np.newaxis, np.newaxis, :]
-
+        # dx = inverse_Bq @ dq[np.newaxis, np.newaxis, :]
+        dx = np.einsum('pmn,n->pm', inverse_Bq, dq)
+        
         # compute force:
         # PLUS
         x = np.copy(train_x1)
@@ -147,19 +149,22 @@ class SelectiveHessianCalculation:
 
             info(" @get hessian: rigid mode. Computing hessians.")
             rigid_ndofs = len(self.rigid_internal_dofs)
+            rigid_hessian_component = self.rigid_hessian_component[np.newaxis,:]
             for index, index_q in enumerate(self.rigid_internal_dofs):
                 info(
                     "@get hessian: rigid mode. Computing hessian: %d of %d" %(index, rigid_ndofs),
-                    verbosity= "low"
+                    verbosity.low
                 )
                 self.get_internal_coordinate_hessian_component(
                     train_x,
                     train_q,
                     self.single_rp_bead,
                     self.single_rp_force,
-                    self.rigid_hessian_component,
+                    rigid_hessian_component,
                     index_q
                 )
+            
+            self.rigid_hessian_component = rigid_hessian_component[0]
             
     def load_rigid_dofs_hessian(self, train_x, grad_x, hessian_x):
         """
