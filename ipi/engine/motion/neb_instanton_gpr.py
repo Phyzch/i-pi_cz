@@ -3206,7 +3206,6 @@ class RP_MAP(object):
             ref_V_shifted = dstrip(new_forces.pots).copy() - self.energy_shift
             ref_grads = -dstrip(new_forces.f).copy()[0] 
 
-            # TODO: add options to use selective method to compute hessian.
             if self.selective_hessian_bool:
                 self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
                     candidate_hessian_point_x,

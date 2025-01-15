@@ -410,15 +410,8 @@ class FixInternalDofs(object):
         self.constrained_internal_dofs = np.concatenate(
             [self.fixed_internal_dofs,
              self.rigid_internal_dofs]
-        )
+        ).astype(int)
 
-        self.constrained_internal_dofs = np.array(
-            list(
-                set(
-                    self.constrained_internal_dofs
-                )
-            )
-        )
 
         if len(self.constrained_internal_dofs) != 0:
             self.free_moving_dofs = np.delete(
@@ -432,8 +425,9 @@ class FixInternalDofs(object):
             self.grads_for_fixed_dofs = np.mean(grads, axis=0)[self.fixed_internal_dofs]
             
             #linear regression fit for gradient in rigid dof.
-            self.reg_model = self.linear_regression_fit_grad(train_inputs,
-                                            grads)
+            if len(self.rigid_internal_dofs) != 0:
+                self.reg_model = self.linear_regression_fit_grad(train_inputs,
+                                                grads)
 
             if len(hessians) != 0:
                 self.hessians_for_fixed_dofs = np.mean(hessians, axis=0)
@@ -640,17 +634,18 @@ class FixInternalDofs(object):
             axis=0
         )
 
-        # the gradients in rigid internal dofs:
-        test_grads_rigid_dofs = self.predict_rigid_grad(
-            test_inputs
-        )
-
         # the prediction of the gradient data in all dofs
         test_grads = np.zeros([test_data_num, self.input_dim])
         test_grads[:, self.free_moving_dofs] = test_moving_grads
-        if len(self.constrained_internal_dofs) != 0 and not zero_bool:
+        if len(self.fixed_internal_dofs) != 0 and not zero_bool:
             # the grad along the fixed dof is the average value.
             test_grads[:, self.fixed_internal_dofs] = test_grads_fixed_dofs
+        
+        if len(self.rigid_internal_dofs) != 0:
+            # the gradients in rigid internal dofs:
+            test_grads_rigid_dofs = self.predict_rigid_grad(
+                test_inputs
+            )
             # the grad along the rigid dof is the linear regression fit value.
             test_grads[:, self.rigid_internal_dofs] = test_grads_rigid_dofs
 
