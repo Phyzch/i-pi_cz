@@ -536,7 +536,6 @@ def read_hessian_data(prefix, ndofs):
 
     return hessian_index_list, hessian_data_list 
 
-
 def read_training_data_with_hessian(prefix):
     """
     read coordinate, potential V, force f and hessian h from training data
@@ -690,7 +689,7 @@ def compute_frobenius_norm(input_matrix: np.ndarray):
     elif len(np.shape(input_matrix)) == 3:
         matrix = input_matrix
     else:
-        raise "the shape of matrix for computing frobenius norm has to have 2 or 3 dimensions"
+        raise "the shape of matrix for computing frobenius norm has to have dimensions 2 or 3."
 
     matrix_transpose = np.transpose(matrix, (0, 2, 1))
     frobenius_norm = np.sqrt(

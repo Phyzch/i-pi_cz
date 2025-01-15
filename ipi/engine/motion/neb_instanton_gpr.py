@@ -546,11 +546,10 @@ class MAPNEBGPRMover(Motion):
         bead_index_at_transition_state = np.argmax(beads_pots)
         ref_x = dstrip(self.beads.q[bead_index_at_transition_state]).copy()
 
-        # FIXME: The best solution is to provide both the reactant and product state
-        # FIXME: as reference points to construct coordinate transformer.
         # Now, we just use the poiont with lowest energy at reactant and product side.
         ref_x_reactant = dstrip(self.beads.q[0]).copy() # coordinate at reactant side.
         ref_x_product = dstrip(self.beads.q[-1]).copy() # coordinate at product side
+
         ref_x_list = np.array([ref_x, ref_x_reactant, ref_x_product])
 
         # create coordinate_transformer, which handles the transformation from the Cartesian coordinate to internal coordinate.
@@ -566,8 +565,6 @@ class MAPNEBGPRMover(Motion):
             ref_x_list,
             names
         )
-
-        # TODO: output motion of each internal coordinate.
 
         # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force.
         # In the LI-NEB algorithm, when there is ab-initio potential & force data available, we will use that potential and force.
@@ -3570,7 +3567,6 @@ class RP_MAP(object):
                     ), "At least one data point in new_grad_data_index coincide with the one point that we have already computed grads.\
                         please double check new_grad_data_index entry in input.xml" 
             
-            # FIXME: add perturbation to the candidate training data point.
             # perturbed_new_x = ipi.utils.nebinstgprtool.perturb_training_point(candidate_grad_point_x,
             #                                                                   self.new_grad_data_index,
             #                                                                   self.gpr_hessian_model,

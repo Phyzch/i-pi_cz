@@ -63,16 +63,23 @@ class SelectiveHessianCalculation:
               for reference, train_inputs_change: {train_inputs_change}")
         
         print(f"The cutoff value for determining rigid internal dofs is: {rigid_internal_dofs_cutoff}")
+        
+        
         self.rigid_internal_dofs = np.array(
             [
                 i for i in range(input_dim)
                 if train_inputs_change[i] < rigid_internal_dofs_cutoff
             ]
         )
+        # FIXME: Set rigid_internal_dofs = 0 first. Check the error from coordinate transformation & hessian calculation.
+        # self.rigid_internal_dofs = np.array([])
 
         print(f"@hessian calculation: rigid internal dofs: {self.rigid_internal_dofs}")
 
-        self.flexible_internal_dofs = np.delete(np.arange(input_dim), self.rigid_internal_dofs)
+        if len(self.rigid_internal_dofs) != 0:
+            self.flexible_internal_dofs = np.delete(np.arange(input_dim), self.rigid_internal_dofs)
+        else:
+            self.flexible_internal_dofs = np.arange(input_dim)
 
         print(f"@hessian calculation: flexible internal dofs: {self.flexible_internal_dofs}")
         self.rigid_hessian_component_bool = False 
@@ -110,25 +117,31 @@ class SelectiveHessianCalculation:
 
         # dx = inverse_Bq @ dq[np.newaxis, np.newaxis, :]
         dx = np.einsum('pmn,n->pm', inverse_Bq, dq)
-        
+
         # compute force:
         # PLUS
         x = np.copy(train_x1)
         x = x + dx 
+        x_plus = np.copy(x)
         beads.q[:] = x 
         g1 = - forces.f 
-
+        g1q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+            x_plus,
+            g1
+        )
         # MINUS
         x = np.copy(train_x1)
         x = x - dx 
+        x_minus = np.copy(x)
         beads.q[:] = x 
         g2 = - forces.f 
-
+        g2q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+            x_minus,
+            g2
+        )
         # COMBINE 
-        gx = (g1 - g2)/ (2 * d)
-        gq = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
-            train_x1,
-            gx)
+        # transform each gradient into internal coordinate. Then compute hessian component 
+        gq = (g1q - g2q) / (2 * d)
         
         hess[:, index_q, :] = gq
         hess[:, :, index_q] = gq 
