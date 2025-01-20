@@ -190,6 +190,7 @@ class SelectiveHessianCalculation:
         """
         if not self.rigid_hessian_component_bool:
             self.rigid_hessian_component_bool = True 
+            info("Load rigid hessian component", verbosity.low)
             hessian_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
                 train_x,
                 grad_x,
