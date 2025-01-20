@@ -618,6 +618,23 @@ class InputNebInstGPR(InputDictionary):
                 If false, we compute hessians in Cartesian coordinate.
                 """
             }
+        ),
+        "internal_coord":(
+            InputValue,
+            {
+                "dtype": str,
+                "default": "bond",
+                "options": ["bond", "Coulomb"],
+                "help": """
+                The option to construct primitive internal coordinate.
+                We provide two choices: bond and Coulomb. 
+                For Coulomb choice, we build redundant internal coordinate as 1/|ri - rj|. 
+                This is for hydrogen extract reaction, including CH4 + H.
+                For bond choice, we build redundant internal coordinate by building connectivity graph 
+                between atoms in the molecule, then add angle, distance & dihedral angle as redundant internal coordinate.
+                This is for intra-molecular proton transfer reaction like malonaldehyde and aminopropenal.
+                """
+            }
         )
     }
 
@@ -689,6 +706,10 @@ class InputNebInstGPR(InputDictionary):
 
         self.selective_hessian_bool.store(
             options["selective_hessian_bool"]
+        )
+
+        self.internal_coord.store(
+            options["internal_coord"]
         )
 
         # optarrays

@@ -23,8 +23,8 @@ from ipi.utils.messages import verbosity, info, warning
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
 from ipi.utils.nebinstool import RK4
-# from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
-from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
+import ipi.utils.internalcoordtools  # 1/|ri-rj| : Coloumb matrix.
+import ipi.utils.internal.internaltools  # primitive internal coordinate.
 import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
 import ipi.utils.nebinstool
@@ -126,6 +126,7 @@ class MAPNEBGPRMover(Motion):
         candidate_grad_data_number= 100,
         new_grad_data_index= np.zeros(0, int),
         selective_hessian_bool= False,
+        internal_coord = "bond",
     ):
         """Initialises NEBMover.
 
@@ -177,6 +178,8 @@ class MAPNEBGPRMover(Motion):
 
         # Whether compute hessians in the internal coordinate and compute only 1 hessian for rigid modes. 
         self.options["selective_hessian_bool"] = selective_hessian_bool
+
+        self.options["internal_coord"] = internal_coord 
 
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
@@ -548,19 +551,22 @@ class MAPNEBGPRMover(Motion):
 
         ref_x_list = np.array([ref_x, ref_x_reactant, ref_x_product])
 
+        names = dstrip(self.beads.names).copy().tolist()
         # create coordinate_transformer, which handles the transformation from the Cartesian coordinate to internal coordinate.
         # This is for Coulomb matrix type internal coordinate.
-        # self.coordinate_transformer = non_redundant_coordinate_transformer(
-        #     self.beads.natoms, ref_x
-        # )
-
-        names = dstrip(self.beads.names).copy().tolist()
-        # This is for internal coordinate that include bond angles and bond distance
-        self.coordinate_transformer = non_redundant_coordinate_transformer(
-            self.beads.natoms,
-            ref_x_list,
-            names
-        )
+        if self.options["internal_coord"] == "Coulomb":
+            self.coordinate_transformer = ipi.utils.internalcoordtools.non_redundant_coordinate_transformer(
+                self.beads.natoms, ref_x
+            )
+        elif self.options["internal_coord"] == "bond":
+            # This is for internal coordinate that include bond angles and bond distance
+            self.coordinate_transformer = ipi.utils.internal.internaltools.non_redundant_coordinate_transformer(
+                self.beads.natoms,
+                ref_x_list,
+                names
+            )
+        else:
+            raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
 
         # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force.
         # In the LI-NEB algorithm, when there is ab-initio potential & force data available, we will use that potential and force.

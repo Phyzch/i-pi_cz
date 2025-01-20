@@ -478,31 +478,36 @@ class non_redundant_coordinate_transformer:
         hessian_q_xx = np.transpose(hessian_q_xx, (2, 0, 1))
         return hessian_q_xx
 
-    def compute_x_hessian_q(self, x):
+    def compute_x_hessian_q(self, x_list):
         """
         compute the hessian of Cartesian coordinate x for the reference point with respect to internal coordinate q.
         d^2 x/ dq^2
         """
-        # d^2 q/ dx^2. shape: [3n-6, 3n, 3n]
-        hessian_q_xx = self._compute_q_hessian_x(x)
+        hessian_x_qq_list = []
+        for x in x_list:
+            # d^2 q/ dx^2. shape: [3n-6, 3n, 3n]
+            hessian_q_xx = self._compute_q_hessian_x(x)
 
-        Bq = self.compute_delocalized_wilson_matrix_Bq(
-            np.array([x])
-        )[
-            0
-        ] # \partial q / \partial x. shape:[3n -6, 3n]
+            Bq = self.compute_delocalized_wilson_matrix_Bq(
+                np.array([x])
+            )[
+                0
+            ] # \partial q / \partial x. shape:[3n -6, 3n]
 
-        # \partial x / partial q. shape: [3n, 3n-6]
-        inverse_Bq = np.linalg.pinv(Bq, rcond=np.power(10.0, -8))
+            # \partial x / partial q. shape: [3n, 3n-6]
+            inverse_Bq = np.linalg.pinv(Bq, rcond=np.power(10.0, -8))
 
-        # now compute d^2 x/ dq^2 = (-1) * (dx /dq) (d^2 q/ dx^2) * (dx/dq) * (dx/dq). shape:[3n-6, 3n-6, 3n-6]. The first index is the index of x in numerator.
-        hessian_q_qq = (-1) * np.matmul(
-            np.transpose(np.matmul(hessian_q_xx, inverse_Bq), (0, 2, 1)), inverse_Bq
-        )
-        # shape: [3n-6, 3n-6, 3n]
-        hessian_x_qq = np.matmul(
-            np.transpose(hessian_q_qq, (1, 2, 0)), np.transpose(inverse_Bq, (1, 0))
-        )
-        hessian_x_qq = np.transpose(hessian_x_qq, (2, 0, 1))
+            # now compute d^2 x/ dq^2 = (-1) * (dx /dq) (d^2 q/ dx^2) * (dx/dq) * (dx/dq). shape:[3n-6, 3n-6, 3n-6]. The first index is the index of x in numerator.
+            hessian_q_qq = (-1) * np.matmul(
+                np.transpose(np.matmul(hessian_q_xx, inverse_Bq), (0, 2, 1)), inverse_Bq
+            )
+            # shape: [3n-6, 3n-6, 3n]
+            hessian_x_qq = np.matmul(
+                np.transpose(hessian_q_qq, (1, 2, 0)), np.transpose(inverse_Bq, (1, 0))
+            )
+            hessian_x_qq = np.transpose(hessian_x_qq, (2, 0, 1))
+            hessian_x_qq_list.append(hessian_x_qq)
+        
+        hessian_x_qq_list = np.array(hessian_x_qq_list)
 
-        return hessian_x_qq
+        return hessian_x_qq_list
