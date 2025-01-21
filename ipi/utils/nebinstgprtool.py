@@ -919,164 +919,6 @@ def compare_ab_initio_hessian_and_predicted_hessian(
         return ab_initio_hessians, predicted_hessians
 
 
-def test_gpr_hessian_prediction(
-    gpr_model: GPModelWithDerivativesWrapper,
-    energy_shift,
-    cartesian_x_with_hessian,
-    pots_with_hessian_before_shift,
-    grads_with_hessian,
-    hessians_data,
-    cartesian_fix_dofs,
-    gpr_fix_internal_dofs_bool,
-    gpr_fix_internal_dofs_cutoff
-):
-    """
-    test gaussian process regression model that predict hessian.
-    The parameter below are x, potentials, gradients and hessians of data.
-    :param: cartesian_x_with_hessian:  coordinate of data with hessian information we need to test with GPR model.
-    :param: pots_with_hessian_before_shift: potentials of data before we do the energy shift with self.energy_shift.
-    :param: grads_with_hessian: gradients of data.
-    :param: hessians_data: hessians of data point.
-    """
-    # collect gradient, force & hessian data from gpr model. These data will also be used to initialize gpr_hessian_model.
-    cartesian_x_gpr_model = np.copy(gpr_model.train_cartesian_inputs)
-    pots_gpr_model = np.copy(gpr_model.train_cartesian_targets[:, 0])
-    grads_gpr_model = np.copy(gpr_model.train_cartesian_targets[:, 1:])
-
-    gpr_model_training_data_num = len(cartesian_x_gpr_model)
-
-    # training data point with hessians.
-    nbeads_with_hessian = len(cartesian_x_with_hessian)
-    natoms = gpr_model.natom
-
-    # shift the potential data with energy shift.
-    pots_with_hessian = pots_with_hessian_before_shift - energy_shift
-
-    # we choose the training points that we use to train the gpr model.
-    train_hessian_data_point_index_array = np.arange(0, nbeads_with_hessian, 3)
-    test_hessian_data_point_index_array = np.delete(
-        np.arange(0, nbeads_with_hessian), train_hessian_data_point_index_array
-    )
-
-    # Previous shape: [3 * natoms, nbeads * 3 * natoms].
-    # change the shape of hessian to [nbeads, 3 * natoms, 3 * natoms]
-    hessians_full = np.transpose(
-        np.reshape(hessians_data, [3 * natoms, nbeads_with_hessian, 3 * natoms]),
-        (1, 0, 2),
-    )
-
-    # add hessian data into training data
-    train_cartesian_x = np.concatenate(
-        [
-            cartesian_x_gpr_model,
-            cartesian_x_with_hessian[train_hessian_data_point_index_array],
-        ]
-    )
-    train_pots = np.concatenate(
-        [pots_gpr_model, pots_with_hessian[train_hessian_data_point_index_array]]
-    )
-    train_grads = np.concatenate(
-        [grads_gpr_model, grads_with_hessian[train_hessian_data_point_index_array]]
-    )
-    train_hessians = hessians_full[train_hessian_data_point_index_array]
-    hessian_data_point_index_in_training_data = (
-        np.arange(len(train_hessian_data_point_index_array))
-        + gpr_model_training_data_num
-    )
-
-    # initialize the gpr_hessian_model's training parameter with  output scale and length scale of previously trained model.
-    kernel_lengthscale_initio_value = gpr_model.output_kernel_lengthscale()
-    kernel_outputscale_initio_value = gpr_model.output_kernel_outputscale()
-    # prepare the reference point with V, grad, hessian. The mean function of Gaussian Process Regression model is the Taylor expansion around such reference point.
-    hessian_ref_data_point_index = 0
-    ref_x = cartesian_x_with_hessian[hessian_ref_data_point_index]
-    ref_V = np.array([pots_with_hessian[hessian_ref_data_point_index]])
-    ref_grads = grads_with_hessian[hessian_ref_data_point_index]
-    ref_hessians = hessians_full[hessian_ref_data_point_index]
-
-    coordinate_transformer = gpr_model.coordinate_transformer
-    # create Gaussian Process Regression model which can predict hessian information.
-    # set the mean function of gpr hessian model as Taylor expansion aroudn the reference point.
-    gpr_hessian_model = GPModelWithHessiansWrapper(
-        train_cartesian_x,
-        train_pots,
-        train_grads,
-        train_hessians,
-        hessian_data_point_index_in_training_data,
-        natoms,
-        coordinate_transformer,
-        cartesian_fix_dofs,
-        gpr_model.gpr_SE_kernel_number,
-        gpr_model.kernel_outputscale,
-        gpr_model.kernel_lengthscale_ratio,
-        gpr_model.noise_std,
-        kernel_lengthscale_initio_value=kernel_lengthscale_initio_value,
-        kernel_outputscale_initio_value=kernel_outputscale_initio_value,
-        constant_mean_func_bool=False,
-        ref_mean_x=ref_x,
-        ref_mean_V=ref_V,
-        ref_mean_grad_x=ref_grads,
-        ref_mean_hessian_x=ref_hessians,
-        gpr_fix_internal_dofs_bool= gpr_fix_internal_dofs_bool,
-        gpr_fix_internal_dofs_cutoff= gpr_fix_internal_dofs_cutoff
-    )
-
-    internal_coordinate_with_hessian = coordinate_transformer.get_internal_coordinate_q(
-        cartesian_x_with_hessian
-    )
-    internal_coordinate_with_hessian = internal_coordinate_with_hessian[
-        :, gpr_hessian_model.FixingDofs.free_moving_dofs
-    ]
-
-    # check the length scale of gpr model after we finish the training. This way we can see if over-fitting happens.
-    (
-        gpr_hessian_kernel_outputscale,
-        gpr_hessian_lengthscale_list,
-        gpr_hessian_lengthscale_ratio_list,
-    ) = check_gpr_hessian_model_lengthscale(gpr_hessian_model)
-
-    # test the prediction of hessian of training data.
-    ab_initio_train_hessian_q, predicted_train_hessian_q = (
-        compare_ab_initio_hessian_and_predicted_hessian(
-            cartesian_x_with_hessian,
-            grads_with_hessian,
-            hessians_full,
-            train_hessian_data_point_index_array,
-            gpr_hessian_model,
-            internal_coordinate_bool=True,
-            training_data_bool=True,
-        )
-    )
-
-    # test data case for hessians in internal coordinate.
-    ab_initio_test_hessian_q, predicted_test_hessian_q = (
-        compare_ab_initio_hessian_and_predicted_hessian(
-            cartesian_x_with_hessian,
-            grads_with_hessian,
-            hessians_full,
-            test_hessian_data_point_index_array,
-            gpr_hessian_model,
-            internal_coordinate_bool=True,
-            training_data_bool=False,
-        )
-    )
-
-    # test data case for hessians in Cartesian coordinate
-    ab_initio_test_hessian, predicted_test_hessian = (
-        compare_ab_initio_hessian_and_predicted_hessian(
-            cartesian_x_with_hessian,
-            grads_with_hessian,
-            hessians_full,
-            test_hessian_data_point_index_array,
-            gpr_hessian_model,
-            internal_coordinate_bool=False,
-            training_data_bool=False,
-        )
-    )
-
-    pass
-
-
 def add_hessian_data_to_model(
     gpr_hessian_model: GPModelWithHessiansWrapper,
     train_data_coordinate,
@@ -1281,31 +1123,17 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
 
         print(f"train data: relative hessian error for ring polymer beads: {relative_hessian_error}")
 
-        # check if certain internal dof is causing trouble
-        if np.any(relative_hessian_error > 1): 
-            internal_train_inputs_change = gpr_hessian_model.FixingDofs.train_inputs_change
-            
-            ab_initio_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
+        ab_initio_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
                 coord[hessian_data_point_index],
                 ab_initio_train_cartesian_gradient[hessian_data_point_index], 
                 ab_initio_training_hessians
-                )[0]
+                )
             
-            predicted_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
+        predicted_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
                 coord[hessian_data_point_index], 
                 predicted_grads[hessian_data_point_index], 
                 predicted_hessians
-                )[0]
-            
-            
-            input_dim = gpr_hessian_model.input_dim 
-            print(f"@debug hessian: internal train inputs change: {internal_train_inputs_change}")   
-            for i in range(input_dim):
-                error = np.linalg.norm(ab_initio_hessian_q[i] - predicted_hessian_q[i]) / np.linalg.norm(ab_initio_hessian_q[i])
-                if error > 0.1:
-                    print(f"internal dof {i}")
-                    print(f"@debug hessian: internal coordinate: ab initio hessian q [{i}, :] = {ab_initio_hessian_q[i]}" )
-                    print(f"@debug hessian: internal coordinate: predicted hessian q [{i}, :] = {predicted_hessian_q[i]}")
+                )
 
     pass 
 

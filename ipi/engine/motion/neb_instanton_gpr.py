@@ -3756,23 +3756,6 @@ class RP_MAP(object):
                 # Only use this option for benchmark.
                 self.compute_ring_polymer_hessian()
 
-                # x = self.rp_beads.q
-                # pots = self.rp_forces.pots
-                # grads = -np.copy(dstrip(self.rp_forces.f))
-                # hessians = self.rp_hessian
-                
-                # ipi.utils.nebinstgprtool.test_gpr_hessian_prediction(
-                #     self.gpr_model, 
-                #     self.energy_shift, 
-                #     x, 
-                #     pots,
-                #     grads, 
-                #     hessians,
-                #     np.copy(self.fix_dofs),
-                #     self.gpr_fix_internal_dofs_bool, 
-                #     self.gpr_fix_internal_dofs_cutoff
-                # )
-
             else:
                 # create gpr hessian model either reading data from input file or using training data from gpr model.
                 self.construct_gpr_hessian_model()
