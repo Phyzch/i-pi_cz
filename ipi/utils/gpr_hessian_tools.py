@@ -323,6 +323,7 @@ class FixInternalDofs(object):
         self,
         train_x: np.ndarray,
         train_inputs: np.ndarray,
+        hessian_data_point_index_array: np.ndarray,
         cartesian_fix_dofs: np.ndarray,
         coordinate_transformer: non_redundant_coordinate_transformer,
         grads: np.ndarray,
@@ -420,36 +421,50 @@ class FixInternalDofs(object):
             )
             print(f"@gpr_hessian_model: free moving dofs {self.free_moving_dofs}")
             self.free_moving_dofs_2d_index = np.meshgrid(
-                self.free_moving_dofs, self.free_moving_dofs, indexing="ij"
+                self.free_moving_dofs, 
+                self.free_moving_dofs, 
+                indexing="ij"
             )
+
+            self.constrained_internal_dofs_2d_index = np.meshgrid(
+                self.constrained_internal_dofs, 
+                self.constrained_internal_dofs,
+                indexing= 'ij'
+            )
+
+            # use linear regression to fit gradients. 
             self.grads_for_fixed_dofs = np.mean(grads, axis=0)[self.fixed_internal_dofs]
             
-            #linear regression fit for gradient in rigid dof.
+            # linear regression fit for gradient in rigid dof.
             if len(self.rigid_internal_dofs) != 0:
-                self.reg_model = self.linear_regression_fit_grad(train_inputs,
+                self.grad_reg_model = self.linear_regression_fit_grad(train_inputs,
                                                 grads)
 
+            # use linear regression to fit hessians 
             if len(hessians) != 0:
-                self.hessians_for_fixed_dofs = np.mean(hessians, axis=0)
-                self.hessians_for_fixed_dofs[
-                    self.free_moving_dofs_2d_index[0], self.free_moving_dofs_2d_index[1]
-                ] = 0
+                self.hessian_reg_model = self.linear_regression_fit_hessian(
+                    train_inputs[hessian_data_point_index_array],
+                    hessians
+                    )
             else:
-                self.hessians_for_fixed_dofs = np.array([])
+                self.hessian_reg_model = None 
+
+            pass 
+
         else:
             self.free_moving_dofs = np.arange(self.input_dim)
             self.free_moving_dofs_2d_index = np.meshgrid(
                 self.free_moving_dofs, self.free_moving_dofs, indexing="ij"
             )
             self.grads_for_fixed_dofs = np.array([])
-            self.hessians_for_fixed_dofs = np.array([])
+
 
     def linear_regression_fit_grad(
             self,
             train_inputs: np.ndarray,
             grads: np.ndarray):
         """
-        fit the gradient along the rigid internal dof using Linear regression model.
+        fit the gradient along the rigid internal dofs using linear regression model.
         """
         x = train_inputs
         y = grads[:, self.rigid_internal_dofs]
@@ -464,19 +479,69 @@ class FixInternalDofs(object):
         """
         predict the gradient along the rigid internal dofs using Linear regression model.
         """
-        predicted_grad = self.reg_model.predict(predict_inputs)
+        predicted_grad = self.grad_reg_model.predict(predict_inputs)
 
         return predicted_grad 
 
-    def update_hessians_for_fixed_dofs(self, new_hessian_data):
+    def linear_regression_fit_hessian(
+            self,
+            train_inputs: np.ndarray,
+            hessians: np.ndarray
+    ):
+        """
+        fit the hessian along constrained dofs using linear regression model.
+        :param: train_inputs: training inputs in internal coordinate.
+        :param: hessians: hessians for training data.
+                          The components correspond to constrained internal dofs will be fitted using linear regression model.
+                          shape: [data_num, ndofs, ndofs]
+        """
+        constrained_dofs = self.constrained_internal_dofs
+        num_constrained_dofs = len(constrained_dofs)
+        data_num = len(hessians)
+        
+        constrained_dofs_hessians = hessians[:, self.constrained_internal_dofs_2d_index[0], self.constrained_internal_dofs_2d_index[1]]
+        # to use scikit_learn Linear regression fit.
+        # x shape: [n_samples, n_features]
+        # y shape: [n_samples, n_targets]
+        # we need to flatten hessians in to 1d array [n_targets] for each sample
+        y = constrained_dofs_hessians.reshape((data_num, -1))
+        x = train_inputs
+        reg_model = LinearRegression().fit(x,y)
+
+        return reg_model
+
+    def predict_constrained_hessian(
+            self,
+            predict_inputs: np.ndarray,
+            hessians: np.ndarray
+    ):
+        """
+        predict hessians along constrained dofs using Linear regression model.
+
+        :param: predict_inputs: input data for linear regression model to predict hessians.
+        :param: hessians: hessian data. The data along constrained dofs will be predicted by linear regression model.
+        """
+        predict_hessians = self.hessian_reg_model.predict(predict_inputs)
+        data_num = predict_hessians.shape[0]
+        num_constrained_dofs = len(self.constrained_internal_dofs)
+        predict_hessians = predict_hessians.reshape((data_num, num_constrained_dofs, num_constrained_dofs))
+        hessians[:, self.constrained_internal_dofs_2d_index[0], self.constrained_internal_dofs_2d_index[1]] = predict_hessians
+
+        return hessians
+
+    def update_hessian_reg_model(self,
+                                train_inputs,
+                                hessian_data_point_index, 
+                                hessians):
         if (
-            len(self.fixed_internal_dofs) != 0
-            and len(new_hessian_data) > 0
+            len(self.constrained_internal_dofs) != 0
+            and len(hessians) > 0
         ):
-            self.hessians_for_fixed_dofs = np.mean(new_hessian_data, axis=0)
-            self.hessians_for_fixed_dofs[
-                self.free_moving_dofs_2d_index[0], self.free_moving_dofs_2d_index[1]
-            ] = 0
+            self.hessian_reg_model = self.linear_regression_fit_hessian(
+                train_inputs[hessian_data_point_index],
+                hessians
+            )
+            
 
     def transform_training_inputs_to_free_moving_dofs(self, train_inputs: np.ndarray):
         """
@@ -613,17 +678,19 @@ class FixInternalDofs(object):
 
     def transform_from_free_moving_dofs_to_full_dofs(
         self,
-        test_inputs, 
+        test_inputs,
+        test_hessian_data_point_index, 
         test_moving_grads, 
-        test_moving_hessians, 
+        test_moving_hessians,
         zero_bool= False
     ):
         """
         Transform the prediction of the GPR model from free moving dofs into the full dofs.
         :param: test_inputs: the input in internal dofs.
+        :param: test_hessian_data_point_index: the indexes for data points that have hessian data.
         :param: test_moving_grads: gradient along free moving dofs 
         :param: test_moving_hessians; hessians along free moving dofs.
-        :param: zero_bool: whether to set gradient and hessian along the fixed & rigid dof to 0.
+        :param: zero_bool: whether to set gradient and hessian var along the fixed & rigid dof to 0.
         """
         test_data_num = test_moving_grads.shape[0]
 
@@ -637,7 +704,7 @@ class FixInternalDofs(object):
         # the prediction of the gradient data in all dofs
         test_grads = np.zeros([test_data_num, self.input_dim])
         test_grads[:, self.free_moving_dofs] = test_moving_grads
-        if len(self.fixed_internal_dofs) != 0 and not zero_bool:
+        if len(self.fixed_internal_dofs) != 0:
             # the grad along the fixed dof is the average value.
             test_grads[:, self.fixed_internal_dofs] = test_grads_fixed_dofs
         
@@ -651,23 +718,28 @@ class FixInternalDofs(object):
 
         if len(test_moving_hessians) > 0:
             if len(self.constrained_internal_dofs) != 0:
-                test_data_with_hessian_num = test_moving_hessians.shape[0]
-                # the prediction of hessian data in all dofs
-                # we choose the hessian along fixed & rigid dof as the average value of hessian data.
-                if len(self.hessians_for_fixed_dofs) != 0 and not zero_bool:
-                    test_hessians = np.repeat(
-                        [self.hessians_for_fixed_dofs],
-                        test_data_with_hessian_num,
-                        axis=0,
+                test_hessians = np.zeros(
+                        [test_data_with_hessian_num,
+                         self.input_dim,
+                         self.input_dim]
                     )
+                if zero_bool or self.hessian_reg_model is None:
+                    pass 
                 else:
-                    test_hessians = np.zeros(
-                        [test_data_with_hessian_num, self.input_dim, self.input_dim]
+                    test_data_with_hessian_num = test_moving_hessians.shape[0]
+                    # the prediction of hessian data in all dofs
+                    # We use linear regression to predict hessians in constrained dofs.
+                    test_inputs_with_hessian = test_inputs[test_hessian_data_point_index]
+                    test_hessians = self.predict_constrained_hessian(
+                        test_inputs_with_hessian,
+                        test_hessians
                     )
+
                 index_2d = self.free_moving_dofs_2d_index
                 test_hessians[:, index_2d[0], index_2d[1]] = test_moving_hessians
             else:
                 test_hessians = test_moving_hessians
+
         else:
             test_hessians = torch.Tensor([])
 
@@ -840,6 +912,7 @@ class GPModelWithHessiansWrapper:
         self.FixingDofs = FixInternalDofs(
             train_x,
             train_inputs,
+            training_data_hessian_data_point_index_array,
             cartesian_fix_dofs,
             self.coordinate_transformer,  
             normalized_train_grad_q, 
@@ -1375,6 +1448,7 @@ class GPModelWithHessiansWrapper:
         grads_q, hessians_q = (
             self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
                 test_q,
+                test_hessian_data_point_index,
                 moving_grads_q, 
                 moving_hessians_q
             )
@@ -1382,6 +1456,7 @@ class GPModelWithHessiansWrapper:
         grads_q_var, hessians_q_var = (
             self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
                 test_q,
+                test_hessian_data_point_index,
                 moving_grads_q_var, 
                 moving_hessians_q_var, 
                 zero_bool=True
@@ -1604,7 +1679,11 @@ class GPModelWithHessiansWrapper:
         # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
         normalized_train_hessian_q = self.Normalizer.normalization_transform_for_hessian(self.train_hessian_q)
         if len(self.train_hessian_q) > 0:
-            self.FixingDofs.update_hessians_for_fixed_dofs(normalized_train_hessian_q)
+            self.FixingDofs.update_hessian_reg_model(
+                self.train_inputs,
+                self.training_data_hessian_data_point_index,
+                normalized_train_hessian_q
+            )
 
         # ------ Filter the fixed dofs for input, gradient, hessian and transformation matrix for noise. --------
         new_train_inputs, new_train_grad_q, new_train_hessian_q, \

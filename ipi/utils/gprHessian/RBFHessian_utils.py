@@ -73,7 +73,8 @@ def transform_1d_train_targets_into_pots_grads_hessians(
 
 def take_upper_triangular_part(tensor):
     """
-    Take the upper triangular part of tensor. (here if the dimension of tensor > 2, we treat it as a stack of matrices. The last two dimensions are the dimension for matrix.)
+    Take the upper triangular part of tensor. (here if the dimension of tensor > 2, we treat it as a stack of matrices. 
+    The last two dimensions are the dimension for matrix.)
     :param: tensor: tensor to take the upper triangular part. the data type can be numpy.ndarray or torch.Tensor
     """
     if len(tensor) == 0:
