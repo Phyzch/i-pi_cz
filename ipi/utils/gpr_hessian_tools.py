@@ -1571,7 +1571,7 @@ class GPModelWithHessiansWrapper:
                 new_hessian_data_point_index_in_full_data_set,
             ],
             axis=0,
-        )
+        ).astype(int)
 
         # update coordinate, gradient & hessian data.
         self.train_inputs = np.concatenate(
