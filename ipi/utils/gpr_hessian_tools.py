@@ -125,15 +125,11 @@ class NormalizeTrainingData(object):
         # transform the training_inputs, gradients and hessians.
         train_inputs_normalized = (train_inputs - self.q_mean[np.newaxis, :]) / self.q_range[np.newaxis, :]
         grad_V_normalized = grad_V_normalized * self.q_range[np.newaxis, :]
-        # diagonal matrix with q_range
-        q_range_diag_matrix = np.diag(self.q_range, k= 0)
 
         # normalization for hessian.
-        if len(hessian_V) > 0:
-            hessian_V_normalized = hessian_V / self.V_range
-            hessian_V_normalized = np.matmul(np.matmul(q_range_diag_matrix, hessian_V_normalized), q_range_diag_matrix)
-        else:
-            hessian_V_normalized = np.array([])
+        hessian_V_normalized = self.normalization_transform_for_hessian(
+            hessian_V
+        )
 
         return V_normalized, grad_V_normalized, hessian_V_normalized, train_inputs_normalized
     
@@ -718,6 +714,7 @@ class FixInternalDofs(object):
 
         if len(test_moving_hessians) > 0:
             if len(self.constrained_internal_dofs) != 0:
+                test_data_with_hessian_num = test_moving_hessians.shape[0]
                 test_hessians = np.zeros(
                         [test_data_with_hessian_num,
                          self.input_dim,
@@ -726,7 +723,6 @@ class FixInternalDofs(object):
                 if zero_bool or self.hessian_reg_model is None:
                     pass 
                 else:
-                    test_data_with_hessian_num = test_moving_hessians.shape[0]
                     # the prediction of hessian data in all dofs
                     # We use linear regression to predict hessians in constrained dofs.
                     test_inputs_with_hessian = test_inputs[test_hessian_data_point_index]
@@ -886,54 +882,52 @@ class GPModelWithHessiansWrapper:
         force_noise_rank = 3 * natom
         hessian_noise_rank = int((3 * natom) * (3 * natom + 1) / 2)
 
-        # Normalize the potential, gradient and hessians.
-        self.Normalizer = NormalizeTrainingData(train_V,
-                                                train_inputs
-                                                )
-
-        # ----- normalize the input, potential, gradient and hessian. & noise of gradient & hessian -------
-        normalized_train_inputs, normalized_train_V, normalized_train_grad_q, normalized_train_hessians_q, \
-                noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array, \
-                pot_noise_var, grad_noise_var, hessian_noise_var, \
-                    = self.normalize_data(
-                    train_inputs,
-                    train_V,
-                    train_grad_q,
-                    train_hessian_q,
-                    noise_covar_factor_pot_grad_array,
-                    noise_covar_factor_with_hessian_array,
-                    pot_noise_var,
-                    grad_noise_var,
-                    hessian_noise_var,
-                )
-        
         # Filter the fixed dofs in coordinate (q) and gradients & hessians.
-        # For fixing dofs, we use the train_inputs before we normalize it.
         self.FixingDofs = FixInternalDofs(
             train_x,
             train_inputs,
             training_data_hessian_data_point_index_array,
             cartesian_fix_dofs,
             self.coordinate_transformer,  
-            normalized_train_grad_q, 
-            normalized_train_hessians_q,
+            train_grad_q, 
+            train_hessian_q,
             gpr_fix_internal_dofs_bool,
             gpr_fix_internal_dofs_cutoff,
             gpr_rigid_internal_dofs_cutoff,
             gpr_fixed_internal_dofs
         )
 
-        # ------- filter certain dofs that is not changing ------   
-        moving_train_inputs, moving_normalized_train_grad_q, moving_normalized_train_hessian_q, \
-                        noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array = \
+        moving_train_inputs, moving_train_grad_q, moving_train_hessian_q, \
+            noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array = \
             self.filter_fixed_dof_from_data(
-                normalized_train_inputs,
-                normalized_train_grad_q,
-                normalized_train_hessians_q,
+                train_inputs,
+                train_grad_q,
+                train_hessian_q,
                 noise_covar_factor_pot_grad_array,
                 noise_covar_factor_with_hessian_array
             )
+        
+        # normalize the potential, gradient and hessians.
+        self.Normalizer = NormalizeTrainingData(
+            train_V,
+            moving_train_inputs
+        )
 
+        # -- normalize the input, potential, gradient and hessian. & noise of gradient & hessian -------
+        (moving_normalized_train_inputs, normalized_train_V, moving_normalized_train_grad_q, moving_normalized_train_hessian_q, \
+            noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array, \
+            pot_noise_var, grad_noise_var, hessian_noise_var) = \
+                self.normalize_data(
+                    moving_train_inputs,
+                    train_V,
+                    moving_train_grad_q,
+                    moving_train_hessian_q,
+                    noise_covar_factor_pot_grad_array,
+                    noise_covar_factor_with_hessian_array,
+                    pot_noise_var,
+                    grad_noise_var,
+                    hessian_noise_var
+                )
 
         # transform pots, gradients and hessisans in to 1d data.
         # After we have normalized the training data and excluded fixed dof in gradient and hessian data.
@@ -955,11 +949,11 @@ class GPModelWithHessiansWrapper:
         # Transform the numpy array to torch.Tensor. The Gpytorch need to deal with troch.Tensor instead of numpy.ndarray.
         hessian_fixdofs_tensor = torch.tensor([])
 
-        (moving_train_inputs_tensor, train_targets_tensor, hessian_data_point_index_tensor,
+        (moving_normalized_train_inputs_tensor, train_targets_tensor, hessian_data_point_index_tensor,
          noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array) = map(
              torch.from_numpy, 
              (
-                 moving_train_inputs,
+                 moving_normalized_train_inputs,
                  train_targets,
                  training_data_hessian_data_point_index_array,
                  noise_covar_factor_pot_grad_array,
@@ -983,7 +977,7 @@ class GPModelWithHessiansWrapper:
         # GPModelWithHessians are Gaussian Process Regression model that capable of using hessian as training data and also predicting hessians.
         # It transforms the potential, force & hessian into 1d data set. See eq.(4 - 9) in J. Chem. Theory Comput. 2024, 20, 3766−3778 for the set up.
         self.gpr_model = GPModelWithHessians(
-            moving_train_inputs_tensor,
+            moving_normalized_train_inputs_tensor,
             train_targets_tensor,
             hessian_data_point_index_tensor,
             hessian_fixdofs_tensor,
@@ -1344,6 +1338,20 @@ class GPModelWithHessiansWrapper:
             self.ref_mean_grad_q = ref_mean_grad_q
             self.ref_mean_hessian_q = ref_mean_hessian_q
 
+            # Filter the fixed dofs.
+            ref_mean_q = self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
+                np.array([ref_mean_q])
+            )[0]
+
+            ref_mean_grad_q, ref_mean_hessian_q = (
+                self.FixingDofs.transform_training_targets_to_free_moving_dofs(
+                    np.array([ref_mean_grad_q]), np.array([ref_mean_hessian_q])
+                )
+            )
+
+            ref_mean_grad_q = ref_mean_grad_q[0]
+            ref_mean_hessian_q = ref_mean_hessian_q[0]
+
             # Normalize the data.
             ref_mean_V, ref_mean_grad_q, ref_mean_hessian_q, ref_mean_q = (
                 self.Normalizer.normalization_transform(
@@ -1355,19 +1363,6 @@ class GPModelWithHessiansWrapper:
             )
 
             ref_mean_q = ref_mean_q[0]
-            ref_mean_grad_q = ref_mean_grad_q[0]
-            ref_mean_hessian_q = ref_mean_hessian_q[0]
-
-            # Filter the fixed dofs.
-            ref_mean_q = self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                np.array([ref_mean_q])
-            )[0]
-
-            ref_mean_grad_q, ref_mean_hessian_q = (
-                self.FixingDofs.transform_training_targets_to_free_moving_dofs(
-                    np.array([ref_mean_grad_q]), np.array([ref_mean_hessian_q])
-                )
-            )
             ref_mean_grad_q = ref_mean_grad_q[0]
             ref_mean_hessian_q = ref_mean_hessian_q[0]
             # take upper triangle part of hessian (this is what we put in GPR model)
@@ -1444,7 +1439,23 @@ class GPModelWithHessiansWrapper:
         ) = ipi.utils.gprHessian.RBFHessian_gp.predict_latent_function_GPHessian(
             self.gpr_model, moving_normalized_test_q_tensor, test_hessian_data_point_index
         )
-        # back transform the mean value and variance from free moving dofs into full dofs
+
+        # inverse the normalization procedure for mean value and variance.
+        pots, moving_grads_q, moving_hessians_q = self.Normalizer.inverse_normalization_transform(
+            pots, 
+            moving_grads_q, 
+            moving_hessians_q
+        )
+        
+        pots_var, moving_grads_q_var, moving_hessians_q_var = (
+            self.Normalizer.inverse_normalize_noise_var(
+                pots_var, 
+                moving_grads_q_var, 
+                moving_hessians_q_var
+            )
+        )
+
+        # back transform the mean value and variance from free moving dofs into full dofs 
         grads_q, hessians_q = (
             self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
                 test_q,
@@ -1453,6 +1464,7 @@ class GPModelWithHessiansWrapper:
                 moving_hessians_q
             )
         )
+
         grads_q_var, hessians_q_var = (
             self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
                 test_q,
@@ -1460,20 +1472,6 @@ class GPModelWithHessiansWrapper:
                 moving_grads_q_var, 
                 moving_hessians_q_var, 
                 zero_bool=True
-            )
-        )
-
-        # inverse the normalization procedure for mean value and variance.
-        pots, grads_q, hessians_q = self.Normalizer.inverse_normalization_transform(
-            pots, 
-            grads_q, 
-            hessians_q
-        )
-        pots_var, grads_q_var, hessians_q_var = (
-            self.Normalizer.inverse_normalize_noise_var(
-                pots_var, 
-                grads_q_var, 
-                hessians_q_var
             )
         )
 
@@ -1664,7 +1662,26 @@ class GPModelWithHessiansWrapper:
             new_hessian_data_point_index
         )
 
-        # ------  Normalize the potential, gradient and hessians and the noise covar factor matrix.  ------ 
+        # --- Filter the fixed dofs for input, gradient, hessian and transformation matrix for noise -------- 
+        new_train_inputs, new_train_grad_q, new_train_hessian_q, \
+        new_noise_covar_factor_pot_grad_array, new_noise_covar_factor_with_hessian_array = \
+        self.filter_fixed_dof_from_data(
+            new_train_inputs,
+            new_train_grad_q,
+            new_train_hessian_q,
+            new_noise_covar_factor_pot_grad_array,
+            new_noise_covar_factor_with_hessian_array
+        )
+
+        # update the linear regression model for hessian prediction
+        if len(self.train_hessian_q) > 0:
+            self.FixingDofs.update_hessian_reg_model(
+                self.train_inputs,
+                self.training_data_hessian_data_point_index,
+                self.train_hessian_q
+            )
+
+        # --- normalize the potential, gradient and hessians and the noise covar factor matrix ---- 
         new_train_inputs, new_train_V, new_train_grad_q, new_train_hessian_q, \
         new_noise_covar_factor_pot_grad_array, new_noise_covar_factor_with_hessian_array = \
             self.normalize_data(
@@ -1675,26 +1692,6 @@ class GPModelWithHessiansWrapper:
                 new_noise_covar_factor_pot_grad_array,
                 new_noise_covar_factor_with_hessian_array
             )
-
-        # update the FixInternalDofs.hessians_for_fixed_dofs, which is hessian components correspond to fixed dofs.
-        normalized_train_hessian_q = self.Normalizer.normalization_transform_for_hessian(self.train_hessian_q)
-        if len(self.train_hessian_q) > 0:
-            self.FixingDofs.update_hessian_reg_model(
-                self.train_inputs,
-                self.training_data_hessian_data_point_index,
-                normalized_train_hessian_q
-            )
-
-        # ------ Filter the fixed dofs for input, gradient, hessian and transformation matrix for noise. --------
-        new_train_inputs, new_train_grad_q, new_train_hessian_q, \
-        new_noise_covar_factor_pot_grad_array, new_noise_covar_factor_with_hessian_array = \
-        self.filter_fixed_dof_from_data(
-            new_train_inputs,
-            new_train_grad_q,
-            new_train_hessian_q,
-            new_noise_covar_factor_pot_grad_array,
-            new_noise_covar_factor_with_hessian_array
-        )
 
         # Transform the potential, gradient, hessians into 1d target data
         new_train_targets = (
@@ -1743,17 +1740,18 @@ class GPModelWithHessiansWrapper:
             self.coordinate_transformer.get_internal_coordinate_q(beads_x)
         )
 
-        normalized_beads_internal_coordinate = self.Normalizer.normalization_transform_for_inputs(
-            beads_internal_coordinate
-        )
-
         free_moving_beads_internal_coordinate = (
             self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                normalized_beads_internal_coordinate
+                beads_internal_coordinate
             )
         )
 
-        return free_moving_beads_internal_coordinate
+        normalized_beads_internal_coordinate = self.Normalizer.normalization_transform_for_inputs(
+            free_moving_beads_internal_coordinate
+        )
+
+
+        return normalized_beads_internal_coordinate
 
     # ------ output information -------
     def check_gpr_lengthscale(self):
