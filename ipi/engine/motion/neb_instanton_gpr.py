@@ -820,6 +820,7 @@ class MAPNEBGPRMover(Motion):
             # beads move out of trust region.
             if early_stop_bool:
                 break
+
         
         if not early_stop_bool:
             print("@LI-NEB converge on GPR PES.")
@@ -1058,23 +1059,21 @@ class MAPNEBGPRMover(Motion):
             )
 
 
-        if (grad_max_inner_bead <= self.options["tolerances"] ["gradient"] 
-                and grad_max_end_bead <= self.options["tolerances"]["gradient_end_bead"]):
-            # move all beads at once along the negative gradient direction of the action.
-            # only perform this when LINEB already have small gradients for all beads.
-            # "drift" step
-            self.neb_drift_step()
-        else:
-            # Reset the Parameter for projected verlet or FIRE for drifting. 
-            # This procedure is to ensure the convergence.
-            self.drift_velocity_mscaled = np.zeros(self.drift_velocity_mscaled.shape)
-            if self.options["mode"] == "FIRE":
-                self.drift_alpha = self.drift_alpha0
-                self.drift_Ndn = 0 
-                self.drift_Nup = 0 
-                self.drift_time_step = self.optarrays["drift_time_step"]
-
-
+        # if (grad_max_inner_bead <= self.options["tolerances"] ["gradient"] 
+        #         and grad_max_end_bead <= self.options["tolerances"]["gradient_end_bead"]):
+        #     # move all beads at once along the negative gradient direction of the action.
+        #     # only perform this when LINEB already have small gradients for all beads.
+        #     # "drift" step
+        #     self.neb_drift_step()
+        # else:
+        #     # Reset the Parameter for projected verlet or FIRE for drifting. 
+        #     # This procedure is to ensure the convergence.
+        #     self.drift_velocity_mscaled = np.zeros(self.drift_velocity_mscaled.shape)
+        #     if self.options["mode"] == "FIRE":
+        #         self.drift_alpha = self.drift_alpha0
+        #         self.drift_Ndn = 0 
+        #         self.drift_Nup = 0 
+        #         self.drift_time_step = self.optarrays["drift_time_step"]
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
         grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
@@ -1533,6 +1532,12 @@ class MAPNEBGPRMover(Motion):
         neb_gpr_folder_path = "neb_final_gpr_training"
         ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_model(self.gpr_model,
                                                                             neb_gpr_folder_path)
+        
+        # store fixed dofs.
+        ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_model(
+            self.gpr_model,
+            prefix = neb_gpr_folder_path
+        )
 
     # ------ code below is for auxiliary functions --------------
     def update_spring_k_kappa(self):
@@ -2045,7 +2050,7 @@ class LINEBGradientMapper(object):
 
         # sum of transverse forces for all internal beads 
         # (the action force for the end bead is set to be 0)
-        self.action_forces_sum_amplitude = np.linalg.norm(np.sum(self.action_forces[1: -1], axis= 0))
+        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.action_forces[1: -1], axis=1))
 
         self.neb_optimization_gradient = - self.neb_optimization_force
 
@@ -2367,8 +2372,12 @@ class LINEBGradientMapper(object):
         unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(
             mscaled_q[1] - mscaled_q[0]
         )  
+        # spring_force_bead0 = (
+        #     unit_vec_1 * np.sqrt(2 * (self.beads_energy[1] - self.instanton_path_energy))
+        # )
+
         spring_force_bead0 = (
-            unit_vec_1 * np.sqrt(2 * (self.beads_energy[1] - self.instanton_path_energy))
+            unit_vec_1 * np.linalg.norm(self.action_forces[1])
         )
         # unit vector along force at beads: 0
         f0 = mscaled_f[0] / npnorm(mscaled_f[0]) 
@@ -2382,8 +2391,12 @@ class LINEBGradientMapper(object):
             mscaled_q[nimage - 2] - mscaled_q[nimage - 1]
         )
 
+        # spring_force_bead1 = (
+        #     unit_vec_2 * np.sqrt(2 * (self.beads_energy[nimage -2] - self.instanton_path_energy))
+        # )
+
         spring_force_bead1 = (
-            unit_vec_2 * np.sqrt(2 * (self.beads_energy[nimage -2] - self.instanton_path_energy))
+            unit_vec_2 * np.linalg.norm(self.action_forces[-2])
         )
         # unit vector along force at beads: nimage - 1
         f1 = mscaled_f[nimage - 1] / npnorm(
