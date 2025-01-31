@@ -17,7 +17,8 @@ import ipi.utils.gprHessian.RBFHessian_gp
 import os 
 import shutil
 from ipi.utils.messages import  warning
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge 
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 
 class TransformTrainingTarget(object):
     """
@@ -295,7 +296,31 @@ class NormalizeTrainingData(object):
         return normalized_noise_covar_factor_pot_grad_array, normalized_noise_covar_factor_with_hessian_array
 
 
+class lin_model:
+    """
+    model that fit linear regression with polynomial degrees of input data.
+    We perform feature engineer in the class. 
+    """
+    def __init__(self, degree, regularization = False, lambda_=0):
+        if regularization:
+            self.linear_model = Ridge(alpha=lambda_)
+        else:
+            self.linear_model = LinearRegression()
+        self.poly = PolynomialFeatures(degree, include_bias=False)
+        self.scaler = StandardScaler()
+        
+    def fit(self, X_train,y_train):
+        ''' just fits the data. mapping and scaling are not repeated '''
+        X_train_mapped = self.poly.fit_transform(X_train)
+        X_train_mapped_scaled = self.scaler.fit_transform(X_train_mapped)
+        self.linear_model.fit(X_train_mapped_scaled, y_train )
 
+    def predict(self, X):
+        X_mapped = self.poly.transform(X)
+        X_mapped_scaled = self.scaler.transform(X_mapped)
+        yhat = self.linear_model.predict(X_mapped_scaled)
+        return(yhat)
+    
 
 class FixInternalDofs(object):
     """
@@ -428,6 +453,12 @@ class FixInternalDofs(object):
                 indexing= 'ij'
             )
 
+            self.cross_term_2d_index = np.meshgrid(
+                self.constrained_internal_dofs,
+                self.free_moving_dofs,
+                indexing= 'ij'
+            )
+
             # use linear regression to fit gradients. 
             self.grads_for_fixed_dofs = np.mean(grads, axis=0)[self.fixed_internal_dofs]
             
@@ -438,12 +469,13 @@ class FixInternalDofs(object):
 
             # use linear regression to fit hessians 
             if len(hessians) != 0:
-                self.hessian_reg_model = self.linear_regression_fit_hessian(
+                self.constrained_part_hessian_reg_model, self.cross_term_reg_model = self.linear_regression_fit_hessian(
                     train_inputs[hessian_data_point_index_array],
                     hessians
                     )
             else:
-                self.hessian_reg_model = None 
+                self.constrained_part_hessian_reg_model = None
+                self.cross_term_reg_model = None  
 
             pass 
 
@@ -464,7 +496,11 @@ class FixInternalDofs(object):
         """
         x = train_inputs
         y = grads[:, self.rigid_internal_dofs]
-        reg_model = LinearRegression().fit(x,y)
+        # reg_model = LinearRegression().fit(x,y)
+
+        # linear regression with polynomial of input up to degree 2.
+        reg_model = lin_model(degree= 2)
+        reg_model.fit(x, y)
 
         return reg_model
 
@@ -502,9 +538,17 @@ class FixInternalDofs(object):
         # we need to flatten hessians in to 1d array [n_targets] for each sample
         y = constrained_dofs_hessians.reshape((data_num, -1))
         x = train_inputs
-        reg_model = LinearRegression().fit(x,y)
+        constrained_dofs_reg_model = LinearRegression().fit(x,y)
 
-        return reg_model
+        constrained_free_moving_cross_term_hessians = hessians[:, 
+                                                               self.cross_term_2d_index[0], 
+                                                               self.cross_term_2d_index[1]]
+                                                               
+        y1 = constrained_free_moving_cross_term_hessians.reshape(data_num, -1)
+        x1 = train_inputs 
+        cross_term_reg_model = LinearRegression().fit(x1, y1)
+
+        return constrained_dofs_reg_model, cross_term_reg_model
 
     def predict_constrained_hessian(
             self,
@@ -517,11 +561,21 @@ class FixInternalDofs(object):
         :param: predict_inputs: input data for linear regression model to predict hessians.
         :param: hessians: hessian data. The data along constrained dofs will be predicted by linear regression model.
         """
-        predict_hessians = self.hessian_reg_model.predict(predict_inputs)
-        data_num = predict_hessians.shape[0]
+        data_num = predict_inputs.shape[0]
         num_constrained_dofs = len(self.constrained_internal_dofs)
-        predict_hessians = predict_hessians.reshape((data_num, num_constrained_dofs, num_constrained_dofs))
-        hessians[:, self.constrained_internal_dofs_2d_index[0], self.constrained_internal_dofs_2d_index[1]] = predict_hessians
+        num_free_moving_dofs = len(self.free_moving_dofs)
+
+        # predict block diagonal component for constrained dofs.
+        predicted_constrained_hessians = self.constrained_part_hessian_reg_model.predict(predict_inputs)
+        predicted_constrained_hessians = predicted_constrained_hessians.reshape((data_num, num_constrained_dofs, num_constrained_dofs))
+        hessians[:, self.constrained_internal_dofs_2d_index[0], self.constrained_internal_dofs_2d_index[1]] = predicted_constrained_hessians
+
+        # predict cross term between constrained dofs and free moving dofs
+        predicted_cross_term_hessians = self.cross_term_reg_model.predict(predict_inputs)
+        predicted_cross_term_hessians = predicted_cross_term_hessians.reshape((data_num, num_constrained_dofs, num_free_moving_dofs))
+
+        hessians[:, self.cross_term_2d_index[0], self.cross_term_2d_index[1]] = predicted_cross_term_hessians
+        hessians[:, self.cross_term_2d_index[1], self.cross_term_2d_index[0]] = predicted_cross_term_hessians
 
         return hessians
 
@@ -533,7 +587,7 @@ class FixInternalDofs(object):
             len(self.constrained_internal_dofs) != 0
             and len(hessians) > 0
         ):
-            self.hessian_reg_model = self.linear_regression_fit_hessian(
+            self.constrained_part_hessian_reg_model, self.cross_term_reg_model = self.linear_regression_fit_hessian(
                 train_inputs[hessian_data_point_index],
                 hessians
             )
@@ -720,7 +774,7 @@ class FixInternalDofs(object):
                          self.input_dim,
                          self.input_dim]
                     )
-                if zero_bool or self.hessian_reg_model is None:
+                if zero_bool or self.constrained_part_hessian_reg_model is None:
                     pass 
                 else:
                     # the prediction of hessian data in all dofs
