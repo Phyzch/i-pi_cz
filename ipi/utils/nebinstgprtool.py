@@ -1069,6 +1069,98 @@ def load_training_hyperparameter_for_gpr_hessian_model(
     
     return model_hyperparameter_exists
 
+def analyze_force_error(coord,
+                        ab_initio_cartesian_gradient, 
+                        predicted_cartesian_grads, 
+                        gpr_hessian_model: GPModelWithHessiansWrapper):
+    """
+    analyze the error in force prediction.
+    In internal coordinate, force along constrained dofs are predicted by Linear regression.
+    force along free moving dofs are predicted by gaussian process regression.
+    We analyze the error in force prediction for both of these two components.
+    """
+    df = np.linalg.norm(ab_initio_cartesian_gradient - predicted_cartesian_grads, axis= 1)
+    ab_initio_force_amplitude = np.linalg.norm(ab_initio_cartesian_gradient, axis= 1)
+    df_error = df / ab_initio_force_amplitude
+
+    print(f"train data: error of force prediction: {df_error}")
+
+    ab_initio_grad_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+        coord,
+        ab_initio_cartesian_gradient
+    )
+
+    predicted_grad_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+        coord,
+        predicted_cartesian_grads
+    )
+
+    # error for force component that is predicted by linear regression.
+    constrained_dofs = gpr_hessian_model.FixingDofs.constrained_internal_dofs
+
+    if len(constrained_dofs) > 0:
+        constrained_force_error = (np.linalg.norm(ab_initio_grad_q[:, constrained_dofs] 
+                                                - predicted_grad_q[:, constrained_dofs],
+                                                axis= 1) / 
+                                                np.linalg.norm(ab_initio_grad_q[:, constrained_dofs], 
+                                                                axis= 1)
+                               )
+        print(f"train data: error in constrained internal dofs for force prediction (linear regression): {constrained_force_error}")
+    
+    # error for force component that is predicted by gaussian process regression. 
+    free_moving_dofs = gpr_hessian_model.FixingDofs.free_moving_dofs
+    free_moving_force_error = (np.linalg.norm(ab_initio_grad_q[:, free_moving_dofs] 
+                                              - predicted_grad_q[:, free_moving_dofs], 
+                                              axis= 1) / 
+                                              np.linalg.norm(ab_initio_grad_q[:, free_moving_dofs],
+                                                             axis= 1)
+                                              )
+
+    print(f"train data: error in free moving internal dofs for force prediction: (GPR model): {free_moving_force_error}")
+
+def analyze_hessian_error(coord,
+                          predicted_cartesian_gradients,
+                          ab_initio_cartesian_gradients,
+                          hessian_data_point_index, 
+                          predicted_hessians, 
+                          ab_initio_hessians,
+                          gpr_hessian_model: GPModelWithHessiansWrapper):
+    """
+    analyze error in hessian prediction.
+    In internal coordinate, the hessian for free moving dofs are predicted by Gaussian Process Regression.
+    the hessian for constrained internal dofs are predicted by linear regression. 
+    We analyze error for both two block components.
+    """
+    relative_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
+        predicted_hessians, ab_initio_hessians
+    )
+
+    print(f"train data: relative hessian error for ring polymer beads: {relative_hessian_error}")
+
+    ab_initio_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
+            coord[hessian_data_point_index],
+            ab_initio_cartesian_gradients[hessian_data_point_index], 
+            ab_initio_hessians
+            )
+        
+    predicted_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
+            coord[hessian_data_point_index], 
+            predicted_cartesian_gradients[hessian_data_point_index], 
+            predicted_hessians
+            )
+    
+    # error for hessian component that is predicted by gaussian process regression.
+    constrained_dofs_2d_index = gpr_hessian_model.FixingDofs.constrained_internal_dofs_2d_index
+    constrained_ab_initio_hessian_q = ab_initio_hessian_q[constrained_dofs_2d_index[0], 
+                                                            constrained_dofs_2d_index[1]]
+    constrained_predicted_hessian_q = predicted_hessian_q[constrained_dofs_2d_index[0],
+                                                            constrained_dofs_2d_index[1]]
+    constrained_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
+        constrained_predicted_hessian_q, 
+        constrained_ab_initio_hessian_q
+    )
+    print(f"train data: relative hessian error for ring polymer beads: {constrained_hessian_error}")
+
 def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     """
     analyze the training error in gpr hessian model.
@@ -1084,56 +1176,34 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
         )
 
     # predict hessians.
-    predicted_pots, predicted_grads, predicted_hessians, _, _, _ = gpr_hessian_model.predict_latent_function(
+    predicted_pots, predicted_cartesian_grads, predicted_hessians, _, _, _ = gpr_hessian_model.predict_latent_function(
         coord, hessian_data_point_index, internal_coordinate_bool= False 
     )
 
     # ab initio training data.
     ab_initio_training_hessians = gpr_hessian_model.train_cartesian_hessian
     ab_initio_train_V = gpr_hessian_model.train_V 
-    ab_initio_train_cartesian_gradient = gpr_hessian_model.train_cartesian_gradient
+    ab_initio_train_cartesian_grads = gpr_hessian_model.train_cartesian_gradient
 
     # compute the relative error in training potential
     V_error = np.abs(ab_initio_train_V - predicted_pots) / np.abs(ab_initio_train_V)
     print(f"train data: error of potential prediction: {V_error}")
     
     # compute the relative error in training grads
-    df = np.linalg.norm(ab_initio_train_cartesian_gradient - predicted_grads, axis= 1)
-    ab_initio_force_amplitude = np.linalg.norm(ab_initio_train_cartesian_gradient, axis= 1)
-    df_error = df / ab_initio_force_amplitude
-
-    print(f"train data: error of force prediction: {df_error}")
-
-    # for debug gradient error
-    ab_initio_grad_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
-        coord,
-        ab_initio_train_cartesian_gradient
-    )
-
-    predicted_grad_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
-        coord,
-        predicted_grads
-    )
-
+    analyze_force_error(coord,
+                        ab_initio_train_cartesian_grads,
+                        predicted_cartesian_grads,
+                        gpr_hessian_model)
+    
+    # compute the relative error in training hessian data.
     if len(ab_initio_training_hessians) > 0:
-        # compute the relative error in training hessian data.
-        relative_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
-            predicted_hessians, ab_initio_training_hessians
-        )
-
-        print(f"train data: relative hessian error for ring polymer beads: {relative_hessian_error}")
-
-        ab_initio_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
-                coord[hessian_data_point_index],
-                ab_initio_train_cartesian_gradient[hessian_data_point_index], 
-                ab_initio_training_hessians
-                )
-            
-        predicted_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
-                coord[hessian_data_point_index], 
-                predicted_grads[hessian_data_point_index], 
-                predicted_hessians
-                )
+        analyze_hessian_error(coord,
+                              predicted_cartesian_grads,
+                              ab_initio_train_cartesian_grads,
+                              hessian_data_point_index,
+                              predicted_hessians,
+                              ab_initio_training_hessians,
+                              gpr_hessian_model)
 
     pass 
 
