@@ -1099,12 +1099,13 @@ def split_train_cv_data(cartesian_coordinate_x,
 
         all_hessian_index = np.copy(hessian_index_list)
         np.random.shuffle(all_hessian_index)
-        cv_hessian_index = all_hessian_index[:cv_hessian_data_num]
-        train_hessian_index = all_hessian_index[cv_hessian_data_num:]
+        cv_hessian_index = np.sort(all_hessian_index[:cv_hessian_data_num])
+        train_hessian_index = np.sort(all_hessian_index[cv_hessian_data_num:])
 
         hessian_index_in_cv_data_bool = [1 if hessian_index_list[i] in cv_hessian_index else 0 for i in range(hessian_data_num)]
         cv_index = np.nonzero(hessian_index_in_cv_data_bool)[0]  # index in hessian_data for cross validation hessians.
         train_index =  np.delete(np.arange(hessian_data_num), cv_index) # index in hessian data for training hessians.
+        
         hessian_index_shift = np.cumsum(hessian_index_in_cv_data_bool)[train_index]
 
         # cross validation data
@@ -1115,7 +1116,7 @@ def split_train_cv_data(cartesian_coordinate_x,
         cv_hessian_data = hessian_data_list[cv_index]
 
         # training data.
-        train_x = np.delete(cartesian_coordinate_x, cv_hessian_index)
+        train_x = np.delete(cartesian_coordinate_x, cv_hessian_index, axis= 0)
         train_pot = np.delete(potential_data, cv_hessian_index)
         train_force = np.delete(force_data, cv_hessian_index, axis= 0)
         train_hessian_index_list = train_hessian_index - hessian_index_shift
@@ -1210,17 +1211,35 @@ def analyze_hessian_error(coord,
             predicted_hessians
             )
     
-    # error for hessian component that is predicted by gaussian process regression.
+    # error for hessian component that is predicted by linear regression.
     constrained_dofs_2d_index = gpr_hessian_model.FixingDofs.constrained_internal_dofs_2d_index
-    constrained_ab_initio_hessian_q = ab_initio_hessian_q[constrained_dofs_2d_index[0], 
+    constrained_ab_initio_hessian_q = ab_initio_hessian_q[:,
+                                                          constrained_dofs_2d_index[0], 
                                                             constrained_dofs_2d_index[1]]
-    constrained_predicted_hessian_q = predicted_hessian_q[constrained_dofs_2d_index[0],
+    constrained_predicted_hessian_q = predicted_hessian_q[:,
+                                                          constrained_dofs_2d_index[0],
                                                             constrained_dofs_2d_index[1]]
     constrained_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
         constrained_predicted_hessian_q, 
         constrained_ab_initio_hessian_q
     )
-    print(f"{data_type}: relative hessian error for ring polymer beads: {constrained_hessian_error}")
+    print(f"{data_type}: relative hessian error for constrained dofs of ring polymer beads (modeled by linear regression): {constrained_hessian_error}")
+
+    # error for hessian component that is predicted by linear regression.
+    free_moving_dofs_2d_index = gpr_hessian_model.FixingDofs.free_moving_dofs_2d_index
+    free_moving_ab_initio_hessian_q = ab_initio_hessian_q[:,
+                                                          free_moving_dofs_2d_index[0],
+                                                          free_moving_dofs_2d_index[1]]
+    free_moving_predicted_hessian_q = predicted_hessian_q[:,
+                                                          free_moving_dofs_2d_index[0],
+                                                          free_moving_dofs_2d_index[1]]
+    free_moving_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
+        free_moving_predicted_hessian_q,
+        free_moving_ab_initio_hessian_q
+    )
+    print(f"{data_type}: relative hessian error for free moving dofs of ring polymers beads \
+           (modeled by Gaussian Process Regression): {free_moving_hessian_error}")
+
 
 def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     """

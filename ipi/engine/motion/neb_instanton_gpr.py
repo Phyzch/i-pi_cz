@@ -183,7 +183,7 @@ class MAPNEBGPRMover(Motion):
         self.options["internal_coord"] = internal_coord 
 
         self.options["cross_validation_bool"] = cross_validation_bool
-        
+
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
         self.optarrays["fix_dofs"] = fix_dofs  # the cartesian dofs of molecules to be fixed. 
@@ -3505,7 +3505,7 @@ class RP_MAP(object):
             cv_V_shifted = cv_V - self.energy_shift
             cv_grads = - cv_force 
             
-            ipi.utils.nebinstgprtool.analyze_crosss_validation_error(
+            ipi.utils.nebinstgprtool.analyze_cross_validation_error(
                 self.gpr_hessian_model,
                 cv_x,
                 cv_V_shifted,
