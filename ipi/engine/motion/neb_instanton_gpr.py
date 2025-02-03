@@ -3451,7 +3451,7 @@ class RP_MAP(object):
             force_data,
             hessian_index_list,
             hessian_data_list,
-            training_ratio = 0.6
+            training_ratio = 0.8
         )
         # training data
         train_x, training_V, training_forces, train_hessian_index_list, train_hessian_data_list = train_set 

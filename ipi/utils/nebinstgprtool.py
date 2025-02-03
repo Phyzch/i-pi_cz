@@ -1098,6 +1098,8 @@ def split_train_cv_data(cartesian_coordinate_x,
         train_hessian_data_num = hessian_data_num - cv_hessian_data_num
 
         all_hessian_index = np.copy(hessian_index_list)
+        # use a seed to replicate the result.
+        np.random.seed(42)
         np.random.shuffle(all_hessian_index)
         cv_hessian_index = np.sort(all_hessian_index[:cv_hessian_data_num])
         train_hessian_index = np.sort(all_hessian_index[cv_hessian_data_num:])
@@ -1178,6 +1180,7 @@ def analyze_force_error(coord,
                                               )
 
     print(f"{data_type}: error in free moving internal dofs for force prediction: (GPR model): {free_moving_force_error}")
+    pass 
 
 def analyze_hessian_error(coord,
                           predicted_cartesian_gradients,
@@ -1239,6 +1242,8 @@ def analyze_hessian_error(coord,
     )
     print(f"{data_type}: relative hessian error for free moving dofs of ring polymers beads \
            (modeled by Gaussian Process Regression): {free_moving_hessian_error}")
+    
+    pass
 
 
 def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
@@ -1332,6 +1337,8 @@ def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper
             gpr_hessian_model,
             data_type= "cross validation data"
         )
+
+    pass
 
 def analyze_transformation_between_cartesian_coord_and_internal_coord(coord_x,
                                                                       grad_x,
