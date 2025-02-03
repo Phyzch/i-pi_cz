@@ -15,7 +15,7 @@ from ipi.utils.gpr_hessian_tools import GPModelWithHessiansWrapper
 # import ipi.utils.internalcoordtools
 import ipi.utils.internal.internaltools
 import shutil
-
+from collections import namedtuple
 
 def check_neb_early_stop(
     beads_x,
@@ -1069,10 +1069,70 @@ def load_training_hyperparameter_for_gpr_hessian_model(
     
     return model_hyperparameter_exists
 
+def split_train_cv_data(cartesian_coordinate_x,
+                        potential_data,
+                        force_data,
+                        hessian_index_list,
+                        hessian_data_list,
+                        training_ratio= 0.6):
+    """
+    split the data into training set and cross validation (cv) set. 
+    we only put data point with hessian information into cross validation set.
+    training_ratio is ratio of training data in all data set.
+    """
+    if len(hessian_index_list) < 5:
+        train_x = cartesian_coordinate_x
+        train_pot = potential_data 
+        train_force = force_data 
+        train_hessian_index_list = hessian_index_list
+        train_hessian_data = hessian_data_list 
+
+        cv_x = np.array([])
+        cv_pot = np.array([])
+        cv_force = np.array([])
+        cv_hessian_index_list = np.array([])
+        cv_hessian_data = np.array([])
+    else:
+        hessian_data_num = len(hessian_index_list)
+        cv_hessian_data_num = int((1- training_ratio) * hessian_data_num)
+        train_hessian_data_num = hessian_data_num - cv_hessian_data_num
+
+        all_hessian_index = np.copy(hessian_index_list)
+        np.random.shuffle(all_hessian_index)
+        cv_hessian_index = all_hessian_index[:cv_hessian_data_num]
+        train_hessian_index = all_hessian_index[cv_hessian_data_num:]
+
+        hessian_index_in_cv_data_bool = [1 if hessian_index_list[i] in cv_hessian_index else 0 for i in range(hessian_data_num)]
+        cv_index = np.nonzero(hessian_index_in_cv_data_bool)[0]  # index in hessian_data for cross validation hessians.
+        train_index =  np.delete(np.arange(hessian_data_num), cv_index) # index in hessian data for training hessians.
+        hessian_index_shift = np.cumsum(hessian_index_in_cv_data_bool)[train_index]
+
+        # cross validation data
+        cv_x = cartesian_coordinate_x[cv_hessian_index]
+        cv_pot = potential_data[cv_hessian_index]
+        cv_force = force_data[cv_hessian_index]
+        cv_hessian_index_list = np.arange(cv_hessian_data_num)
+        cv_hessian_data = hessian_data_list[cv_index]
+
+        # training data.
+        train_x = np.delete(cartesian_coordinate_x, cv_hessian_index)
+        train_pot = np.delete(potential_data, cv_hessian_index)
+        train_force = np.delete(force_data, cv_hessian_index, axis= 0)
+        train_hessian_index_list = train_hessian_index - hessian_index_shift
+        train_hessian_data = hessian_data_list[train_index]
+
+    Dataset = namedtuple('Dataset', ['x', 'pot', 'force', 'hessian_index', 'hessian_data'])
+    train_set = Dataset(train_x, train_pot, train_force, train_hessian_index_list, train_hessian_data)
+    cv_set = Dataset(cv_x, cv_pot, cv_force, cv_hessian_index_list, cv_hessian_data)
+    
+    return train_set, cv_set 
+
+
 def analyze_force_error(coord,
                         ab_initio_cartesian_gradient, 
                         predicted_cartesian_grads, 
-                        gpr_hessian_model: GPModelWithHessiansWrapper):
+                        gpr_hessian_model: GPModelWithHessiansWrapper,
+                        data_type= "train data"):
     """
     analyze the error in force prediction.
     In internal coordinate, force along constrained dofs are predicted by Linear regression.
@@ -1083,7 +1143,7 @@ def analyze_force_error(coord,
     ab_initio_force_amplitude = np.linalg.norm(ab_initio_cartesian_gradient, axis= 1)
     df_error = df / ab_initio_force_amplitude
 
-    print(f"train data: error of force prediction: {df_error}")
+    print(f"{data_type}: error of force prediction: {df_error}")
 
     ab_initio_grad_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
         coord,
@@ -1105,7 +1165,7 @@ def analyze_force_error(coord,
                                                 np.linalg.norm(ab_initio_grad_q[:, constrained_dofs], 
                                                                 axis= 1)
                                )
-        print(f"train data: error in constrained internal dofs for force prediction (linear regression): {constrained_force_error}")
+        print(f"{data_type}: error in constrained internal dofs for force prediction (linear regression): {constrained_force_error}")
     
     # error for force component that is predicted by gaussian process regression. 
     free_moving_dofs = gpr_hessian_model.FixingDofs.free_moving_dofs
@@ -1116,7 +1176,7 @@ def analyze_force_error(coord,
                                                              axis= 1)
                                               )
 
-    print(f"train data: error in free moving internal dofs for force prediction: (GPR model): {free_moving_force_error}")
+    print(f"{data_type}: error in free moving internal dofs for force prediction: (GPR model): {free_moving_force_error}")
 
 def analyze_hessian_error(coord,
                           predicted_cartesian_gradients,
@@ -1124,7 +1184,8 @@ def analyze_hessian_error(coord,
                           hessian_data_point_index, 
                           predicted_hessians, 
                           ab_initio_hessians,
-                          gpr_hessian_model: GPModelWithHessiansWrapper):
+                          gpr_hessian_model: GPModelWithHessiansWrapper,
+                          data_type= "train data"):
     """
     analyze error in hessian prediction.
     In internal coordinate, the hessian for free moving dofs are predicted by Gaussian Process Regression.
@@ -1135,7 +1196,7 @@ def analyze_hessian_error(coord,
         predicted_hessians, ab_initio_hessians
     )
 
-    print(f"train data: relative hessian error for ring polymer beads: {relative_hessian_error}")
+    print(f"{data_type}: relative hessian error for ring polymer beads: {relative_hessian_error}")
 
     ab_initio_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
             coord[hessian_data_point_index],
@@ -1159,7 +1220,7 @@ def analyze_hessian_error(coord,
         constrained_predicted_hessian_q, 
         constrained_ab_initio_hessian_q
     )
-    print(f"train data: relative hessian error for ring polymer beads: {constrained_hessian_error}")
+    print(f"{data_type}: relative hessian error for ring polymer beads: {constrained_hessian_error}")
 
 def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     """
@@ -1167,13 +1228,8 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     """
     coord = gpr_hessian_model.train_cartesian_input 
     hessian_data_point_index = np.array(
-        list(
-            map(
-                int, 
-                gpr_hessian_model.training_data_hessian_data_point_index
-                )
-            )
-        )
+        gpr_hessian_model.training_data_hessian_data_point_index
+        ).astype(int)
 
     # predict hessians.
     predicted_pots, predicted_cartesian_grads, predicted_hessians, _, _, _ = gpr_hessian_model.predict_latent_function(
@@ -1193,7 +1249,8 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     analyze_force_error(coord,
                         ab_initio_train_cartesian_grads,
                         predicted_cartesian_grads,
-                        gpr_hessian_model)
+                        gpr_hessian_model,
+                        data_type= "train data")
     
     # compute the relative error in training hessian data.
     if len(ab_initio_training_hessians) > 0:
@@ -1207,6 +1264,55 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
 
     pass 
 
+def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper,
+                                   cv_coord,
+                                   cv_pots,
+                                   cv_ab_initio_grads,
+                                   cv_hessian_data_point_index,
+                                   cv_ab_initio_hessians):
+    """
+    Test the performance of gpr_hessian_model on the cross validation data.
+    :param: cv_coord: coordinate for cross-validation data.
+    :param: cv_hessian_data_point_index: hessian data point in cross validation data.
+    :param: cv_ab_initio_gradient: ab initio gradient for cross validation data.
+    :param: cv_ab_initio_hessian: hessian for cross validation data.
+    """
+    cv_hessian_data_point_index = np.array(cv_hessian_data_point_index).astype(int)
+
+    # predict potential, gradients, hessians in cartesian coordinate.
+    predicted_pots, predicted_cartesian_grads, predicted_cartesian_hessians, _, _, _ = (
+        gpr_hessian_model.predict_latent_function(
+            cv_coord,
+            cv_hessian_data_point_index,
+            internal_coordinate_bool= False
+        )
+    )
+
+    # compute relative error in potential for cross validation data.
+    V_error = np.abs(cv_pots - predicted_pots) / np.abs(cv_pots)
+    print(f"cross validation data: error of potential prediction {V_error}")
+
+    # compute the relative error in cross validation gradient:
+    analyze_force_error(
+        cv_coord,
+        cv_ab_initio_grads,
+        predicted_cartesian_grads,
+        gpr_hessian_model,
+        data_type= "cross validation data"
+    )
+
+    # compute the relative hessian error in cross validation gradient.
+    if len(cv_ab_initio_hessians) > 0:
+        analyze_hessian_error(
+            cv_coord,
+            predicted_cartesian_grads,
+            cv_ab_initio_grads,
+            cv_hessian_data_point_index,
+            predicted_cartesian_hessians,
+            cv_ab_initio_hessians,
+            gpr_hessian_model,
+            data_type= "cross validation data"
+        )
 
 def analyze_transformation_between_cartesian_coord_and_internal_coord(coord_x,
                                                                       grad_x,

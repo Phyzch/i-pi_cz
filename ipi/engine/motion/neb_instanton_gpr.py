@@ -127,6 +127,7 @@ class MAPNEBGPRMover(Motion):
         new_grad_data_index= np.zeros(0, int),
         selective_hessian_bool= False,
         internal_coord = "bond",
+        cross_validation_bool= False,
     ):
         """Initialises NEBMover.
 
@@ -181,6 +182,8 @@ class MAPNEBGPRMover(Motion):
 
         self.options["internal_coord"] = internal_coord 
 
+        self.options["cross_validation_bool"] = cross_validation_bool
+        
         # numerical values / arrays. option from input.xml
         self.optarrays = {}
         self.optarrays["fix_dofs"] = fix_dofs  # the cartesian dofs of molecules to be fixed. 
@@ -2750,6 +2753,9 @@ class RP_MAP(object):
         # we define the rigid mode in the internal coordinate and only compute hessians for 1 bead along rigid mode.
         self.selective_hessian_bool = nebmover.options["selective_hessian_bool"]
 
+        # options to do cross validation of gpr hessian model.
+        self.cross_validation_bool = nebmover.options["cross_validation_bool"]
+
     def initialize(self, neb_beads, neb_final_step):
         """
         initialize the RP_MAP dynamics. This should be called after beads have converged to minimum action path using line integral nudged elastic band method.
@@ -3417,6 +3423,98 @@ class RP_MAP(object):
 
         ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
 
+    def cross_validate_gpr_hessian_model(self):
+        """
+        read training data (potential V, gradient, hessians) from folder. 
+        split data into training set and cross validation set.
+        Perform the cross validation. 
+        """
+        print("Cross validate the gpr hessian model.")
+        print("\n")
+        print(
+                "read_gpr_hessian_folder provided. \
+                Will read potential & gradients & hessians from folder and create gpr_hessian model."
+        )
+        # read data from read_gpr_hessian_folder.
+        (cartesian_coordinate_x,
+         potential_data,
+         force_data,
+         hessian_index_list,
+         hessian_data_list,
+        ) = ipi.utils.nebinstgprtool.read_training_data_with_hessian(
+            self.read_gpr_hessian_folder
+        )
+
+        train_set, cv_set = ipi.utils.nebinstgprtool.split_train_cv_data(
+            cartesian_coordinate_x,
+            potential_data,
+            force_data,
+            hessian_index_list,
+            hessian_data_list,
+            training_ratio = 0.6
+        )
+        # training data
+        train_x, training_V, training_forces, train_hessian_index_list, train_hessian_data_list = train_set 
+        training_V_shifted = training_V - self.energy_shift
+        # cross validation data.
+        cv_x, cv_V, cv_force, cv_hessian_index_list, cv_hessian_data = cv_set 
+        
+
+        gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(self.read_gpr_hessian_folder)
+        training_grads = - training_forces 
+        
+        # choose the first data point with hessian information as the reference point for mean function.
+        ref_x = cartesian_coordinate_x[hessian_index_list[0]]
+        ref_V_shifted = np.array([training_V_shifted[hessian_index_list[0]]])
+        ref_grads = training_grads[hessian_index_list[0]]
+        ref_hessians = hessian_data_list[0]
+
+        # use training data to create gpr_hessian_model
+        self.gpr_hessian_model = (
+            ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
+                train_x,
+                training_V_shifted,
+                training_grads,
+                train_hessian_data_list,
+                train_hessian_index_list,
+                self.rp_beads.natoms,
+                self.coordinate_transformer,
+                self.fix_dofs,
+                self.gpr_SE_kernel_number,
+                self.gpr_kernel_outputscale,
+                self.gpr_kernel_lengthscale_ratio,
+                self.gpr_noise_std,
+                constant_mean_func_bool= False,
+                ref_mean_x=ref_x,
+                ref_mean_V=ref_V_shifted,
+                ref_mean_grad_x=ref_grads,
+                ref_mean_hessian_x=ref_hessians,
+                train_bool= True,
+                gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
+                gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
+                gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
+                gpr_fixed_internal_dofs= gpr_fixed_internal_dofs
+            )
+        )
+
+        # analyze training data error.
+        ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+
+        # analyze cross validation data error.
+        if len(cv_x) > 0:
+            cv_V_shifted = cv_V - self.energy_shift
+            cv_grads = - cv_force 
+            
+            ipi.utils.nebinstgprtool.analyze_crosss_validation_error(
+                self.gpr_hessian_model,
+                cv_x,
+                cv_V_shifted,
+                cv_grads,
+                cv_hessian_index_list,
+                cv_hessian_data
+            )
+
+
     def construct_gpr_hessian_model(self):
         """
         construct the gpr_hessian model, which will predict hessian information using Gaussian Process Regression.
@@ -3442,9 +3540,13 @@ class RP_MAP(object):
             
             pass
         else:
-            self.load_gpr_hessian_model(candidate_hessian_point_x,
-                                        single_rp_beads,
-                                        single_rp_forces)
+            if not self.cross_validation_bool:
+                self.load_gpr_hessian_model(candidate_hessian_point_x,
+                                            single_rp_beads,
+                                            single_rp_forces)
+            else:
+                self.cross_validate_gpr_hessian_model()
+
             pass
 
         end_time = timer()

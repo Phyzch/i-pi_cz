@@ -635,7 +635,20 @@ class InputNebInstGPR(InputDictionary):
                 This is for intra-molecular proton transfer reaction like malonaldehyde and aminopropenal.
                 """
             }
-        )
+        ),
+        "cross_validation_bool":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": False,
+                "help":
+                """
+                The option to perform cross validation for the gpr model that predict hessians.
+                To do so, we need to load the already computed hessian data.
+                The number of hessian data should be >= 5 for cross validation to work.
+                """
+            }
+        ),
     }
 
     dynamic = {}
@@ -710,6 +723,10 @@ class InputNebInstGPR(InputDictionary):
 
         self.internal_coord.store(
             options["internal_coord"]
+        )
+
+        self.cross_validation_bool.store(
+            options["cross_validation_bool"]
         )
 
         # optarrays
