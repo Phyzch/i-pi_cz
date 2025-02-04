@@ -649,6 +649,18 @@ class InputNebInstGPR(InputDictionary):
                 """
             }
         ),
+        "ridge_regularization_alpha":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.1,
+                "help":
+                """
+                The regularization amplitude for ridge (linear regression model) for fitting hessians
+                along stiff dofs.
+                """
+            }
+        )
     }
 
     dynamic = {}
@@ -772,6 +784,9 @@ class InputNebInstGPR(InputDictionary):
         # about computing hessian for gpr model & rate calculation.
         self.new_hessian_data_index.store(optarrays["new_hessian_data_index"])
         self.new_grad_data_index.store(optarrays["new_grad_data_index"])
+
+        # regularization factor for ridge model : modeling hessians along stiff modes.
+        self.ridge_regularization_alpha.store(optarrays["ridge_regularization_alpha"])
 
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()

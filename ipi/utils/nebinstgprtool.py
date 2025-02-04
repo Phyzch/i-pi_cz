@@ -1094,7 +1094,7 @@ def split_train_cv_data(cartesian_coordinate_x,
         cv_hessian_data = np.array([])
     else:
         hessian_data_num = len(hessian_index_list)
-        cv_hessian_data_num = int((1- training_ratio) * hessian_data_num)
+        cv_hessian_data_num = round((1- training_ratio) * hessian_data_num)
         train_hessian_data_num = hessian_data_num - cv_hessian_data_num
 
         all_hessian_index = np.copy(hessian_index_list)
