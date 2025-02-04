@@ -1275,7 +1275,8 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
                         predicted_cartesian_grads,
                         gpr_hessian_model,
                         data_type= "train data")
-    
+    for _ in range(2):
+        print("\n")
     # compute the relative error in training hessian data.
     if len(ab_initio_training_hessians) > 0:
         analyze_hessian_error(coord,
@@ -1286,6 +1287,8 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
                               ab_initio_training_hessians,
                               gpr_hessian_model)
 
+        for _ in range(2):
+            print("\n")
     pass 
 
 def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper,
@@ -1324,7 +1327,8 @@ def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper
         gpr_hessian_model,
         data_type= "cross validation data"
     )
-
+    for _ in range(2):
+        print("\n")
     # compute the relative hessian error in cross validation gradient.
     if len(cv_ab_initio_hessians) > 0:
         analyze_hessian_error(
@@ -1337,6 +1341,9 @@ def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper
             gpr_hessian_model,
             data_type= "cross validation data"
         )
+
+        for _ in range(2):
+            print("\n")
 
     pass
 

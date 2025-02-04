@@ -590,12 +590,12 @@ class FixInternalDofs(object):
     def update_hessian_reg_model(self,
                                 train_inputs,
                                 hessian_data_point_index, 
-                                hessians):
+                                hessians,
+                                alpha):
         if (
             len(self.constrained_internal_dofs) != 0
             and len(hessians) > 0
         ):
-            alpha = self.constrained_part_hessian_reg_model.alpha
             self.constrained_part_hessian_reg_model, self.cross_term_reg_model = self.linear_regression_fit_hessian(
                 train_inputs[hessian_data_point_index],
                 hessians,
@@ -901,7 +901,7 @@ class GPModelWithHessiansWrapper:
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
         self.coordinate_transformer = coordinate_transformer
         self.constant_mean_func_bool = constant_mean_func_bool
-
+        self.ridge_regularization_alpha = ridge_regularization_alpha
         # symmetrize the hessian
         if len(train_hessian_x) > 0:
             train_hessian_x_symmetrized = (
@@ -1744,7 +1744,8 @@ class GPModelWithHessiansWrapper:
             self.FixingDofs.update_hessian_reg_model(
                 self.train_inputs,
                 self.training_data_hessian_data_point_index,
-                self.train_hessian_q
+                self.train_hessian_q,
+                self.ridge_regularization_alpha
             )
 
         # --- normalize the potential, gradient and hessians and the noise covar factor matrix ---- 
