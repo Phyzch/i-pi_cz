@@ -1168,8 +1168,11 @@ def analyze_force_error(coord,
                                                 np.linalg.norm(ab_initio_grad_q[:, constrained_dofs], 
                                                                 axis= 1)
                                )
+        absolute_constrained_force_error = np.linalg.norm(ab_initio_grad_q[:, constrained_dofs] - predicted_grad_q[:, constrained_dofs],
+                                                axis= 1)
         print(f"{data_type}: error in constrained internal dofs for force prediction (linear regression): {constrained_force_error}")
-    
+
+
     # error for force component that is predicted by gaussian process regression. 
     free_moving_dofs = gpr_hessian_model.FixingDofs.free_moving_dofs
     free_moving_force_error = (np.linalg.norm(ab_initio_grad_q[:, free_moving_dofs] 
@@ -1178,8 +1181,15 @@ def analyze_force_error(coord,
                                               np.linalg.norm(ab_initio_grad_q[:, free_moving_dofs],
                                                              axis= 1)
                                               )
-
+    absolute_free_moving_force_error = np.linalg.norm(ab_initio_grad_q[:, free_moving_dofs]  - predicted_grad_q[:, free_moving_dofs], 
+                                              axis= 1)
     print(f"{data_type}: error in free moving internal dofs for force prediction: (GPR model): {free_moving_force_error}")
+
+    print("\n")
+    print(f"{data_type}: absolute error for force prediction {df}\n")
+    print(f"{data_type}: absolute error in constrained internal dofs for force prediction (linear regression): {absolute_constrained_force_error}")
+    print(f"{data_type}: absolute error in free moving internal dofs for force prediction (GPR model): {absolute_free_moving_force_error}")
+
     pass 
 
 def analyze_hessian_error(coord,
@@ -1268,7 +1278,8 @@ def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):
     # compute the relative error in training potential
     V_error = np.abs(ab_initio_train_V - predicted_pots) / np.abs(ab_initio_train_V)
     print(f"train data: error of potential prediction: {V_error}")
-    
+    print("\n")
+
     # compute the relative error in training grads
     analyze_force_error(coord,
                         ab_initio_train_cartesian_grads,
@@ -1318,7 +1329,8 @@ def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper
     # compute relative error in potential for cross validation data.
     V_error = np.abs(cv_pots - predicted_pots) / np.abs(cv_pots)
     print(f"cross validation data: error of potential prediction {V_error}")
-
+    print("\n")
+    
     # compute the relative error in cross validation gradient:
     analyze_force_error(
         cv_coord,

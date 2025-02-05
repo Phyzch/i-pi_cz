@@ -353,7 +353,8 @@ class FixInternalDofs(object):
         gpr_fix_internal_dofs_cutoff: float,
         rigid_internal_dofs_cutoff: float,
         gpr_fixed_internal_dofs = None,
-        ridge_regularization_alpha: float = 0.1,
+        force_ridge_regularization_alpha: float = 0.1,
+        hessian_ridge_regularization_alpha: float = 0.1
     ):
         self.input_dim = grads.shape[1]
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
@@ -468,7 +469,7 @@ class FixInternalDofs(object):
                 self.grad_reg_model = self.linear_regression_fit_grad(
                     train_inputs,
                     grads,
-                    ridge_regularization_alpha
+                    force_ridge_regularization_alpha
                     )
 
             # use linear regression to fit hessians 
@@ -476,7 +477,7 @@ class FixInternalDofs(object):
                 self.constrained_part_hessian_reg_model, self.cross_term_reg_model = self.linear_regression_fit_hessian(
                     train_inputs[hessian_data_point_index_array],
                     hessians,
-                    ridge_regularization_alpha= ridge_regularization_alpha
+                    hessian_ridge_regularization_alpha= hessian_ridge_regularization_alpha
                     )
             else:
                 self.constrained_part_hessian_reg_model = None
@@ -496,7 +497,7 @@ class FixInternalDofs(object):
             self,
             train_inputs: np.ndarray,
             grads: np.ndarray,
-            ridge_regularization_alpha
+            force_ridge_regularization_alpha
             ):
         """
         fit the gradient along the rigid internal dofs using linear regression model.
@@ -506,7 +507,7 @@ class FixInternalDofs(object):
         # reg_model = LinearRegression().fit(x,y)
 
         # ridge regression. avoid over-fitting.
-        reg_model = lin_model(degree= 1, lambda_= ridge_regularization_alpha)
+        reg_model = lin_model(degree= 1, lambda_= force_ridge_regularization_alpha)
         reg_model.fit(x, y)
 
         return reg_model
@@ -526,7 +527,7 @@ class FixInternalDofs(object):
             self,
             train_inputs: np.ndarray,
             hessians: np.ndarray,
-            ridge_regularization_alpha = 0.1
+            hessian_ridge_regularization_alpha = 0.1
     ):
         """
         fit the hessian along constrained dofs using linear regression model.
@@ -546,7 +547,7 @@ class FixInternalDofs(object):
         # we need to flatten hessians in to 1d array [n_targets] for each sample
         y = constrained_dofs_hessians.reshape((data_num, -1))
         x = train_inputs
-        constrained_dofs_reg_model = Ridge(alpha= ridge_regularization_alpha).fit(x,y)
+        constrained_dofs_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x,y)
 
         constrained_free_moving_cross_term_hessians = hessians[:, 
                                                                self.cross_term_2d_index[0], 
@@ -554,7 +555,7 @@ class FixInternalDofs(object):
                                                                
         y1 = constrained_free_moving_cross_term_hessians.reshape(data_num, -1)
         x1 = train_inputs 
-        cross_term_reg_model = Ridge(alpha= ridge_regularization_alpha).fit(x1, y1)
+        cross_term_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x1, y1)
 
         return constrained_dofs_reg_model, cross_term_reg_model
 
@@ -599,7 +600,7 @@ class FixInternalDofs(object):
             self.constrained_part_hessian_reg_model, self.cross_term_reg_model = self.linear_regression_fit_hessian(
                 train_inputs[hessian_data_point_index],
                 hessians,
-                ridge_regularization_alpha= alpha 
+                hessian_ridge_regularization_alpha= alpha 
             )
             
 
@@ -842,7 +843,10 @@ class GPModelWithHessiansWrapper:
         gpr_fix_internal_dofs_cutoff= 1e-4,
         gpr_rigid_internal_dofs_cutoff= 5e-2,
         gpr_fixed_internal_dofs= None,
-        ridge_regularization_alpha= 0.1
+        ridge_regularization_alpha= {
+                "force": 0.1,
+                "hessian": 0.1,
+            }
     ):
         """
         :param: train_x: [M, 3 * natom]. initial M training points x in Cartesian coordinate.
@@ -901,7 +905,9 @@ class GPModelWithHessiansWrapper:
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
         self.coordinate_transformer = coordinate_transformer
         self.constant_mean_func_bool = constant_mean_func_bool
-        self.ridge_regularization_alpha = ridge_regularization_alpha
+        self.force_ridge_regularization_alpha = ridge_regularization_alpha["force"]
+        self.hessian_ridge_regularization_alpha = ridge_regularization_alpha["hessian"]
+
         # symmetrize the hessian
         if len(train_hessian_x) > 0:
             train_hessian_x_symmetrized = (
@@ -960,7 +966,8 @@ class GPModelWithHessiansWrapper:
             gpr_fix_internal_dofs_cutoff,
             gpr_rigid_internal_dofs_cutoff,
             gpr_fixed_internal_dofs,
-            ridge_regularization_alpha 
+            self.force_ridge_regularization_alpha,
+            self.hessian_ridge_regularization_alpha 
         )
 
         moving_train_inputs, moving_train_grad_q, moving_train_hessian_q, \
@@ -1745,7 +1752,7 @@ class GPModelWithHessiansWrapper:
                 self.train_inputs,
                 self.training_data_hessian_data_point_index,
                 self.train_hessian_q,
-                self.ridge_regularization_alpha
+                self.hessian_ridge_regularization_alpha
             )
 
         # --- normalize the potential, gradient and hessians and the noise covar factor matrix ---- 

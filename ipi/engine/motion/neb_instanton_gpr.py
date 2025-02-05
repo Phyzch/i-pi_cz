@@ -128,7 +128,10 @@ class MAPNEBGPRMover(Motion):
         selective_hessian_bool= False,
         internal_coord = "bond",
         cross_validation_bool= False,
-        ridge_regularization_alpha = 0.1
+        ridge_regularization_alpha = {
+            "force": 0.1,
+            "hessian": 0.1
+        }
     ):
         """Initialises NEBMover.
 
@@ -3280,7 +3283,8 @@ class RP_MAP(object):
                 train_bool= True,
                 gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
-                gpr_rigid_internal_dofs_cutoff= self.gpr_rigid_internal_dofs_cutoff
+                gpr_rigid_internal_dofs_cutoff= self.gpr_rigid_internal_dofs_cutoff,
+                ridge_regularization_alpha= self.ridge_regularization_alpha
             )
         )
 
@@ -3390,7 +3394,8 @@ class RP_MAP(object):
                 gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
-                gpr_fixed_internal_dofs= gpr_fixed_internal_dofs
+                gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
+                ridge_regularization_alpha= self.ridge_regularization_alpha
             )
         )
 
@@ -3843,14 +3848,14 @@ class RP_MAP(object):
                 time_elapsed = (end_t - start_t) / 60
                 print(f"the elapsed time for re-training the model is {time_elapsed} min.")
 
-                ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
-                pass
+            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
+            pass
                 
-                # store the computed ab inito gradient and hessian data if we compute new data point. 
-                self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,
-                                                        candidate_grad_point_x,
-                                                        ab_initio_hessian_file_exists,
-                                                        candidate_hessian_point_x)
+            # store the computed ab inito gradient and hessian data if we compute new data point. 
+            self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,
+                                                    candidate_grad_point_x,
+                                                    ab_initio_hessian_file_exists,
+                                                    candidate_hessian_point_x)
 
     def predict_ring_polymer_hessians_using_gpr(self):
         """
