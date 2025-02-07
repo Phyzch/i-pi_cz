@@ -118,8 +118,9 @@ class MAPNEBGPRMover(Motion):
         final_hessian_bool=False,
         ab_initio_hessian_bool=False,
         read_gpr_hessian_folder="None",
+        train_grad_model_bool= True, 
         train_hessian_model_bool= True, 
-        add_new_hessian_data_bool=False,
+        add_new_hessian_data_bool= False,
         candidate_hessian_data_number=20,
         new_hessian_data_index=np.zeros(0, int),
         add_new_grad_data_bool= False,
@@ -163,6 +164,7 @@ class MAPNEBGPRMover(Motion):
         # for store ab initio hessians used for gpr hessian model.
         self.options["read_gpr_hessian_folder"] = read_gpr_hessian_folder
         self.options["train_hessian_model_bool"] = train_hessian_model_bool
+        self.options["train_grad_model_bool"] = train_grad_model_bool
 
         self.options["add_new_hessian_data_bool"] = add_new_hessian_data_bool
         self.options["candidate_hessian_data_number"] = candidate_hessian_data_number
@@ -1282,6 +1284,7 @@ class MAPNEBGPRMover(Motion):
             ab_initio_beads_shifted_energy,
             ab_initio_beads_grad,
             self.options["distance_cutoff_for_training_data"],
+            self.options["train_grad_model_bool"]
         )
 
         # set ab_initio pot and force in nebgm.
@@ -1399,6 +1402,7 @@ class MAPNEBGPRMover(Motion):
             ab_initio_shifted_energy,
             ab_initio_grad_x,
             self.options["distance_cutoff_for_training_data"],
+            self.options["train_grad_model_bool"]
         )
 
         # set ab_initio pot and force in nebgm.
@@ -1566,14 +1570,26 @@ class MAPNEBGPRMover(Motion):
         end_bead_energy_converge_value = self.optarrays["end_bead_energy_converge_value"]
         end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
 
-        # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
-        val1 = spring_k * np.power(dt, 2)
-        spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
-        spring_k_scale = spring_k_ratio / val1
-        self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
-        self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
-        self.nebgm.VSC_k_max = self.nebgm.spring_k
+        # we want spring_k * path_distance * 0.01 = <g>_action.
+        mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
+        path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
+        nimages = self.beads.nbeads
+        natoms = self.beads.natoms
+        action_force = self.nebgm.compute_neb_action_force(nimages, natoms)
+        average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
+        self.optarrays["spring_k"] = average_action_force / (0.01 * path_distance)
+        self.nebgm.spring_k = self.optarrays["spring_k"]
+        self.nebgm.VSC_k_max = self.optarrays["spring_k"]
         self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
+
+        ## check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
+        # val1 = spring_k * np.power(dt, 2)
+        # spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
+        # spring_k_scale = spring_k_ratio / val1
+        # self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
+        # self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
+        # self.nebgm.VSC_k_max = self.nebgm.spring_k
+        # self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
         kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
         
@@ -1960,6 +1976,10 @@ class LINEBGradientMapper(object):
             self.dbeads.m3[:, self.fixatoms_mask]
         )  # 1/sqrt(m) * f: mass scaled force.
 
+        self.mscaled_q = q * np.sqrt(
+            self.dbeads.m3[:, self.fixatoms_mask]
+        )
+
     def get_gpr_potential_and_forces(self):
         """
         Get potential and forces for all beads using the Gaussian Process Regression model.
@@ -2036,19 +2056,19 @@ class LINEBGradientMapper(object):
         self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
 
         # abbreviated action for the ring polymer instanton path.
-        # self.action = self.compute_neb_action(nimage)
+        self.action = self.compute_neb_action(nimage)
 
         # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
-        # self.action_forces = self.compute_neb_action_force(
-        #     nimage, natom
-        # )
-
-        # Change code above to implement Simpson's rule
-        self.action = self.compute_neb_action_Simpson_rule(nimage)
-
-        self.action_forces = self.compute_neb_action_force_Simpson_rule(
+        self.action_forces = self.compute_neb_action_force(
             nimage, natom
         )
+
+        # Change code above to implement Simpson's rule
+        # self.action = self.compute_neb_action_Simpson_rule(nimage)
+
+        # self.action_forces = self.compute_neb_action_force_Simpson_rule(
+        #     nimage, natom
+        # )
 
         # compute direction of tangent vector, using improved methods.
         self.btau = self.compute_tangent_vector(nimage, natom)
@@ -2060,7 +2080,8 @@ class LINEBGradientMapper(object):
 
         # sum of transverse forces for all internal beads 
         # (the action force for the end bead is set to be 0)
-        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.action_forces[1: -1], axis=1))
+        # self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.action_forces[1: -1], axis=1))
+        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.transverse_force[1:,-1], axis= 1))
 
         self.neb_optimization_gradient = - self.neb_optimization_force
 
@@ -2468,9 +2489,9 @@ class LINEBGradientMapper(object):
                 - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
             )
 
-        
+        # transverse gradient for interior neb beads.
         self.transverse_force = (
-            np.copy(neb_optimization_force)  # transverse gradient for interior neb beads.
+            np.copy(neb_optimization_force)  
         )
 
         # add energy constraint force for two end beads.
@@ -2754,6 +2775,7 @@ class RP_MAP(object):
         self.candidate_grad_data_number = nebmover.options["candidate_grad_data_number"]
         self.new_grad_data_index = nebmover.optarrays["new_grad_data_index"]
 
+        self.train_grad_model_bool = nebmover.options["train_grad_model_bool"]
         self.train_hessian_model_bool = nebmover.options["train_hessian_model_bool"]
 
         # options to use compute selective hessians in the internal coordinate.
@@ -3151,6 +3173,7 @@ class RP_MAP(object):
                 new_train_shifted_V,
                 new_train_grad_x,
                 self.distance_cutoff_for_training_data,
+                self.train_grad_model_bool
             )
 
             # update the test error on the unseen test data set

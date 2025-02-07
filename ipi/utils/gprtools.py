@@ -125,7 +125,11 @@ def filter_new_training_data(
 
 
 def update_model_with_new_data(
-    model: GPModelWithDerivatives, new_train_inputs, new_train_targets, distance_cutoff
+    model: GPModelWithDerivatives, 
+    new_train_inputs, 
+    new_train_targets, 
+    distance_cutoff,
+    train_bool
 ):
     """
     add new training data into the model.
@@ -195,7 +199,8 @@ def update_model_with_new_data(
     )
 
     # re-train the model to update the hyper-parameter
-    train_gpr(model)
+    if train_bool:
+        train_gpr(model)
 
     return filtered_new_train_inputs_index
 
@@ -818,7 +823,12 @@ class GPModelWithDerivativesWrapper:
             return V, grad_x, var_V, var_grad_x_trace
 
     def update_model_with_new_data(
-        self, new_train_x, new_train_V, new_train_grad_x, distance_cutoff
+        self, 
+        new_train_x, 
+        new_train_V, 
+        new_train_grad_x, 
+        distance_cutoff,
+        train_bool= True
     ):
         """
         add new training data into the model.
@@ -878,6 +888,7 @@ class GPModelWithDerivativesWrapper:
             moving_new_train_inputs,
             moving_new_train_targets,
             distance_cutoff,
+            train_bool
         )
 
         if len(filtered_new_train_inputs_index) != 0:

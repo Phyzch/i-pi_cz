@@ -559,6 +559,18 @@ class InputNebInstGPR(InputDictionary):
                     These potential data will be added to the gpr_hessian model"
             }
         ),
+        "train_grad_model_bool":(
+            InputValue,
+            {
+                "dtype": bool,
+                "default": True, 
+                "help": """
+                option to train GPR gradient model.
+                Training GPR model can be expensive. If we are happy with model hyper-parameter,
+                we can turn the training option off here.
+                """
+            }
+        ),
 
         "train_hessian_model_bool": (
             InputValue,
@@ -707,6 +719,7 @@ class InputNebInstGPR(InputDictionary):
             options["candidate_grad_data_number"]
         )
 
+        self.train_grad_model_bool.store(options["train_grad_model_bool"])
         self.train_hessian_model_bool.store(options["train_hessian_model_bool"])
 
         # for stability of gaussian process regression model
