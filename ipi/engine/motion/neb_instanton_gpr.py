@@ -789,9 +789,7 @@ class MAPNEBGPRMover(Motion):
         print("@Start outer loop: " + str(outer_loop_step) + "\n")
         
         action_force_stop_criterion = False 
-        action_step_average_number = 20
-        action_sufficient_decrease_cutoff = tolerances["action"]
-        drifting_action_list = []  # record action when we start drifting.
+        self.action_force_sum_list.append(self.nebgm.action_forces_sum_amplitude)
 
         while (
             grad_max_inner_bead > tolerances["gradient"]
@@ -810,24 +808,15 @@ class MAPNEBGPRMover(Motion):
 
             if (grad_max_inner_bead <= tolerances["gradient"] 
                 and grad_max_end_bead <= tolerances["gradient_end_bead"]):
-                # if the minimum action doesn't descrease sufficiently over several steps. 
-                # we assume we have reached the minimum of the action.
-                # We only turn on drifting when gradients of beads are small.
-                drifting_action_list.append(self.action)
-                if len(drifting_action_list) > 2 * action_step_average_number:
-                    previous_minimum_action = np.min(
-                        drifting_action_list[
-                            -int(2 * action_step_average_number):
-                              - int(action_step_average_number)]
-                        )
-                    current_minimum_action = np.min(
-                        drifting_action_list[
-                            -int(action_step_average_number):
-                        ]
-                        )
-                    if current_minimum_action > previous_minimum_action - action_sufficient_decrease_cutoff:
+                # if the action no longer decrease for a few steps, we stop the algorithm.
+                self.action_force_sum_list.append(self.nebgm.action_forces_sum_amplitude )
+                
+                if len(self.action_force_sum_list) > 2 * self.uphill_steps_cutoffs:
+                    old_minimum_action_force_sum = np.min(self.action_force_sum_list[- 2 * self.uphill_steps_cutoffs: 
+                                                                             -self.uphill_steps_cutoffs])
+                    current_minimum_action_force_sum = np.min(self.action_force_sum_list[- self.uphill_steps_cutoffs:])
+                    if old_minimum_action_force_sum < current_minimum_action_force_sum:
                         action_force_stop_criterion = True
-                    
 
             # beads move out of trust region.
             if early_stop_bool:
@@ -865,6 +854,10 @@ class MAPNEBGPRMover(Motion):
         self.f_mscaled = -self.grad_mscaled
 
         if step == 0:
+            # criterion for stop algorithm when the path is no longer improving.
+            self.uphill_steps_cutoffs = 5
+            self.action_force_sum_list = []
+
             # mass scaled velocity. Used in dynamics optimizatioin algorithm,
             # for example: projected velocity verlet or FIRE 
             self.velocity_mscaled = np.zeros(
@@ -2081,7 +2074,7 @@ class LINEBGradientMapper(object):
         # sum of transverse forces for all internal beads 
         # (the action force for the end bead is set to be 0)
         # self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.action_forces[1: -1], axis=1))
-        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.transverse_force[1:,-1], axis= 1))
+        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.transverse_force[1:-1], axis= 1))
 
         self.neb_optimization_gradient = - self.neb_optimization_force
 
