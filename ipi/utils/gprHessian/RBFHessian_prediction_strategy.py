@@ -76,7 +76,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
     @property
     @cached(name="mean_cache")
-    def mean_cache(self, singular_value_cutoff = pow(10.0, -8)):
+    def mean_cache(self, singular_value_cutoff = pow(10.0, -6)):
         """
         mean_cache = (K(X,X) + sigma^2 I)^(-1) * y.  here X are inputs of training data. y are targets of training data.
         """
@@ -113,7 +113,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
     @property
     @cached(name= "covar_cached")
-    def covar_cache(self, singular_value_cutoff = pow(10.0, -8)):
+    def covar_cache(self, singular_value_cutoff = pow(10.0, -6)):
         """
         compute the cache for the prediction of the covariance matrix. Which is (K(X,X) + sigma^2 I)^{-1/2}
         use pseudo-inverse (Moore Penrose inverse) when the covariance matrix becomes ill-conditioned. (smallest eigenvalue is close to 0).

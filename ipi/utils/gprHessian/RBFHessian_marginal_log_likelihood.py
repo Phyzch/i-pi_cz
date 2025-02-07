@@ -40,7 +40,7 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
 
         return res
 
-    def log_prob_likelihood(self, normal_dist: MultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -8)):
+    def log_prob_likelihood(self, normal_dist: MultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -6)):
         """
         compute the log probability of observable (target).
         Perform the pseudo-inverse when the covariance matrix is ill-conditioned.
