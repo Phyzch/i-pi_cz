@@ -791,6 +791,8 @@ class MAPNEBGPRMover(Motion):
         action_force_stop_criterion = False 
         self.action_force_sum_list.append(self.nebgm.action_forces_sum_amplitude)
 
+        self.converge = False 
+
         while (
             grad_max_inner_bead > tolerances["gradient"]
             or grad_max_end_bead > tolerances["gradient_end_bead"]
@@ -806,17 +808,26 @@ class MAPNEBGPRMover(Motion):
                 outrange_bead_index_list,
             ) = self.neb_step(outer_loop_step, neb_step, grad_max_inner_bead, grad_max_end_bead)
 
-            if (grad_max_inner_bead <= tolerances["gradient"] 
-                and grad_max_end_bead <= tolerances["gradient_end_bead"]):
-                # if the action no longer decrease for a few steps, we stop the algorithm.
-                self.action_force_sum_list.append(self.nebgm.action_forces_sum_amplitude )
+            # early stop if action_sum_force does not decrease after it has met the criterion. 
+            # if (grad_max_inner_bead <= tolerances["gradient"] 
+            #     and grad_max_end_bead <= tolerances["gradient_end_bead"]):
+            #     # if the action no longer decrease for a few steps, we stop the algorithm.
+            #     self.action_force_sum_list.append(self.nebgm.action_forces_sum_amplitude )
                 
-                if len(self.action_force_sum_list) > 2 * self.uphill_steps_cutoffs:
-                    old_minimum_action_force_sum = np.min(self.action_force_sum_list[- 2 * self.uphill_steps_cutoffs: 
-                                                                             -self.uphill_steps_cutoffs])
-                    current_minimum_action_force_sum = np.min(self.action_force_sum_list[- self.uphill_steps_cutoffs:])
-                    if old_minimum_action_force_sum < current_minimum_action_force_sum:
-                        action_force_stop_criterion = True
+            #     if len(self.action_force_sum_list) > 2 * self.uphill_steps_cutoffs:
+            #         old_minimum_action_force_sum = np.min(self.action_force_sum_list[- 2 * self.uphill_steps_cutoffs: 
+            #                                                                  -self.uphill_steps_cutoffs])
+            #         current_minimum_action_force_sum = np.min(self.action_force_sum_list[- self.uphill_steps_cutoffs:])
+            #         # we require sufficient decrease 
+            #         if old_minimum_action_force_sum - 2 * np.power(10.0, -4) < current_minimum_action_force_sum:
+            #             action_force_stop_criterion = True
+            #             # clear the list to avoid repetitively stop the optimization 
+            #             self.action_force_sum_list = []
+                
+            if self.converge:
+                # too many optimization steps. The system has converged on the energy surface. 
+                self.converge = False 
+                break 
 
             # beads move out of trust region.
             if early_stop_bool:
@@ -855,7 +866,7 @@ class MAPNEBGPRMover(Motion):
 
         if step == 0:
             # criterion for stop algorithm when the path is no longer improving.
-            self.uphill_steps_cutoffs = 5
+            self.uphill_steps_cutoffs = 10
             self.action_force_sum_list = []
 
             # mass scaled velocity. Used in dynamics optimizatioin algorithm,
@@ -1011,10 +1022,7 @@ class MAPNEBGPRMover(Motion):
         
 
         if neb_step > neb_inner_loop_step_max:
-            softexit.trigger(
-                status= "bad",
-                message= "The neb inner loop fails to converge after reaching the maximum optimization steps: " + str(neb_inner_loop_step_max),
-            )
+            self.converge = True
 
         # We have changed spring constant, so, we have to recompute neb optimization force.
         x_mscaled = self.x * np.sqrt(
@@ -1563,26 +1571,26 @@ class MAPNEBGPRMover(Motion):
         end_bead_energy_converge_value = self.optarrays["end_bead_energy_converge_value"]
         end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
 
-        # we want spring_k * path_distance * 0.01 = <g>_action.
-        mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
-        path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
-        nimages = self.beads.nbeads
-        natoms = self.beads.natoms
-        action_force = self.nebgm.compute_neb_action_force(nimages, natoms)
-        average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
-        self.optarrays["spring_k"] = average_action_force / (0.01 * path_distance)
-        self.nebgm.spring_k = self.optarrays["spring_k"]
-        self.nebgm.VSC_k_max = self.optarrays["spring_k"]
-        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
-
-        ## check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
-        # val1 = spring_k * np.power(dt, 2)
-        # spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
-        # spring_k_scale = spring_k_ratio / val1
-        # self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
-        # self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
-        # self.nebgm.VSC_k_max = self.nebgm.spring_k
+        # # we want spring_k * path_distance * 0.01 = <g>_action.
+        # mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
+        # path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
+        # nimages = self.beads.nbeads
+        # natoms = self.beads.natoms
+        # action_force = self.nebgm.compute_neb_action_force(nimages, natoms)
+        # average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
+        # self.optarrays["spring_k"] = average_action_force / (0.01 * path_distance)
+        # self.nebgm.spring_k = self.optarrays["spring_k"]
+        # self.nebgm.VSC_k_max = self.optarrays["spring_k"]
         # self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
+
+        # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
+        val1 = spring_k * np.power(dt, 2)
+        spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
+        spring_k_scale = spring_k_ratio / val1
+        self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
+        self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
+        self.nebgm.VSC_k_max = self.nebgm.spring_k
+        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
         kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
         
