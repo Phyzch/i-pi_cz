@@ -55,7 +55,7 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False, neigs = None):
     for i in range(nbeads):
         mm[i] = m       # m here is a 1d array with size [natoms]. Therefore, this repeat mass nbeads times.
     mm = mm.reshape(ii)
-    ism = m3.reshape((ii * 3, 1)) ** (-0.5)  # ism: inverse square of m3. 
+    ism = m3.reshape((ii * 3, 1)) ** (-0.5)  # ism: inverse square root of m3. 
     dynmat = np.multiply(ism.T, np.multiply(h, ism))  # dynmat is mass weighted hessian.
     # ismm = np.outer(ism, ism)
     # dynmat = np.multiply(h, ismm)
@@ -80,7 +80,7 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False, neigs = None):
                     * mm[k]
                 )
 
-            I, U = np.linalg.eig(moi)  # I: eigenvalue, U: eigenvector. eigenvector is the rotational mode. U[:,i] is eigenvector i.
+            I, U = np.linalg.eig(moi)  # I: eigenvalue, U: eigenvector. eigenvector is the rotational axis. U[:,i] is eigenvector i.
             R = np.dot(qminuscom, U)  # coordinate for atoms with the principle axis as rotational axis (rotational frame)
             D = np.zeros((6, 3 * ii), float)
 

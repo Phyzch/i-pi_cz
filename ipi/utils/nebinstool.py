@@ -542,5 +542,133 @@ def conjugate_gradient(x0, fdf0, fdf, initial_search_direction, big_step,
     search_direction = p 
 
     return x, action, g, search_direction
+
+
+def apply_symmetry_projection_single_bead(m, q, natoms, vec, asr = "none", mscaled_bool= False):
+    """
+    Removes translation (and rotations) for one bead depending on the asr mode.
+    The projection is performed in the mass scaled coordinate: sqrt(m) * q.
+    :param: m: mass of atoms. shape: [natoms]
+    :param: q: coordinate q for a single bead. shape: [3 * natoms] 
+    :param: natoms: number of atoms in molecules.
+    :param: asr: mode of symmetry. options["None", "crystal", "poly"]
+    :param: vec: vectors to project out translation & rotation motions. shape: [natoms] 
+    :param: mscaled_bool: indicate whether the vec is already scaled by mass or not. 
+    Adapted from ipi/engine/motion/phonons.py apply_asr.
     
+    :return: projected_vec: vectors after we project out translation & rotational motions.
+    """
+    assert np.shape(q)[0] == 3 * natoms, "The natoms doesn't match beads_q shape."
+    assert m.shape[0] == natoms
+    ism = 1 / np.sqrt(np.repeat(m, 3))
+
+    if asr == "none":
+        return vec 
+    elif asr == "crystal":
+        # project out translation dofs.
+        D = np.zeros((3, 3 * natoms), float)
+        D[0] = np.tile([1, 0, 0], natoms) / ism
+        D[1] = np.tile([0, 1, 0], natoms) / ism 
+        D[2] = np.tile([0, 0, 1], natoms) / ism 
+        for k in range(3):
+            D[k] = D[k] / np.linalg.norm(D[k])
+
+        if not mscaled_bool:
+            # convert vector to mass scaled coordinate
+            mscaled_vec = vec / ism 
+            transfmatrix = np.eye(3 * natoms) - np.dot(D.T, D)
+            projected_mscaled_vec = transfmatrix @ mscaled_vec 
+            projected_vec = projected_mscaled_vec * ism 
+        else:
+            # the vector is already scaled by mass.
+            transfmatrix = np.eye(3 * natoms) - np.dot(D.T, D)
+            projected_vec = transfmatrix @ vec 
+
+        return projected_vec 
+
+    elif asr == "poly":
+        # project out translation and rotation dofs.
+        # compute center of mass
+        com = (np.dot(
+            np.transpose(q.reshape((natoms, 3)), (1,0)), m
+            ) / np.sum(m)
+            )  
+        qminuscom = q.reshape((natoms, 3)) - com[np.newaxis, :]
+        # Computes the momentum of inertia 
+        moi = np.zeros((3, 3), float)
+        for k in range(natoms):
+            moi = moi - (
+                np.dot(
+                    np.cross(qminuscom[k], np.identity(3)),
+                    np.cross(qminuscom[k], np.identity(3))
+                ) 
+                * m[k]
+            )
+
+        U = (np.linalg.eig(moi))[1] # rotation axis.
+        R = np.dot(qminuscom, U) 
+        # translation & rotation motion to project out.
+        D = np.zeros((6, 3 * natoms), float)
+        D[0] = np.tile([1, 0, 0], natoms) / ism
+        D[1] = np.tile([0, 1, 0], natoms) / ism 
+        D[2] = np.tile([0, 0, 1], natoms) / ism 
+        for i in range(3 * natoms):
+            iatom = i // 3
+            idof = np.mod(i, 3)
+            D[3, i] = (
+                R[iatom, 1] * U[idof, 2] - R[iatom, 2] * U[idof, 1]
+            ) / ism[i]
+            D[4, i] = (
+                R[iatom, 2] * U[idof, 0] - R[iatom, 0] * U[idof, 2]
+            ) / ism[i]
+            D[5, i] = (
+                R[iatom, 0] * U[idof, 1] - R[iatom, 1] * U[idof, 0]
+            ) / ism[i]
+        
+        # Compute unit vectors
+        for k in range(6):
+            D[k] = D[k] / np.linalg.norm(D[k])
+        
+
+        if not mscaled_bool:
+            # convert vector to mass scaled coordinate
+            mscaled_vec = vec / ism 
+            transfmatrix = np.eye(3 * natoms) - np.dot(D.T, D)
+            projected_mscaled_vec = transfmatrix @ mscaled_vec 
+            projected_vec = projected_mscaled_vec * ism 
+        else:
+            transfmatrix = np.eye(3 * natoms) - np.dot(D.T, D)
+            projected_vec = transfmatrix @ vec 
+
+        return projected_vec 
+
+    else:
+        raise ValueError(f"unsupported asr mode. we only take 'none', 'crystal' and 'asr'. Current value: {asr}")
+
+def apply_symmetry_projection(m, beads_q, natoms, vec, asr= "none", mscaled_bool= False):
+    """
+    Removes translation (and rotations) for beads depending on the asr mode.
+    The projection is performed in the mass scaled coordinate: sqrt(m) * q.
+    :param: m: mass of atoms. shape: [natoms]
+    :param: beads_q: coordinate q for all bead. shape: [nbeads, 3 * natoms] 
+    :param: natoms: number of atoms in molecules.
+    :param: asr: mode of symmetry. options["None", "crystal", "poly"]
+    :param: vec: vectors to project out translation & rotation motions. shape: [nbeads, 3 * natom]
+    Adapted from ipi/engine/motion/phonons.py apply_asr.
+
+    Calls apply_symmetry_projection_single_bead function to project out trans & rotation dofs for a single bead.
+    """
+    nbeads = np.shape(beads_q)[0]
+    projected_vecs = []
+    for bead_index in range(nbeads):
+        projected_vec = apply_symmetry_projection_single_bead(m, 
+                                                              beads_q[bead_index], 
+                                                              natoms, 
+                                                              vec[bead_index], 
+                                                              asr= asr, 
+                                                              mscaled_bool= mscaled_bool)
+        projected_vecs.append(projected_vec)
     
+    projected_vecs = np.array(projected_vecs)
+    
+    return projected_vecs 

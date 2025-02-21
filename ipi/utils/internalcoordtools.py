@@ -48,7 +48,7 @@ class non_redundant_coordinate_transformer:
             ref_x
         )  # this function takes in an array of coordinate x and return \partial d / \partial x: The B matrix.
         ref_B = ref_B[0]  # B: redundant Wilson's B matrix.  shape: [natom^2, 3 * natom]
-        ref_U, ref_S = self._SVD_matrix_B(
+        ref_U, ref_S, ref_Vh = self._SVD_matrix_B(
             ref_B,
             singular_value_cutoff
         )  # ref_U: shape [natom^2, internal_dof].   ref_S: eigenvalue matrix S, diagonal part is eigenvalue s_i.
@@ -56,6 +56,7 @@ class non_redundant_coordinate_transformer:
         self.ref_U = ref_U  # left singular vector matrix. each column is one left singular vector.
         self.ref_UT = self.ref_U.T
         self.ref_S = ref_S
+        self.ref_Vh = ref_Vh 
         self.nonzero_S_index_len = len(ref_S)
         print(f"Number of nonzero dofs: {self.nonzero_S_index_len}") 
 
@@ -170,7 +171,7 @@ class non_redundant_coordinate_transformer:
 
         print(f"The non-redundant singular values we include {S}")
 
-        return U, S
+        return U, S, Vh 
 
     # x -> d. here d is redundant coordinate.
     def _compute_redundant_coordinate_d(self, x):

@@ -41,7 +41,8 @@ class non_redundant_coordinate_transformer:
         # record unitary matrix U and singular value matrix S for the reference point.
         self.ref_U = self.dlc_coord.ref_U 
         self.ref_UT = self.ref_U.T 
-        self.ref_S = self.dlc_coord.S 
+        self.ref_S = self.dlc_coord.S
+        self.ref_Vh = self.dlc_coord.ref_Vh  
         self.nonzero_S_index_len = len(self.ref_S)
         print(f"Number of nonzero dofs: {self.nonzero_S_index_len}")
     

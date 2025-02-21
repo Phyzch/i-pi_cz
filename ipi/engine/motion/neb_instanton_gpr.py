@@ -64,6 +64,7 @@ class MAPNEBGPRMover(Motion):
         fixcom=False,
         fixatoms=None,
         fix_dofs= np.array([]),
+        asr = "none",
         mode="verlet",
         prefix="neb_instanton",
         tolerances={"gradient": 5e-3, 
@@ -151,7 +152,8 @@ class MAPNEBGPRMover(Motion):
 
         # mode for optimization
         self.options["mode"] = mode
-
+        
+        self.options["asr"] = asr
         self.options["stage"] = stage
         self.options["tolerances"] = tolerances
         self.options["alt_out_step"] = alt_out  # step to output geometry.
@@ -864,6 +866,7 @@ class MAPNEBGPRMover(Motion):
         # negative gradient of LI-NEB action for each bead on mass scaled coordinate
         self.f_mscaled = -self.grad_mscaled
 
+
         if step == 0:
             # criterion for stop algorithm when the path is no longer improving.
             self.uphill_steps_cutoffs = 10
@@ -1111,10 +1114,12 @@ class MAPNEBGPRMover(Motion):
             outrange_bead_index_list,
         )
 
+    
     def neb_step_projected_verlet(self):
         """
         use the projected velocity verlet algorithm to optimize the bead position 
         """
+        old_x = np.copy(self.x)
         x_mscaled = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
@@ -1133,12 +1138,26 @@ class MAPNEBGPRMover(Motion):
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
+
+        # project out translation & rotational dofs depending on asr mode.
+        natoms = self.beads.natoms - len(self.fixatoms)
+        m = self.beads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
+
+        # project out translation & rotational mode in velocity.
+        self.velocity_mscaled = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(self.x), natoms, self.velocity_mscaled, asr= self.options["asr"], mscaled_bool= True)
+
+        # project out translation & rotational mode from step.
+        dx = self.x - old_x 
+        projected_dx = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(old_x), natoms, dx, asr= self.options["asr"])
+        self.x = old_x + projected_dx 
+
         self.beads.q[:, self.fixatoms_mask] = self.x
 
     def neb_step_cg(self):
         """
         use the conjugate gradient algorithm to optimize the bead position.
         """
+        old_x = np.copy(self.x)
         x_mscaled = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
@@ -1157,12 +1176,21 @@ class MAPNEBGPRMover(Motion):
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
+        
+        # project out translation & rotational mode from step.
+        natoms = self.beads.natoms - len(self.fixatoms)
+        m = self.beads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
+        dx = self.x - old_x 
+        projected_dx = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(old_x), natoms, dx, asr= self.options["asr"])
+        self.x = old_x + projected_dx 
+
         self.beads.q[:, self.fixatoms_mask] = self.x
 
     def neb_step_FIRE(self):
         """
         use the FIRE (Fast Inertial Relaxation Engine) algorithm to optimize the bead position.
         """
+        old_x = np.copy(self.x)
         x_mscaled = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
@@ -1188,6 +1216,8 @@ class MAPNEBGPRMover(Motion):
                                 self.alpha0,
                                 self.alpha_shrink
                                 )
+
+
         # update mass scaled gradient, force and action for LI-NEB 
         # FIRE() code has already called fdf(x) in the code.
         self.action = self.nebgm.action 
@@ -1197,6 +1227,18 @@ class MAPNEBGPRMover(Motion):
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
+
+        # project out translation & rotational dofs depending on asr mode.
+        natoms = self.beads.natoms - len(self.fixatoms)
+        m = self.beads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
+
+        # project out translation & rotational mode in velocity.
+        self.velocity_mscaled = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(self.x), natoms, self.velocity_mscaled, asr= self.options["asr"], mscaled_bool= True)
+
+        # project out translation & rotational mode from step.
+        dx = self.x - old_x 
+        projected_dx = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(old_x), natoms, dx, asr= self.options["asr"], mscaled_bool= False)
+        self.x = old_x + projected_dx 
 
         self.beads.q[:, self.fixatoms_mask] = self.x
 
@@ -1885,7 +1927,7 @@ class LINEBGradientMapper(object):
         )
 
         self.instanton_path_energy = None  # energy E of instanton path in JWKB approximation. See: Section II. A in J. Chem. Phys. 148, 102334 (2018)
-
+        
     def bind(self, ens: MAPNEBGPRMover):
         """
         :param: ens: A NEBMover instance.
@@ -1894,7 +1936,8 @@ class LINEBGradientMapper(object):
         self.dbeads = ens.beads.copy()
         self.dcell = ens.cell.copy()
         self.fixatoms = ens.fixatoms.copy()
-
+        self.asr = ens.options["asr"]
+        
         self.instanton_path_energy = ens.optarrays[
             "instanton_path_energy"
         ]  # bind the instanton path energy from NEB mover.
@@ -2050,10 +2093,10 @@ class LINEBGradientMapper(object):
         # Number of images
         nimage = self.dbeads.nbeads
         # Number of atoms that is free to move.
-        natom = self.dbeads.natoms - len(self.fixatoms)
+        natoms = self.dbeads.natoms - len(self.fixatoms)
 
-        self.spring_forces = np.zeros([nimage, 3 * natom])
-        self.end_bead_energy_constraint_forces = np.zeros([2, 3 * natom])
+        self.spring_forces = np.zeros([nimage, 3 * natoms])
+        self.end_bead_energy_constraint_forces = np.zeros([2, 3 * natoms])
         self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
 
         # abbreviated action for the ring polymer instanton path.
@@ -2061,7 +2104,7 @@ class LINEBGradientMapper(object):
 
         # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
         self.action_forces = self.compute_neb_action_force(
-            nimage, natom
+            nimage, natoms
         )
 
         # Change code above to implement Simpson's rule
@@ -2072,12 +2115,17 @@ class LINEBGradientMapper(object):
         # )
 
         # compute direction of tangent vector, using improved methods.
-        self.btau = self.compute_tangent_vector(nimage, natom)
+        self.btau = self.compute_tangent_vector(nimage, natoms)
 
         # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
         self.neb_optimization_force = self.compute_neb_optimization_force(
-            nimage, natom, self.btau
+            nimage, natoms, self.btau
         )
+
+        # project out translation (&rotational) dofs depending on the asr mode. (symmetry of the system.)
+        m = self.dbeads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
+        self.neb_optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.neb_optimization_force, asr= self.asr, mscaled_bool= True)
+        self.transverse_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.transverse_force, asr= self.asr, mscaled_bool= True)
 
         # sum of transverse forces for all internal beads 
         # (the action force for the end bead is set to be 0)

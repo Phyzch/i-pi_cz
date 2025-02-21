@@ -52,6 +52,16 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
 
+        "asr": (
+            InputValue,
+            {
+                "dtype": str,
+                "default": "none",
+                "options": ["none", "poly", "lin", "crystal"],
+                "help": "Removes the zero frequency vibrational modes depending on the symmerty of the system.",
+            },
+        ),
+
         "tolerances": (
             InputDictionary,
             {
@@ -693,6 +703,7 @@ class InputNebInstGPR(InputDictionary):
 
         # options
         self.mode.store(options["mode"])
+        self.asr.store(options["asr"])
         self.stage.store(options["stage"])
         self.tolerances.store(options["tolerances"])
         self.alt_out.store(options["alt_out_step"])

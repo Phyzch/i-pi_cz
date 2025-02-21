@@ -2112,6 +2112,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
         self.ref_U = U  
         self.ref_UT = U.T
         self.S = S
+        self.ref_Vh = Vh 
     
 
     def calculate(self, coords):

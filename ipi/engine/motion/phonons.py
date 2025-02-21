@@ -220,7 +220,7 @@ class DynMatrixMover(Motion):
             R = np.dot(qminuscom, U)
             D = np.zeros((3, 3 * self.beads.natoms), float)
 
-            # Computes the vectors along rotations.
+            # Computes the vectors along translations.
             D[0] = np.tile([1, 0, 0], self.beads.natoms) / self.ism
             D[1] = np.tile([0, 1, 0], self.beads.natoms) / self.ism
             D[2] = np.tile([0, 0, 1], self.beads.natoms) / self.ism
