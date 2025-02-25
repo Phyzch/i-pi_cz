@@ -78,7 +78,6 @@ class MAPNEBGPRMover(Motion):
               "Nmax": 100, "maxstep": 100,
               "neb_step_update_kappa": 20},
         time_step=4.0,
-        drift_time_step= 4.0, 
         cg_big_step= 1.0,
         instanton_time_step=4.0,
         stage="neb",
@@ -210,7 +209,6 @@ class MAPNEBGPRMover(Motion):
 
         self.optarrays["FIRE"] = FIRE   # parameters for FIRE optimization algorithm.
         self.optarrays["time_step"] = time_step
-        self.optarrays["drift_time_step"] = drift_time_step
         self.optarrays["cg_big_step"] = cg_big_step
         self.optarrays["instanton_time_step"] = instanton_time_step
 
@@ -234,7 +232,6 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["ridge_regularization_alpha"] = ridge_regularization_alpha 
 
         self.nebgm = LINEBGradientMapper()
-        self.actiongm = ActionGradientMapper()
         self.rp_map = RP_MAP()
 
         # variables for neb move
@@ -338,7 +335,6 @@ class MAPNEBGPRMover(Motion):
         self.gpr_forces = self.forces.copy(self.gpr_beads, self.cell)
 
         self.nebgm.bind(self)
-        self.actiongm.bind(self)
         self.rp_map.bind(self)
 
     def step(self, step=None):
@@ -374,8 +370,6 @@ class MAPNEBGPRMover(Motion):
             self.optarrays["instanton_path_energy"] = (
                 self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]
             )  # shift the instanton path energy according to energy shift.
-            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
-            self.actiongm.instanton_path_energy = self.optarrays["instanton_path_energy"]
             self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
 
             self.optarrays["VSC_E_ref"] = (
@@ -394,9 +388,6 @@ class MAPNEBGPRMover(Motion):
             # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
             self.nebgm.gpr_model = self.gpr_model
             self.nebgm.coordinate_transformer = self.coordinate_transformer
-
-            self.actiongm.gpr_model = self.gpr_model 
-            self.actiongm.coordinate_transformer = self.coordinate_transformer
 
             self.rp_map.gpr_model = self.gpr_model
             self.rp_map.coordinate_transformer = self.coordinate_transformer
@@ -878,11 +869,6 @@ class MAPNEBGPRMover(Motion):
                 [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
             )
 
-            # mass scaled velocity for moving all beads together along negative action gradient direction.
-            self.drift_velocity_mscaled = np.zeros(
-                [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
-            )
-
             self.time_step = self.optarrays["time_step"]
             
             if self.options["mode"] == "cg":
@@ -909,25 +895,6 @@ class MAPNEBGPRMover(Motion):
 
                 self.Ndn = 0  # number of steps going down hill
                 self.Nup = 0  # number of steps going up hill.
-
-                # initialize parameter for FIRE method used for drifting.
-                self.drift_time_step = self.optarrays["drift_time_step"]
-                self.drift_alpha0 = self.optarrays["FIRE"]["alpha0"]
-                self.drift_alpha = self.drift_alpha0
-                self.drift_alpha_shrink = self.optarrays["FIRE"]["alpha_shrink"]
-                
-                self.drift_dtmax = self.optarrays["drift_time_step"] * self.optarrays["FIRE"]["tmax"]
-                self.drift_dtmin = self.optarrays["drift_time_step"] * self.optarrays["FIRE"]["tmin"]
-
-                self.drift_Ndelay = self.optarrays["FIRE"]["Ndelay"]
-                self.drift_finc = self.optarrays["FIRE"]["finc"]
-                self.drift_fdec = self.optarrays["FIRE"]["fdec"]
-
-                self.drift_Nmax = self.optarrays["FIRE"]["Nmax"]
-                self.drift_maxstep = self.optarrays["FIRE"]["maxstep"]
-
-                self.drift_Ndn = 0  # number of steps going down hill for drifting motion.
-                self.drift_Nup = 0  # number of steps going up hill for drifting motion.
 
 
 
@@ -1073,23 +1040,6 @@ class MAPNEBGPRMover(Motion):
                 status="bad",
                 message="Only projected velocity verlet (verlet), conjugate gradient (cg) and FIRE are currently implemented. set mode == 'verlet' ",
             )
-
-
-        # if (grad_max_inner_bead <= self.options["tolerances"] ["gradient"] 
-        #         and grad_max_end_bead <= self.options["tolerances"]["gradient_end_bead"]):
-        #     # move all beads at once along the negative gradient direction of the action.
-        #     # only perform this when LINEB already have small gradients for all beads.
-        #     # "drift" step
-        #     self.neb_drift_step()
-        # else:
-        #     # Reset the Parameter for projected verlet or FIRE for drifting. 
-        #     # This procedure is to ensure the convergence.
-        #     self.drift_velocity_mscaled = np.zeros(self.drift_velocity_mscaled.shape)
-        #     if self.options["mode"] == "FIRE":
-        #         self.drift_alpha = self.drift_alpha0
-        #         self.drift_Ndn = 0 
-        #         self.drift_Nup = 0 
-        #         self.drift_time_step = self.optarrays["drift_time_step"]
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
         grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
@@ -1241,66 +1191,6 @@ class MAPNEBGPRMover(Motion):
         self.x = old_x + projected_dx 
 
         self.beads.q[:, self.fixatoms_mask] = self.x
-
-    def neb_drift_step(self):
-        """
-        drift the whole bead along the direction of action gradient
-        Use projected verlet algorithm for drifting.
-        """
-        x_mscaled = self.x * np.sqrt(
-            self.beads.m3[:, self.fixatoms_mask]
-        )
-
-        action, drift_gradient = self.actiongm(x_mscaled)
-
-        fdf0 = (action, drift_gradient)
-
-        if self.options["mode"] == "FIRE":
-            # one step using FIRE
-            # the x_mscaled will be updated in the mintools.FIRE() code
-            self.drift_velocity_mscaled, self.drift_alpha, self.drift_Ndn, self.drift_Nup, self.drift_time_step = \
-                ipi.utils.mintools.FIRE(
-                    x_mscaled,
-                    self.actiongm,
-                    fdf0,
-                    self.drift_velocity_mscaled,
-                    self.drift_alpha,
-                    self.drift_Ndn,
-                    self.drift_Nup,
-                    self.drift_time_step,
-                    self.drift_maxstep,
-                    self.drift_dtmax,
-                    self.drift_dtmin,
-                    self.drift_Ndelay,
-                    self.drift_Nmax,
-                    self.drift_finc,
-                    self.drift_fdec,
-                    self.drift_alpha0,
-                    self.drift_alpha_shrink
-                )
-        else:
-            drift_time_step = self.optarrays["drift_time_step"]
-            x_mscaled, self.drift_velocity_mscaled, self.action, drift_gradient = \
-                ipi.utils.nebinstool.projected_verlet(
-                    x_mscaled,
-                    self.drift_velocity_mscaled,
-                    (action, drift_gradient),
-                    self.actiongm,
-                    drift_time_step
-                )
-        
-        # since the bead has been moved. We have to update action and gradient in LINEB moves.
-        self.action, self.grad_mscaled = self.nebgm(x_mscaled)
-        self.f_mscaled = -self.grad_mscaled
-
-        # update the new position.
-        self.x = x_mscaled / np.sqrt(
-            self.beads.m3[:, self.fixatoms_mask]
-        )
-        self.beads.q[:, self.fixatoms_mask] = self.x
-
-        print(f"sum of action forces: {self.nebgm.action_forces_sum_amplitude}. action: {self.action}")
-
 
     def update_GPR_model_one_bead_subroutine(
         self, training_x, bead_index_for_update, training_bead_forces
@@ -1613,7 +1503,7 @@ class MAPNEBGPRMover(Motion):
         end_bead_energy_converge_value = self.optarrays["end_bead_energy_converge_value"]
         end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
 
-        # # we want spring_k * path_distance * 0.01 = <g>_action.
+        # # alternative choice of spring constant: we want spring_k * path_distance * 0.01 = <g>_action.
         # mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
         # path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
         # nimages = self.beads.nbeads
@@ -2551,172 +2441,6 @@ class LINEBGradientMapper(object):
         neb_optimization_force = neb_optimization_force + spring_force
 
         return neb_optimization_force
-
-
-class ActionGradientMapper(LINEBGradientMapper):
-    """
-    FIXME: This should really be the inheritance of LINEBGradientMapper class, but re-write the __call__ function.
-    Compute the Gradient of the action of the LINEB beads.
-    Then we take average of all gradient of action for beads. This average gradient will be used to drift the bead path.
-    Used for moving all LINEB beads together along the negative gradient of the action.
-    :Attributes:
-        action: abbreviated action W for the LI-NEB path.
-        action_forces: negative gradient of abbreviated action W.
-        instanton_path_energy: energy of the instanton path.
-    """
-    def __init__(self):
-        self.action = None 
-        self.action_forces = None 
-        self.instanton_path_energy = None 
-    
-    def bind(self, ens: MAPNEBGPRMover):
-        """
-        :param: ens: A NEBMover Instance.
-        """
-        self.dbeads = ens.beads.copy()
-        self.dcell = ens.cell.copy()
-        self.fixatoms = ens.fixatoms.copy()
-
-        self.instanton_path_energy = ens.optarrays[
-            "instanton_path_energy"
-        ]  # bind the instanton path energy from NEB mover.
-
-        # Mask to exclude fixed atoms from 3N-arrays
-        self.fixatoms_mask = np.ones(3 * ens.beads.natoms, dtype=bool)
-        if len(ens.fixatoms) > 0:
-            self.fixatoms_mask[3 * ens.fixatoms] = 0
-            self.fixatoms_mask[3 * ens.fixatoms + 1] = 0
-            self.fixatoms_mask[3 * ens.fixatoms + 2] = 0
-
-        # Create reduced bead and force object (excluding the fixed atoms. But including the beads at two ends that also moves)
-        self.rbeads = Beads(ens.beads.natoms, ens.beads.nbeads)
-        self.rbeads.q[:] = ens.beads.q[:]
-
-        self.energy_shift = ens.optarrays["energy_shift"]
-        # bind the gpr model from NEBMover.
-        self.gpr_model = ens.gpr_model
-        self.coordinate_transformer = ens.coordinate_transformer
-    
-    def get_gpr_potential_and_forces(self):
-        """
-        Get potential and forces for all beads using the Gaussian Process Regression model.
-        When there is ab-initio potential and force available, we use the ab initio value.
-        return: potential for all beads.
-        """
-        test_x = np.copy(self.rbeads.q)
-        beads_potential_shift, beads_potential_grad_x, _, _ = (
-            self.gpr_model.predict_latent_function(test_x)
-        )
-
-        beads_forces = - beads_potential_grad_x
-        # the predicted potential is the one relative to the energy shift.
-        beads_potential = beads_potential_shift + self.energy_shift
-
-        # For Simpson's rule 
-        midpoint_test_x = (self.rbeads.q[:-1] + self.rbeads.q[1:]) / 2
-        midpoint_potential_shift, midpoint_grad_x, _, _ = (
-            self.gpr_model.predict_latent_function(
-                midpoint_test_x
-            )
-        )
-        
-        midpoint_forces = - midpoint_grad_x 
-        midpoint_beads_energy = midpoint_potential_shift + self.energy_shift
-        
-        nimage = self.dbeads.nbeads
-        self.midpoint_beads_energy = midpoint_beads_energy
-        self.midpoint_rbf = midpoint_forces.copy()[:, self.fixatoms_mask]
-        self.mscaled_midpoint_f = self.midpoint_rbf / np.sqrt(
-            self.dbeads.m3[:nimage - 1, self.fixatoms_mask]
-        )
-        return beads_potential, beads_forces
-
-    def compute_transverse_forces(self, nimage, natom, btau):
-        """
-        """
-        neb_transverse_force = np.zeros([nimage, 3 * natom])
-        for ii in range(1, nimage - 1):
-            neb_transverse_force[ii] = (
-                self.action_forces[ii]
-                - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
-            )
-        
-        return neb_transverse_force
-        
-    def compute_drift_forces(self, nimage, natom, neb_transverse_force, transverse_forces_mean_amplitude):
-        """
-        compute drift forces which is action_forces_mean_amplitude * transverse_force_direction.
-        The drift direction of end beads are chosen to be parallel to the drift direction of bead connected to it.
-        :param: nimage: number of ring polymer images 
-        :param: natom: number of atoms.
-        :param: btau: tangent direction of instanton path.
-        :param: transverse_forces_mean_amplitude: the amplitude of the mean value of the action forces. 
-        """
-        drift_forces = np.zeros([nimage, 3 * natom])
-        for ii in range(1, nimage - 1):
-            drift_forces[ii] = (neb_transverse_force[ii] / 
-                                np.linalg.norm(neb_transverse_force[ii])) * transverse_forces_mean_amplitude
-        
-        drift_forces[0] = drift_forces[1]
-        drift_forces[nimage - 1] = drift_forces[nimage - 2]
-
-        return drift_forces 
-
-
-    def __call__(self, mscaled_q):
-        """
-        Return the action and gradient of the action. 
-        :param:  msacled_q: new mass scaled coordinates for updated freely moving particles.
-        """
-        # coordinate q.
-        q = mscaled_q / np.sqrt(
-            self.dbeads.m3[:, self.fixatoms_mask]
-        )
-
-        self.initialize_force(q)
-
-        # mass scaled coordinate.
-        self.mscaled_q = mscaled_q
-
-        # Number of images
-        nimage = self.dbeads.nbeads
-        # Number of atoms that is free to move.
-        natom = self.dbeads.natoms - len(self.fixatoms)
-
-        # # compute the abbreviated action for the ring polymer instanton path.
-        # self.action = self.compute_neb_action(nimage)
-
-        # # negative gradient of abbreviated action for each bead
-        # self.action_forces = self.compute_neb_action_force(
-        #     nimage, natom
-        # )
-
-        # Use Simpson's rule to compute action & action force
-        self.action = self.compute_neb_action_Simpson_rule(nimage)
-
-        self.action_forces = self.compute_neb_action_force_Simpson_rule(
-            nimage, natom
-        )
-
-        # compute direction of tangent vector, using improved methods.
-        btau = self.compute_tangent_vector(nimage, natom)
-
-        neb_transverse_force = self.compute_transverse_forces(nimage, natom, btau)
-
-        transverse_forces_mean = np.mean(neb_transverse_force[1:-1], axis= 0)
-        # # we set the same action forces for all beads for it to drift.
-        drift_forces = np.repeat(transverse_forces_mean[np.newaxis, :], nimage, axis= 0)
-
-        # transverse_forces_mean_amplitude = np.linalg.norm(transverse_forces_mean)
-
-        # drift_forces = self.compute_drift_forces(nimage, 
-        #                                          natom, 
-        #                                          neb_transverse_force, 
-        #                                          transverse_forces_mean_amplitude)
-        
-        drift_gradient = - drift_forces
-
-        return self.action, drift_gradient
 
 
 class RP_MAP(object):
