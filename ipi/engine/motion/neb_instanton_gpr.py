@@ -1566,24 +1566,6 @@ class MAPNEBGPRMover(Motion):
             right_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
             self.optarrays["kappa"]["right"] = np.min([self.optarrays["kappa"]["right"], right_kappa_for_converge])
 
-    def scale_down_spring_constant_and_kappa(self):
-        """
-        When the inner loop code fails to converge after several steps, we keep scaling down the spring force and kappa term.
-        """
-        scale = 0.5
-        self.optarrays["spring_k"] = self.optarrays["spring_k"] * scale
-        self.nebgm.spring_k = self.nebgm.spring_k * scale 
-        self.nebgm.VSC_k_max = self.nebgm.spring_k 
-        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
-
-        self.optarrays["kappa"]["left"] = (
-            self.optarrays["kappa"]["left"] * scale 
-        )
-
-        self.optarrays["kappa"]["right"] = (
-            self.optarrays["kappa"]["right"] * scale
-        )
-
     def print_geometry(self, step):
         """
         print beads geometry and beads energy.

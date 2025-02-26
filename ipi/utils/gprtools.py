@@ -811,6 +811,7 @@ class GPModelWithDerivativesWrapper:
         var_V = test_var[:, 0]
         var_grad_q = test_var[:, 1:]
 
+
         # covariance matrix for the noise in the Cartesian coordinate: Cov(noise_x, noise_x) = V S diag(var_grad_q) S V^T. Here S is singular value matrix, V is the right singular vector matrix.
         # the measure of the force noise can be defined as the trace of the covariance matrix of the force noise in Cartesian coordinate.
         var_grad_x_trace = np.sum(
