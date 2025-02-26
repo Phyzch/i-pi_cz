@@ -712,7 +712,7 @@ class Essentially_Nonoscillatory_Polynomial(object):
         beads_q_shape = np.shape(self.beads_q)
         beads_number = self.beads_number
         alpha = self.alpha 
-        difference_matrix = np.zeros(np.concatenate([self.order + 1, 
+        difference_matrix = np.zeros(np.concatenate([ [self.order + 1], 
                                                       beads_q_shape])
                                                       )
         difference_matrix[0] = np.copy(self.beads_q)
@@ -749,13 +749,19 @@ class Essentially_Nonoscillatory_Polynomial(object):
                 first_order_term = np.polynomial.Polynomial([ -self.alpha[i], 1]) * self.difference_matrix[1, i, n] 
                 polynomial_ENO[n] = polynomial_ENO[n] + first_order_term 
 
-            k_min_list = np.zeros((order + 1))
+            k_min_list = np.zeros((order + 1)).astype(int)
             k_min_list[1] = i 
             for l in range(2, order + 1):
                 a = self.difference_matrix[l, k_min_list[l-1]]
                 if k_min_list[l-1] == 0:
+                    # boundary condition
                     c = a 
                     k_min_list[l] = k_min_list[l-1]
+                elif k_min_list[l-1] + l > beads_number - 1:
+                    # boundary condition
+                    b = self.difference_matrix[l, k_min_list[l-1] - 1]
+                    c = b 
+                    k_min_list[l] = k_min_list[l-1] -1 
                 else:
                     b = self.difference_matrix[l, k_min_list[l-1] - 1]
                     if np.linalg.norm(a) > np.linalg.norm(b):

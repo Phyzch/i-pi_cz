@@ -1817,7 +1817,8 @@ class LINEBGradientMapper(object):
         )
 
         self.instanton_path_energy = None  # energy E of instanton path in JWKB approximation. See: Section II. A in J. Chem. Phys. 148, 102334 (2018)
-        
+        self.ENO_order = 3
+
     def bind(self, ens: MAPNEBGPRMover):
         """
         :param: ens: A NEBMover instance.
@@ -2005,7 +2006,8 @@ class LINEBGradientMapper(object):
         # )
 
         # compute direction of tangent vector, using improved methods.
-        self.btau = self.compute_tangent_vector(nimage, natoms)
+        # self.btau = self.compute_tangent_vector(nimage, natoms)
+        self.btau = self.compute_ENO_tangent_vector()
 
         # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
         self.neb_optimization_force = self.compute_neb_optimization_force(
@@ -2070,6 +2072,20 @@ class LINEBGradientMapper(object):
             btau[ii] /= npnorm(btau[ii])
 
         return btau
+    
+    def compute_ENO_tangent_vector(self):
+        """
+        compute tangent vector using essentially non-oscillatory scheme.
+        See https://dx.doi.org/10.4310/CMS.2003.v1.n2.a10
+        """
+        mscaled_q = np.copy(self.mscaled_q)
+        beads_energy = self.beads_energy
+        eno_object = ipi.utils.nebinstool.Essentially_Nonoscillatory_Polynomial(mscaled_q,
+                                                                                beads_energy,
+                                                                                order = self.ENO_order)
+        
+        btau = eno_object.compute_tangent_vector()
+        return btau 
 
     def compute_neb_action(self, nimage):
         """
