@@ -672,3 +672,177 @@ def apply_symmetry_projection(m, beads_q, natoms, vec, asr= "none", mscaled_bool
     projected_vecs = np.array(projected_vecs)
     
     return projected_vecs 
+
+class Essentially_Nonoscillatory_Polynomial(object):
+    """
+    construct essentially non-oscillatory polynomial (ENO) to represent the path.
+    The tangent direction of the path can be given by the first derivative of the polynomial using the upwind scheme.
+    See: https://dx.doi.org/10.4310/CMS.2003.v1.n2.a10
+    """
+    def __init__(self, beads_q, beads_energy, order):
+        """
+        :param: beads_q: [nbeads, 3 * natom]. beads coordinate that represent the path.
+        :param: beads_energy: the energy of beads. Used for upwind scheme to construct tangent vector.
+        :param: order: the order of the ENO polynomial we will construct. 
+        """
+        self.beads_q = np.copy(beads_q)
+        self.beads_energy = np.copy(beads_energy)
+        self.order = order 
+        self.beads_number = np.shape(self.beads_q)[0]
+
+    def compute_parametrization(self):
+        """
+        compute the parameter alpha for the path. 
+        The path is parametrized by the normalized arc length alpha. so f(0) = q[0], f(1) = q[-1].  
+        parameter alpha in range [0, 1].
+
+        """
+        q_distance = np.linalg.norm(self.beads_q[1:] - self.beads_q[:-1], axis= 1)
+        distance_sum = np.sum(q_distance)
+        normalized_q_distance = q_distance / distance_sum 
+        alpha = np.cumsum(normalized_q_distance)
+        alpha = np.concatenate([[0], alpha])
+        # parameter alpha: distance along the path. This parametrize the path.
+        self.alpha = alpha 
+    
+    def compute_Newton_divided_difference(self):
+        """
+        compute Newton's divided difference to the order given by self.order.
+        """
+        beads_q_shape = np.shape(self.beads_q)
+        beads_number = self.beads_number
+        alpha = self.alpha 
+        difference_matrix = np.zeros(np.concatenate([self.order + 1, 
+                                                      beads_q_shape])
+                                                      )
+        difference_matrix[0] = np.copy(self.beads_q)
+        for l in range(1, self.order + 1):
+            for i in range(0, beads_number - l):
+                difference_matrix[l, i] = (difference_matrix[l -1, i + 1] - difference_matrix[l -1, i]) / (alpha[i + l] - alpha[i])
+        
+        self.difference_matrix = difference_matrix
+    
+    def compute_ENO_polynomial(self):
+        """
+        compute essentially non-oscillatory polynomial to the order : self.order. 
+        We use numpy.Polynomial to construct the approximate polynomial. 
+        See Algorithm 3.1 in https://dx.doi.org/10.4310/CMS.2003.v1.n2.a10
+        """
+        beads_number = self.beads_number 
+        ndofs = np.shape(self.beads_q)[1]
+        # The order of polynomial we will construct.
+        order = self.order 
+        
+        # shape: [beads_number -1, ndofs]
+        polynomial_ENO_list = []
+
+        for i in range(beads_number - 1):
+            # polynomial_ENO[i] is associated with interval [alpha_{i}, alpha_{i+1}].
+            # A list of polynomials along each dofs.
+            polynomial_ENO = []
+            for n in range(ndofs):
+                polynomial_ENO_term = np.polynomial.Polynomial([self.beads_q[i, n]])
+                polynomial_ENO.append(polynomial_ENO_term)
+
+            # (alpha - alpha[i]) * f[alpha[i], alpha[i+1]]
+            for n in range(ndofs):
+                first_order_term = np.polynomial.Polynomial([ -self.alpha[i], 1]) * self.difference_matrix[1, i, n] 
+                polynomial_ENO[n] = polynomial_ENO[n] + first_order_term 
+
+            k_min_list = np.zeros((order + 1))
+            k_min_list[1] = i 
+            for l in range(2, order + 1):
+                a = self.difference_matrix[l, k_min_list[l-1]]
+                if k_min_list[l-1] == 0:
+                    c = a 
+                    k_min_list[l] = k_min_list[l-1]
+                else:
+                    b = self.difference_matrix[l, k_min_list[l-1] - 1]
+                    if np.linalg.norm(a) > np.linalg.norm(b):
+                        c = b 
+                        k_min_list[l] = k_min_list[l-1] - 1 
+                    else:
+                        c = a 
+                        k_min_list[l] = k_min_list[l-1]
+                
+                # c * \prod_{m - k_min[l-1]}^{k_min[l-1] + l -1} (alpha - alpha[m])
+                for n in range(ndofs):
+                    order_l_term = np.polynomial.Polynomial([c[n]])
+                    for m in range(k_min_list[l-1], k_min_list[l-1] + l):
+                        order_l_term = order_l_term * np.polynomial.Polynomial([- self.alpha[m], 1])
+                
+                    polynomial_ENO[n] = polynomial_ENO[n] + order_l_term 
+                
+            polynomial_ENO_list.append(polynomial_ENO)
+        
+        self.polynomial_ENO_list = polynomial_ENO_list
+    
+    def compute_tangent_vector_subroutine(self):
+        """
+        compute tangent vector as the first derivative of polynomial
+        """
+        beads_number = self.beads_number 
+        ndofs = np.shape(self.beads_q)[1]
+        beads_energy = self.beads_energy 
+
+        btau = np.zeros((beads_number, ndofs), float)
+        for ii in range(1, beads_number -1):
+            # tau minus 
+            d1 = np.zeros([ndofs])
+            for n in range(ndofs):
+                # tangent direction is defined as the derivative of the polynomial.
+                deriv = self.polynomial_ENO_list[ii -1][n].deriv()
+                d1[n] = deriv(self.alpha[ii])
+            
+            # tau plus 
+            d2 = np.zeros([ndofs])
+            for n in range(ndofs):
+                # tangent direction is defined as the derivative of the polynomial.
+                deriv = self.polynomial_ENO_list[ii][n].deriv()
+                d2[n] = deriv(self.alpha[ii])
+
+            # Improved tangent estimate:
+            # Energy of images: E(ii + 1) < E(ii) < E(ii - 1)
+            if beads_energy[ii + 1] < beads_energy[ii] < beads_energy[ii - 1]:
+                btau[ii] = d1 
+            elif beads_energy[ii - 1] <= beads_energy[ii] <= beads_energy[ii + 1]:
+                btau[ii] = d2 
+            else:
+                maxpot = max(
+                    abs(beads_energy[ii + 1] - beads_energy[ii]),
+                    abs(beads_energy[ii - 1] - beads_energy[ii]),
+                )
+                minpot = min(
+                    abs(beads_energy[ii + 1] - beads_energy[ii]),
+                    abs(beads_energy[ii - 1] - beads_energy[ii]),
+                )
+
+                if beads_energy[ii + 1] >= beads_energy[ii - 1]:
+                    btau[ii] = d2 * maxpot + d1 * minpot
+                elif beads_energy[ii + 1] < beads_energy[ii - 1]:
+                    btau[ii] = d2 * minpot + d1 * maxpot
+            btau[ii] = btau[ii] / np.linalg.norm(btau[ii])
+        
+        return btau 
+
+    def compute_tangent_vector(self):
+        """
+        compute tangent vector using first derivative of the ENO polynomial. 
+        call compute_parameterization(), compute_Newton_divided_difference(),
+             compute_ENO_polynomial(),  compute_tangent_vector_subroutine() 
+        """
+        # compute parameter alpha that parameterize the path.
+        self.compute_parametrization()
+        
+        self.compute_Newton_divided_difference()
+        
+        # compute Essentially non-oscillatory polynomial using Newton divided difference 
+        self.compute_ENO_polynomial()
+        
+        # compute the tangent vector as first order derivative of ENO polynomial. 
+        btau = self.compute_tangent_vector_subroutine()
+
+        return btau
+
+
+        
