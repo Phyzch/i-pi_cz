@@ -370,6 +370,7 @@ class MAPNEBGPRMover(Motion):
             self.optarrays["instanton_path_energy"] = (
                 self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]
             )  # shift the instanton path energy according to energy shift.
+            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
             self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
 
             self.optarrays["VSC_E_ref"] = (
@@ -1502,27 +1503,31 @@ class MAPNEBGPRMover(Motion):
 
         end_bead_energy_converge_value = self.optarrays["end_bead_energy_converge_value"]
         end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
+        bead_number = self.beads.nbeads
 
-        # # alternative choice of spring constant: we want spring_k * path_distance * 0.01 = <g>_action.
-        # mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
-        # path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
-        # nimages = self.beads.nbeads
-        # natoms = self.beads.natoms
-        # action_force = self.nebgm.compute_neb_action_force(nimages, natoms)
-        # average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
-        # self.optarrays["spring_k"] = average_action_force / (0.01 * path_distance)
-        # self.nebgm.spring_k = self.optarrays["spring_k"]
-        # self.nebgm.VSC_k_max = self.optarrays["spring_k"]
-        # self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
+        # # alternative choice of spring constant: we want spring_k * path_distance / (10 * bead_number) = <g>_action.
+        mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
+        path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
+        nimages = self.beads.nbeads
+        natoms = self.beads.natoms
+        action_force = self.nebgm.compute_neb_action_force(nimages, natoms)
+        average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
+        # near the convergence, the action force can be small. We need a minimum cutoff for spring constant.
+        average_action_force_cutoff = 5e-3 
+        average_action_force = np.max([average_action_force, average_action_force_cutoff])
+        self.optarrays["spring_k"] = average_action_force / (path_distance / (10 * bead_number))
+        self.nebgm.spring_k = self.optarrays["spring_k"]
+        self.nebgm.VSC_k_max = self.optarrays["spring_k"]
+        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
         # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
-        val1 = spring_k * np.power(dt, 2)
-        spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
-        spring_k_scale = spring_k_ratio / val1
-        self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
-        self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
-        self.nebgm.VSC_k_max = self.nebgm.spring_k
-        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
+        # val1 = spring_k * np.power(dt, 2)
+        # spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
+        # spring_k_scale = spring_k_ratio / val1
+        # self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
+        # self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
+        # self.nebgm.VSC_k_max = self.nebgm.spring_k
+        # self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
         kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
         
