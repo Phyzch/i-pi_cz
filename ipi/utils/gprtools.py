@@ -29,7 +29,7 @@ def predict_latent_function_gp_with_derivative(
     suppose output_dim = m.
     return: mean: mean value of prediction for test_inputs. shape: [N, m]
 
-            if covar_bool == True: return: test_covariance: [N * m , N * m]
+            if covar_bool == True: return: test_covariance_list: [N ,m, m]. here we assume no correlation between predicted data points. 
             if covar_bool == False: return: test_var: [N, m]: each row is the variance of one data point.
     """
     # check the input dim of test data is correct
@@ -52,14 +52,23 @@ def predict_latent_function_gp_with_derivative(
 
         # diagonal component of covariance matrix is the variance of function and gradient
         test_var = torch.diag(test_covariance)
-
         test_var = test_var.reshape(
             [model.output_dim, data_num]
         )  # first row is variance for f,  second row is variance for df/dx1, third row: df/dx2, ..
         test_var = torch.transpose(test_var, 0, 1)  # now each row is one data piont.
 
+        # return covariance matrix for each data set.
+        # shape: [data_num, model.output_dim, model.output_dim]
+        test_covariance_list = [] 
+        for i in range(data_num):
+            index = np.arange(i, model.output_dim * data_num, data_num)
+            index_2d = np.meshgrid(index, index, indexing= 'ij')
+            test_data_point_covariance = test_covariance[index_2d[0], index_2d[1]]
+            test_covariance_list.append(test_data_point_covariance)
+        test_covariance_list = torch.tensor(np.array(test_covariance_list))
+
     if covar_bool:
-        return test_mean, test_covariance
+        return test_mean, test_covariance_list
     else:
         return test_mean, test_var
 
@@ -343,7 +352,7 @@ class FixInternalDofs(object):
         return moving_train_targets
 
     def transform_from_free_moving_dofs_to_full_dofs(
-        self, moving_test_mean: np.ndarray, moving_test_var: np.ndarray
+        self, moving_test_mean: np.ndarray, moving_test_covar_matrix: np.ndarray
     ):
         """
         Transform the prediction of GPR model from free moving dofs into full dofs.
@@ -364,14 +373,17 @@ class FixInternalDofs(object):
         if len(self.fixed_internal_dofs) != 0:
             test_mean[:, self.fixed_internal_dofs + 1] = test_target_fixed_dofs
 
-        # the variance of the prediction of the test data with all dofs
-        test_var = np.zeros([test_data_num, self.output_dim])
-        test_var[:, 0] = moving_test_var[:, 0]  # potential
-        test_var[:, self.free_moving_dofs + 1] = moving_test_var[:, 1:]
-        if len(self.fixed_internal_dofs) != 0:
-            test_var[:, self.fixed_internal_dofs + 1] = 0
+        # the covariance of the prediction of the test data with all dofs
+        # the covar matrix component of fixed dofs is set to 0.
+        test_covar_matrix = np.zeros([test_data_num, self.output_dim, self.output_dim])
+        test_covar_matrix[:,0, 0] = moving_test_covar_matrix[:, 0, 0]
+        free_moving_grad_index = self.free_moving_dofs + 1  # index 0 is for potential.
+        free_moving_grad_index_2d = np.meshgrid(free_moving_grad_index,
+                                                free_moving_grad_index,
+                                                indexing= 'ij')
+        test_covar_matrix[:, free_moving_grad_index_2d[0], free_moving_grad_index_2d[1]] = moving_test_covar_matrix[:, 1:, 1:]
 
-        return test_mean, test_var
+        return test_mean, test_covar_matrix
 
 
 class NormalizeTrainingData(object):
@@ -478,18 +490,18 @@ class NormalizeTrainingData(object):
 
         return normalized_noise_var
 
-    def inverse_normalize_noise_var(self, normalized_noise_var):
+    def inverse_normalize_noise_covar_matrix(self, normalized_noise_covar_matrix):
         """
-        inverse normalize the variance of the noise
+        inverse normalize the covariance matrix of the noise
         """
-        noise_var = normalized_noise_var * np.power(self.V_range, 2)
+        noise_covar_matrix = normalized_noise_covar_matrix * np.power(self.V_range, 2)
 
         # inverse rescale the variance of gradient noise 
-        grad_noise_var = noise_var[:,1:]
-        grad_noise_var = grad_noise_var / np.power(self.q_range, 2)
-        noise_var[:,1:] = grad_noise_var
+        grad_noise_covar_matrix = noise_covar_matrix[:,1:, 1:]
+        grad_noise_covar_matrix = grad_noise_covar_matrix / np.outer(self.q_range, self.q_range)[np.newaxis, :]
+        noise_covar_matrix[:,1:, 1:] = grad_noise_covar_matrix
 
-        return noise_var
+        return noise_covar_matrix
 
 
 class GPModelWithDerivativesWrapper:
@@ -769,31 +781,31 @@ class GPModelWithDerivativesWrapper:
         moving_test_q = torch.from_numpy(moving_test_q)
 
         # use Gaussian process regression model to make prediction
-        moving_normalized_test_mean, moving_normalized_test_var = (
+        moving_normalized_test_mean, moving_normalized_test_covar_matrix = (
             predict_latent_function_gp_with_derivative(
                 self.gpr_model, 
                 test_inputs= moving_test_q,
-                covar_bool=False
+                covar_bool= True
             )
         )
 
         moving_normalized_test_mean = (
             moving_normalized_test_mean.detach().cpu().numpy()
         )
-        moving_normalized_test_var = (
-            moving_normalized_test_var.detach().cpu().numpy()
+        moving_normalized_test_covar_matrix = (
+            moving_normalized_test_covar_matrix.detach().cpu().numpy()
         )
 
         # attach test_mean and test_var (0) of fixed dofs
-        normalized_test_mean, normalized_test_var = (
+        normalized_test_mean, normalized_test_covar_matrix = (
             self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
-                moving_normalized_test_mean, moving_normalized_test_var
+                moving_normalized_test_mean, moving_normalized_test_covar_matrix
             )
         )
 
         # inverse the normalization procedure for mean value and variance.
-        test_var = self.Normalizer.inverse_normalize_noise_var(
-            normalized_test_var
+        test_covar_matrix_q = self.Normalizer.inverse_normalize_noise_covar_matrix(
+            normalized_test_covar_matrix
         )
         
         test_mean = self.Normalizer.inverse_normalization_transform(
@@ -808,18 +820,32 @@ class GPModelWithDerivativesWrapper:
             test_x_array, grad_q
         )
 
-        var_V = test_var[:, 0]
-        var_grad_q = test_var[:, 1:]
+        var_V = test_covar_matrix_q[:, 0, 0]
+        var_grad_q = test_covar_matrix_q[:, np.arange(1, self.output_dim), np.arange(1, self.output_dim)]
+        var_grad_q_trace = np.sum(var_grad_q, axis= 1)
 
+        # transformation for covariance matrix from internal coordinate to Cartesian coordinate.
+        test_data_num, output_dim_x = test_x_array.shape
+        Bq = self.coordinate_transformer.compute_delocalized_wilson_matrix_Bq(test_x_array)
+        Bq_T = np.transpose(Bq, (0, 2, 1))
+        
+        grad_covar_matrix_q = test_covar_matrix_q[:, 1:, 1:]
+        grad_covar_matrix_x = Bq_T @ grad_covar_matrix_q @ Bq
+
+        test_covar_matrix_x = np.zeros((test_data_num, output_dim_x + 1, output_dim_x + 1))
+        test_covar_matrix_x[:, 0, 0] = test_covar_matrix_q[:, 0, 0]
+        test_covar_matrix_x[:, 1:, 1:] = grad_covar_matrix_x 
 
         # covariance matrix for the noise in the Cartesian coordinate: Cov(noise_x, noise_x) = V S diag(var_grad_q) S V^T. Here S is singular value matrix, V is the right singular vector matrix.
         # the measure of the force noise can be defined as the trace of the covariance matrix of the force noise in Cartesian coordinate.
-        var_grad_x_trace = np.sum(
-            self.Bmatrix_singular_value_square * var_grad_q, axis=1
-        )
+        # var_grad_x_trace = np.sum(
+        #     self.Bmatrix_singular_value_square * var_grad_q, axis=1
+        # )
+        var_grad_x = np.diagonal(test_covar_matrix_x[:, 1:, 1:], axis1= 1, axis2= 2)
+        var_grad_x_trace = np.sum(var_grad_x, axis= 1)
 
         if internal_coordinate_bool:
-            return V, grad_q, var_V, var_grad_x_trace
+            return V, grad_q, var_V, var_grad_q_trace
         else:
             return V, grad_x, var_V, var_grad_x_trace
 
