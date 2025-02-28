@@ -514,26 +514,6 @@ class MAPNEBGPRMover(Motion):
         )
         return train_x, train_V, train_grad
 
-    def read_initial_training_data(self):
-        """
-        read initial training data stored in files (previously computed)
-        """
-        train_x, stored_train_V, stored_train_f = (
-            ipi.utils.nebinstgprtool.read_training_data(prefix="neb_final_gpr_training")
-        )
-
-        # count the # of ab-initio calculation we have done.
-        # Note: We should not count this number as new ab initio calculation we will do.
-        ab_initio_calculation_number = np.shape(train_x)[0]
-        self.ab_initio_bead_calculation_number = (
-            self.ab_initio_bead_calculation_number + ab_initio_calculation_number
-        )
-
-        train_V = stored_train_V - self.optarrays["energy_shift"]
-        train_grad = -stored_train_f
-
-        return train_x, train_V, train_grad
-
     def initialialize_GPR_model(self):
         """
         initialize the gaussian process regression model.
@@ -585,7 +565,16 @@ class MAPNEBGPRMover(Motion):
         if not read_gpr_training_data_bool:
             train_x, train_V, train_grad = self.generate_initial_training_data()
         else:
-            train_x, train_V, train_grad = self.read_initial_training_data()
+            # read stored training data from folder.
+            train_x, stored_train_V, stored_train_f =  (
+            ipi.utils.nebinstgprtool.read_training_data(prefix="neb_final_gpr_training")
+            )
+            # count the number of ab-initio calculation we have done.
+            self.ab_initio_bead_calculation_number = (
+                self.ab_initio_bead_calculation_number + np.shape(train_x)[0]
+            )
+            train_V = stored_train_V - train_V 
+            train_grad = - stored_train_f
 
         gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(prefix= "neb_final_gpr_training")
 

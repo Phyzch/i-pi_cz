@@ -435,7 +435,6 @@ def read_fixed_internal_dofs(prefix):
     
     return fixed_internal_dofs
 
-
 def read_training_data(prefix):
     """
     read coordinate, potential V and force f for training data.
