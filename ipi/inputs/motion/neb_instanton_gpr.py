@@ -354,6 +354,21 @@ class InputNebInstGPR(InputDictionary):
                 """,
             },
         ),
+        "gpr_force_uncertainty_criterion":(
+            InputValue,
+            {
+                "dtype": float,
+                "default": 0.001,
+                "help": """
+                convergence criterion for gpr outer loop.
+                The std from GPR prediction is compared with the criterion.
+                If all images' uncertainty is smaller than criterion, the algorithm converge.
+                otherwise, the bead with large uncertainty is selected, its potential and force are computed,
+                then it's used to update the model. 
+                """
+            }
+        ),
+
         "gpr_trust_region": (
             InputValue,
             {
@@ -370,7 +385,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.05,
+                "default": 0.1,
                 "help": """ The trust region will be adjusted when we find the current trust region is too 
                 large to make the optimization algorithm unstable. The minimum trust region avoids we makes
                 the trust region too small.
@@ -382,7 +397,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.05,
+                "default": 0.1,
                 "help": """ To avoid ill-conditioning of covariance matrix in the Gaussian Process Regression 
                 model, we have to avoid adding data points too close to existing training data points in the 
                 model. This distance cutoff will throw away data points too close to existing data. 
@@ -778,6 +793,9 @@ class InputNebInstGPR(InputDictionary):
         )
         self.gpr_absolute_force_error_criterion.store(
             optarrays["gpr_absolute_force_error_criterion"]
+        )
+        self.gpr_force_uncertainty_criterion.store(
+            optarrays["gpr_force_uncertainty_criterion"]
         )
         self.gpr_trust_region.store(optarrays["gpr_trust_region"])
         self.gpr_kernel_outputscale.store(optarrays["gpr_kernel_outputscale"])

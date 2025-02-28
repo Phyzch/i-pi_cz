@@ -110,6 +110,9 @@ def filter_new_training_data(
 
     new_data_num = len(new_train_inputs)
 
+    # record the distance of closet data to new data 
+    internal_coordinate_closest_r_list = []
+
     for data_index in range(new_data_num):
         new_input = new_train_inputs[data_index]
 
@@ -124,7 +127,9 @@ def filter_new_training_data(
         internal_coordinate_closest_r = internal_coordinate_r[
             nearest_existing_training_inputs_index
         ]
-
+        
+        internal_coordinate_closest_r_list.append(internal_coordinate_closest_r)
+        
         if internal_coordinate_closest_r > distance_cutoff:
             filtered_new_train_inputs_index.append(data_index)
 
@@ -847,7 +852,7 @@ class GPModelWithDerivativesWrapper:
         if internal_coordinate_bool:
             return V, grad_q, var_V, var_grad_q_trace
         else:
-            return V, grad_x, var_V, var_grad_x_trace
+            return V, grad_x, var_V, var_grad_x_trace  
 
     def update_model_with_new_data(
         self, 
@@ -928,6 +933,7 @@ class GPModelWithDerivativesWrapper:
                 new_train_V,
                 new_train_grad_x
                 )
+
 
     def update_training_variables(self, 
                                   filtered_new_train_inputs_index,
