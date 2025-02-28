@@ -1202,97 +1202,6 @@ class MAPNEBGPRMover(Motion):
         self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis=1)
         
 
-    def update_GPR_model_all_image_strategy(self, step):
-        """
-        we compute ab initio potential and forces for all beads.
-        check the error of force prediction and try to exit.
-        """
-        info(
-            "All Image strategy for updating GPR model when LI-NEB converges. \n",
-            verbosity.low,
-        )
-
-        # compute gpr predicted forces
-        _, beads_grad_x, _, var_grad_x_trace = self.gpr_model.predict_latent_function(self.beads.q)
-        std_grad_x_trace = np.sqrt(var_grad_x_trace)
-        beads_forces = - beads_grad_x
-
-        # compute ab initio potential and forces
-        training_x = np.copy(self.beads.q)
-        ab_initio_beads_energy = dstrip(self.forces.pots).copy()
-        ab_initio_shifted_energy = (
-            ab_initio_beads_energy - self.optarrays["energy_shift"]
-        )
-        ab_initio_forces = dstrip(self.forces.f).copy()
-        ab_initio_grad_x = -ab_initio_forces
-
-        # update the gpr model with new data
-        self.gpr_model.update_model_with_new_data(
-            training_x,
-            ab_initio_shifted_energy,
-            ab_initio_grad_x,
-            self.options["distance_cutoff_for_training_data"],
-            self.options["train_grad_model_bool"]
-        )
-
-        # set ab_initio pot and force in nebgm.
-        self.nebgm.ab_initio_pot[:] = np.copy(ab_initio_beads_energy)
-        self.nebgm.ab_initio_force[:] = np.copy(ab_initio_forces)
-
-        # count the # of ab-initio calculation we have done.
-        self.ab_initio_bead_calculation_number = (
-            self.ab_initio_bead_calculation_number + self.beads.nbeads
-        )
-
-        # check whether the ab-initio forces are close to gpr predicted forces.
-        force_diff_list = beads_forces - ab_initio_forces
-        self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis=1)
-        self.ab_initio_force_amplitude_list = np.linalg.norm(ab_initio_forces, axis=1)
-        self.gpr_force_amplitude_list = np.linalg.norm(beads_forces, axis=1)
-        self.force_diff_ratio_list = (
-            self.force_diff_amplitude_list 
-            / self.ab_initio_force_amplitude_list
-        )
-
-        # check the updated model and see if we need to tune the force criterion.
-        _, new_beads_grad_x, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
-        new_beads_forces = - new_beads_grad_x
-        new_force_diff_amplitude_list = np.linalg.norm(new_beads_forces - ab_initio_forces, axis= 1)
-        new_force_diff_ratio_list = (
-            new_force_diff_amplitude_list / self.ab_initio_force_amplitude_list
-        )
-
-        if np.max(new_force_diff_amplitude_list) > self.optarrays["gpr_absolute_force_error_criterion"]:
-            self.optarrays["gpr_absolute_force_error_criterion"] = np.max(new_force_diff_amplitude_list)
-            print("@Warning: the absolute force criterion is not met even after we have updated the model.")
-            print(f"Now the absolute force criterion has been updated to: {np.max(new_force_diff_amplitude_list)}")
-        if np.max(new_force_diff_ratio_list) > self.optarrays["gpr_relative_force_error_criterion"]:
-            self.optarrays["gpr_relative_force_error_criterion"] = np.max(new_force_diff_ratio_list)
-            print("@Warning: the relative force criterion is not met even after we have updated the model.")
-            print(f"Now the relative force criterion has been updated to {np.max(new_force_diff_ratio_list)}")
-
-        # when the error of force is smaller than a given value, we assume GPR fitting is successful.
-        gpr_absolute_force_error_criterion = self.optarrays[
-            "gpr_absolute_force_error_criterion"
-        ]
-
-        gpr_force_converge_bool = True
-        for i in range(self.beads.nbeads):
-            # when the error of force is smaller than a given value, we assume GPR fitting is successful.
-            if self.force_diff_amplitude_list[i] < gpr_absolute_force_error_criterion:
-                pass
-            # when the bead force is large, we require relative error of force to be small.
-            elif (
-                self.force_diff_ratio_list[i]
-                < self.optarrays["gpr_relative_force_error_criterion"]
-            ):
-                pass
-            else:
-                gpr_force_converge_bool = False
-
-        if gpr_force_converge_bool:
-            self.neb_stage_exit_step(step, ab_initio_beads_energy)
-
     def update_GPR_model_image_with_large_uncertainty(self, step):
         """
         Use the uncertainty estimation of force from GPR model to choose the data point to add to the training data.
@@ -1383,11 +1292,6 @@ class MAPNEBGPRMover(Motion):
             # in this case, several beads have moved out of trust region. We add this bead into the training data.
             self.update_GPR_model_with_beads_cause_early_stop(outrange_bead_index_list)
         else:
-            # All image strategy
-            # We compute the potential and force for all images and add them to the training data.
-            # The convergence criterion is reached when gpr forces for all beads converge to the ab initio forces.
-            # self.update_GPR_model_all_image_strategy(step)
-
             # update GPR model with data points that have high posterior variance (uncertainty)
             # See PHYSICAL REVIEW LETTERS 122, 156001 (2019)
             self.update_GPR_model_image_with_large_uncertainty(step)
