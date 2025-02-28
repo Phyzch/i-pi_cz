@@ -2288,12 +2288,17 @@ class RP_MAP(object):
         shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
         pot = shifted_V[0] + self.energy_shift
 
-        x_list = [x]
-        v_list = [v]
-        t_list = [t]
-        r_list = [r_distance]
-        v_r_list = [v_r]
-        pot_list = [pot]
+        x_list, v_list, t_list, r_list, v_r_list, pot_list = ([] for _ in range(6))
+        data_lists = {
+            "x": x_list,
+            "v": v_list,
+            "t": t_list,
+            "r": r_list,
+            "v_r": v_r_list,
+            "pot": pot_list
+        }
+        for key, value in zip(data_lists.keys(), [x, v, t, r_distance, v_r, pot]):
+            data_lists[key].append(value)
 
         dr = 1000
 
@@ -2307,19 +2312,13 @@ class RP_MAP(object):
             shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
             pot = shifted_V[0] + self.energy_shift
 
-            x_list.append(x)
-            v_list.append(v)
-            t_list.append(t)
-            r_list.append(r_distance)
-            v_r_list.append(v_r)
-            pot_list.append(pot)
+            for key, value in zip(data_lists.keys(), [x, v, t, r_distance, v_r, pot]):
+                data_lists[key].append(value)
 
-        x_list = np.array(x_list)
-        v_list = np.array(v_list)
-        t_list = np.array(t_list)
-        r_list = np.array(r_list)
-        v_r_list = np.array(v_r_list)
-        pot_list = np.array(pot_list)
+        for key in data_lists.keys():
+            data_lists[key] = np.array(data_lists[key])
+
+        x_list, v_list, t_list, r_list, v_r_list, pot_list = (data_lists[key] for key in ["x", "v", "t", "r", "v_r", "pot"])
 
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)
 
@@ -3379,7 +3378,7 @@ class RP_MAP(object):
         if self.test_gpr_model_along_instanton_path:
             self.optimize_GPR_model_for_dynamics_evolution()
 
-        # start classical dynamics along minimum action path (MEP) on the inverted potential.
+        # start classical dynamics along minimum action path (MAP) on the inverted potential.
         t_list, v_list, x_list = self.classical_dynamics_along_MAP()
 
         # interpolate the ring polymer beads from the generated trajectory.
