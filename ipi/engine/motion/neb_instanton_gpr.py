@@ -1366,9 +1366,26 @@ class MAPNEBGPRMover(Motion):
         self.ab_initio_force_amplitude_list = np.linalg.norm(ab_initio_forces, axis=1)
         self.gpr_force_amplitude_list = np.linalg.norm(beads_forces, axis=1)
         self.force_diff_ratio_list = (
-            np.linalg.norm(force_diff_list, axis=1)
+            self.force_diff_amplitude_list 
             / self.ab_initio_force_amplitude_list
         )
+
+        # check the updated model and see if we need to tune the force criterion.
+        _, new_beads_grad_x, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
+        new_beads_forces = - new_beads_grad_x
+        new_force_diff_amplitude_list = np.linalg.norm(new_beads_forces - ab_initio_forces, axis= 1)
+        new_force_diff_ratio_list = (
+            new_force_diff_amplitude_list / self.ab_initio_force_amplitude_list
+        )
+
+        if np.max(new_force_diff_amplitude_list) > self.optarrays["gpr_absolute_force_error_criterion"]:
+            self.optarrays["gpr_absolute_force_error_criterion"] = np.max(new_force_diff_amplitude_list)
+            print("@Warning: the absolute force criterion is not met even after we have updated the model.")
+            print(f"Now the absolute force criterion has been updated to: {np.max(new_force_diff_amplitude_list)}")
+        if np.max(new_force_diff_ratio_list) > self.optarrays["gpr_relative_force_error_criterion"]:
+            self.optarrays["gpr_relative_force_error_criterion"] = np.max(new_force_diff_ratio_list)
+            print("@Warning: the relative force criterion is not met even after we have updated the model.")
+            print(f"Now the relative force criterion has been updated to {np.max(new_force_diff_ratio_list)}")
 
         # when the error of force is smaller than a given value, we assume GPR fitting is successful.
         gpr_absolute_force_error_criterion = self.optarrays[
