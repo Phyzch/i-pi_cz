@@ -1278,45 +1278,6 @@ class MAPNEBGPRMover(Motion):
         std_grad_x_trace_list = np.array(std_grad_x_trace_list)
         self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis=1)
         
-        # Scale the trust region if it is set inappropriately.
-        # deal with the case that the trust region distance cutoff could be too large.
-        # we can detect this situation when the gpr model predict the force for beads close to the trust region far away from the true force.
-        # in this case, we have to decrease the trust region distance.
-        outrange_bead_distance_list = self.internal_coordinate_closest_r_list[
-            outrange_bead_index_list
-        ]
-        # we require beads within 1.5 * trust region should have error of force prediction < 0.1
-        distance_cutoff = self.trust_region_distance_cutoff * 1.5
-        force_error_ratio_cutoff = 0.1
-
-        _, gpr_grad_x, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
-
-        for i in range(len(outrange_bead_index_list)):
-            outrange_bead_distance = outrange_bead_distance_list[i]
-            bead_force_diff_ratio = self.force_diff_ratio_list[i]
-
-            # we do not consider trust region is too small when the absolute error of force is small but relative error of force is large
-            if (
-                self.force_diff_amplitude_list[i]
-                > self.optarrays["gpr_absolute_force_error_criterion"]
-            ):
-                # we have to make sure when the bead is close to the trust region, the relative error of gpr force prediction is small.
-                if (
-                    outrange_bead_distance < distance_cutoff
-                    and bead_force_diff_ratio > force_error_ratio_cutoff
-                ):
-                    if (
-                        self.optarrays["gpr_trust_region"]
-                        > self.options["minimum_trust_region"] * 2
-                    ):
-                        self.optarrays["gpr_trust_region"] = (
-                            self.optarrays["gpr_trust_region"] / 2
-                        )
-                        print(
-                            "@READJUST TRUST REGION: the trust region ratio now: "
-                            + str(self.optarrays["gpr_trust_region"])
-                        )
-                        break
 
     def update_GPR_model_all_image_strategy(self, step):
         """
