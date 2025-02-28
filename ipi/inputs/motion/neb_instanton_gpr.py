@@ -169,7 +169,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": str,
                 "default": "neb",
-                "options": ["neb", "instanton", "converged", "test_gpr_hessian"],
+                "options": ["neb", "instanton", "converged"],
                 "help": """stage for neb pipline for finding instanton path.
                 neb: using nudged elastic band to find minimum action path
                 instanton: evolve dynamics to find the temperature of the found minimum action path and output ring polymer""",

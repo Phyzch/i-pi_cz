@@ -343,46 +343,14 @@ class MAPNEBGPRMover(Motion):
         print(" @NEB Outerloop STEP %d, stage: %s" % (step, self.options["stage"]))
 
         if step == 0:
-            # print initial geometry and energy of neb path.
-            ipi.utils.nebinstool.print_neb_instanton_geo(
-                self.options["prefix"] + "_initial_",
-                step,
-                self.beads.nbeads,
-                self.beads.natoms,
-                self.beads.names,
-                self.beads.q,
-                self.forces.pots,
-                self.cell,
-                self.optarrays["energy_shift"],
-                self.output_maker,
-            )
-
-            # check number of active threads in the current python process
-            num_threads = threading.active_count() 
-            print(f"Number of threads used by the python program: {num_threads}")
-
-            # The instanton path energy is defined relative to the energy shift.
-            # We perform the transformation only when we start the initial calculation. Not for restarting the calculation.
-            self.optarrays["instanton_path_energy"] = (
-                self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]
-            )  # shift the instanton path energy according to energy shift.
-            self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
-            self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
+            self._initial_step(step)
 
         if self.coordinate_transformer is None:
             # initialize Gaussian Process Regression(GPR) model and coordiante transformer
             self.initialialize_gpr_model()
-            if not self.options["stage"] == "test_gpr_hessian":
-                # check the training result on the test data which is unseen by GPR.
-                self.check_initial_training_result()
 
-            # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
-            # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
-            self.nebgm.gpr_model = self.gpr_model
-            self.nebgm.coordinate_transformer = self.coordinate_transformer
-
-            self.rp_map.gpr_model = self.gpr_model
-            self.rp_map.coordinate_transformer = self.coordinate_transformer
+            # check the training result on the test data which is unseen by GPR.
+            self.check_initial_training_result()
 
         # Check if we enter the program directly into "instanton" stage:
         if self.options["stage"] == "instanton" and step == 0:
@@ -391,99 +359,146 @@ class MAPNEBGPRMover(Motion):
         else:
             self.rp_map.skip_neb_mode_bool = False
 
-        # the file that store the maximum optimization gradient of LI-NEB beads.
         if self.options["stage"] == "neb" and step == 0:
-            # file stores information of optimization gradient for each step in the inner loop. 
-            optimization_gradient_file_name = "optimization_gradient.txt"
-            self.optimization_gradient_file = open(optimization_gradient_file_name, "w")
-            # file stores information of optimization gradient for each step in the outer loop.
-            optimization_gradient_outloop_name = "optimization_gradient_outloop.txt"
-            self.optimization_gradient_outloop_file = open(optimization_gradient_outloop_name, "w")
-            
-            # file stores the number of ab initio calculations & number of optimization steps
-            # each time we print out the geometry of the file.
-            geometry_info_file_name = "geometry_info.txt"
-            self.geometry_info_file = open(geometry_info_file_name, "w")
-            self.geometry_info_file.write("step   optimization_step   ab_initio_calculation_number \n")
-            
-            action_info_file_name = "action_info.txt"
-            self.action_info_file = open(action_info_file_name, "w")
-            self.action_info_file.write("step  action \n")
-
-            action_outloop_info_file_name = "action_info_outloop.txt"
-            self.action_outloop_info_file = open(action_outloop_info_file_name, "w")
-            self.action_outloop_info_file.write("step action \n")
+            self._open_neb_output_file()
 
         # Check if we restarted a converged calculation or the calculation converged.
         if self.options["stage"] == "converged":
-            # output number of ab-initio calculation.
-            ipi.utils.nebinstgprtool.print_ab_initio_calculation_number(
-                self.ab_initio_bead_calculation_number, self.output_maker, step
-            )
-            print(
-                "ab initio calculation number : "
-                + str(self.ab_initio_bead_calculation_number)
-            )
-
-            # output the time for execuation
-            self.end_time = timer()
-            time_elapsed = (
-                self.end_time - self.start_time
-            ) / 60  # time elapsed in minutes
-            print("the running time for the program: " + str(time_elapsed) + " min.")
-
-            softexit.trigger(
-                status="success",
-                message="neb calculation converged. Instanton geometry calculation finishes. Exiting simulation",
-            )
-
+            self.converge_stage_motion(step)
         elif self.options["stage"] == "neb":
-            # use nudged elastic band method to find minmum action path.
-            # then we will switch to the stage "instanton"
-            # perform LI-NEB algorithm on the surrogated PES generated by GPR. stop either LI-NEB converge or one bead move out of the trust region.
-            self.neb_loop_initialize(step)
-            
-            early_stop_bool, outrange_bead_index_list, grad_max_inner_bead, grad_max_end_bead = self.neb_loop(step)
-
-            # write optimization gradient for each time we update the GPR model
-            self.optimization_gradient_outloop_file.write(
-                str(step) + " "
-                + str(grad_max_inner_bead) + " "
-                + str(grad_max_end_bead) + " "
-                + str(self.ab_initio_bead_calculation_number) + "\n"
-            )
-
-            self.action_outloop_info_file.write(
-                str(step) + " "
-                + str(self.action) + " "
-                + str(self.ab_initio_bead_calculation_number) + "\n "
-            )
-
-            # update Gaussian Process Regression model with new training data
-            self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
-
-            print("optimization step so far for neb stage: " + str(self.neb_optimization_step))
+            self.neb_stage_motion(step)
 
         elif self.options["stage"] == "instanton":
-            # generate instanton ring polymer beads from minimum action path found by NEB.
-            info(
-                "Now generate instanton path from Minimum Action Path (MAP) found by NEB."
-            )
-            print("total optimization step for neb stage: " + str(self.neb_optimization_step))
-
-            self.rp_map.generate_ring_polymer_beads(self.beads, step)
-
-            # save the potential, q, temperature, hessian of instanton beads for RESTART.
-            self.save_instanton_ring_polymer()
-
-            # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
-            # therefore, we set ["stage"] == "converged" and exit at next step.
-            self.options["stage"] = "converged"
-
+            self.instanton_stage_motion(step)
         else:
             raise ValueError(
                 "unrecognized stage parameter. The stage has to be neb or instanton or converged"
             )
+
+
+    def _initial_step(self, step):
+        """
+        initial step set up.
+        """
+        # print initial geometry and energy of neb path.
+        ipi.utils.nebinstool.print_neb_instanton_geo(
+            self.options["prefix"] + "_initial_",
+            step,
+            self.beads.nbeads,
+            self.beads.natoms,
+            self.beads.names,
+            self.beads.q,
+            self.forces.pots,
+            self.cell,
+            self.optarrays["energy_shift"],
+            self.output_maker,
+        )
+
+        # The instanton path energy is defined relative to the energy shift.
+        # We perform the transformation only when we start the initial calculation. Not for restarting the calculation.
+        self.optarrays["instanton_path_energy"] = (
+            self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]
+        )  # shift the instanton path energy according to energy shift.
+        self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
+        self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
+
+    def _open_neb_output_file(self):
+        """
+        open the output file for neb optimization.
+        """
+         # file stores information of optimization gradient for each step in the inner loop. 
+        optimization_gradient_file_name = "optimization_gradient.txt"
+        self.optimization_gradient_file = open(optimization_gradient_file_name, "w")
+        # file stores information of optimization gradient for each step in the outer loop.
+        optimization_gradient_outloop_name = "optimization_gradient_outloop.txt"
+        self.optimization_gradient_outloop_file = open(optimization_gradient_outloop_name, "w")
+        
+        # file stores the number of ab initio calculations & number of optimization steps
+        # each time we print out the geometry of the file.
+        geometry_info_file_name = "geometry_info.txt"
+        self.geometry_info_file = open(geometry_info_file_name, "w")
+        self.geometry_info_file.write("step   optimization_step   ab_initio_calculation_number \n")
+        
+        action_info_file_name = "action_info.txt"
+        self.action_info_file = open(action_info_file_name, "w")
+        self.action_info_file.write("step  action \n")
+
+        action_outloop_info_file_name = "action_info_outloop.txt"
+        self.action_outloop_info_file = open(action_outloop_info_file_name, "w")
+        self.action_outloop_info_file.write("step action \n")
+
+    def neb_stage_motion(self, step):
+        """
+        Use nudged elastic band method to find minimum action path.
+        then we switch to the "instanton" stage.
+        perform LI-NEB algorithm on the surrogated PES generated by GPR. 
+        stop the algorithm either when LI-NEB converge or one bead moves out of the trust region.
+        """
+        self.neb_loop_initialize(step)
+        
+        early_stop_bool, outrange_bead_index_list, grad_max_inner_bead, grad_max_end_bead = self.neb_loop(step)
+
+        # write optimization gradient for each time we update the GPR model
+        self.optimization_gradient_outloop_file.write(
+            str(step) + " "
+            + str(grad_max_inner_bead) + " "
+            + str(grad_max_end_bead) + " "
+            + str(self.ab_initio_bead_calculation_number) + "\n"
+        )
+
+        self.action_outloop_info_file.write(
+            str(step) + " "
+            + str(self.action) + " "
+            + str(self.ab_initio_bead_calculation_number) + "\n "
+        )
+
+        # update Gaussian Process Regression model with new training data
+        self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
+
+        print("optimization step so far for neb stage: " + str(self.neb_optimization_step))
+
+    def instanton_stage_motion(self, step):
+        """
+        generate instanton ring polymer beads from minimum action path found by NEB.
+        """
+        info(
+            "Now generate instanton path from Minimum Action Path (MAP) found by NEB."
+        )
+        print("total optimization step for neb stage: " + str(self.neb_optimization_step))
+
+        self.rp_map.generate_ring_polymer_beads(self.beads, step)
+
+        # save the potential, q, temperature, hessian of instanton beads for RESTART.
+        self.save_instanton_ring_polymer()
+
+        # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
+        # therefore, we set ["stage"] == "converged" and exit at next step.
+        self.options["stage"] = "converged"
+
+    def converge_stage_motion(self, step):
+        """
+        The algorithm converges. Wrap up the algorithm.
+        """
+        # output number of ab-initio calculation.
+        ipi.utils.nebinstgprtool.print_ab_initio_calculation_number(
+            self.ab_initio_bead_calculation_number, self.output_maker, step
+        )
+        print(
+            "ab initio calculation number : "
+            + str(self.ab_initio_bead_calculation_number)
+        )
+
+        # output the time for execuation
+        self.end_time = timer()
+        time_elapsed = (
+            self.end_time - self.start_time
+        ) / 60  # time elapsed in minutes
+        print("the running time for the program: " + str(time_elapsed) + " min.")
+
+        softexit.trigger(
+            status="success",
+            message="neb calculation converged. Instanton geometry calculation finishes. Exiting simulation",
+        )
 
     def _select_reference_points(self):
         """
@@ -616,6 +631,14 @@ class MAPNEBGPRMover(Motion):
         train_x, train_V, train_grad = self._get_training_data()
 
         self._initialize_gpr_model(train_x, train_V, train_grad)
+
+        # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
+        # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
+        self.nebgm.gpr_model = self.gpr_model
+        self.nebgm.coordinate_transformer = self.coordinate_transformer
+
+        self.rp_map.gpr_model = self.gpr_model
+        self.rp_map.coordinate_transformer = self.coordinate_transformer
 
     def check_initial_training_result(self):
         """
@@ -801,11 +824,9 @@ class MAPNEBGPRMover(Motion):
             # beads move out of trust region.
             if early_stop_bool:
                 break
-
         
         if not early_stop_bool:
             print("@LI-NEB converge on GPR PES.")
-
 
         return early_stop_bool, outrange_bead_index_list, grad_max_inner_bead, grad_max_end_bead
 
