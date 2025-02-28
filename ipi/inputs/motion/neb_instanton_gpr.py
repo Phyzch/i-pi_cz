@@ -599,39 +599,6 @@ class InputNebInstGPR(InputDictionary):
                 """
             }
         ),
-
-        "variable_spring_constant": (
-            InputValue,
-            {
-                "dtype": bool,
-                "default": False,
-                "help": "Bool variable. Enable variable spring constant. \
-                Make the spring constant near the end bead region larger, \
-                to have a higher resolution near the instanton path end.",
-            },
-        ),
-        "VSC_E_ref": (
-            InputValue,
-            {
-                "dtype": float,
-                "default": 0.000,
-                "help": "reference energy E_ref for variable spring constant (VSC). \
-                For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
-                The spring constant between beads at lower energy has larger spring constant. ",
-                "dimension": "energy",
-            },
-        ),
-        "VSC_spring_k_max_ratio": (
-            InputValue,
-            {
-                "dtype": float,
-                "default": 3.00,
-                "help": " reference spring constant k_max / k_ref for variable spring constant (VSC). \
-                  For E_min < E < E_ref, we have linear interpolation between k_max and k_ref. \
-                    The spring constant between beads at lower energy has larger spring constant. \
-                    k_max specify the spring constant at two end beads",
-            },
-        ),
         "selective_hessian_bool":(
             InputValue,
             {
@@ -776,9 +743,6 @@ class InputNebInstGPR(InputDictionary):
         self.dynamical_adjust_ratio.store(optarrays["dynamical_adjust_ratio"])
         self.end_bead_energy_converge_value.store(optarrays["end_bead_energy_converge_value"])
         self.neb_inner_loop_step_max.store(optarrays["neb_inner_loop_step_max"])
-        self.variable_spring_constant.store(optarrays["variable_spring_constant"])
-        self.VSC_E_ref.store(optarrays["VSC_E_ref"])
-        self.VSC_spring_k_max_ratio.store(optarrays["VSC_spring_k_max_ratio"])
 
         self.time_step.store(optarrays["time_step"])
         self.cg_big_step.store(optarrays["cg_big_step"])

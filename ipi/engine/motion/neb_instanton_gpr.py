@@ -93,9 +93,6 @@ class MAPNEBGPRMover(Motion):
         dynamical_adjust_ratio= {"spring_k": 0.1,
                                  "kappa": 0.2},
         end_bead_energy_converge_value = 1e-3,
-        variable_spring_constant=False,
-        VSC_E_ref=0.00,
-        VSC_spring_k_max_ratio=3.00,
         alt_out=5,
         gpr_relative_force_error_criterion=0.05,
         gpr_absolute_force_error_criterion=0.002,
@@ -202,11 +199,6 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["kappa"] = kappa
         self.optarrays["dynamical_adjust_ratio"] = dynamical_adjust_ratio
         self.optarrays["end_bead_energy_converge_value"] = end_bead_energy_converge_value
-
-        # option to vary the spring constant term
-        self.optarrays["variable_spring_constant"] = variable_spring_constant
-        self.optarrays["VSC_E_ref"] = VSC_E_ref
-        self.optarrays["VSC_spring_k_max_ratio"] = VSC_spring_k_max_ratio
 
         self.optarrays["FIRE"] = FIRE   # parameters for FIRE optimization algorithm.
         self.optarrays["time_step"] = time_step
@@ -377,14 +369,9 @@ class MAPNEBGPRMover(Motion):
             self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
             self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
 
-            self.optarrays["VSC_E_ref"] = (
-                self.optarrays["VSC_E_ref"] + self.optarrays["energy_shift"]
-            )
-            self.nebgm.VSC_E_ref = self.nebgm.VSC_E_ref + self.optarrays["energy_shift"]
-
         if self.coordinate_transformer is None:
             # initialize Gaussian Process Regression(GPR) model and coordiante transformer
-            self.initialialize_GPR_model()
+            self.initialialize_gpr_model()
             if not self.options["stage"] == "test_gpr_hessian":
                 # check the training result on the test data which is unseen by GPR.
                 self.check_initial_training_result()
@@ -498,30 +485,12 @@ class MAPNEBGPRMover(Motion):
                 "unrecognized stage parameter. The stage has to be neb or instanton or converged"
             )
 
-    def generate_initial_training_data(self):
+    def _select_reference_points(self):
         """
-        generate training data for Gaussian Process Regression model
+        selects reference points for coordinate transformation.
+        Initialize non redundant coordinate transformer.
+        choose the point with the highest potential in the initial instanton path as reference point.
         """
-        # choose all NEB beads as initial training data.
-        # We will train the GPR model to optimize hyperparameter using the initial data.
-        train_x = np.copy(self.beads.q)
-        # potential energy has to shift relative to the energy_shift for training.
-        train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
-        train_grad = -np.copy(dstrip(self.forces.f))
-        # count the # of ab-initio calculation we have done.
-        self.ab_initio_bead_calculation_number = (
-            self.ab_initio_bead_calculation_number + self.beads.nbeads
-        )
-        return train_x, train_V, train_grad
-
-    def initialialize_GPR_model(self):
-        """
-        initialize the gaussian process regression model.
-        1. Initialize coordinate transformer to transform between internal coordinate and cartesian coordinate.
-        2. initialize GPR_Wrapper, which combines coordinate transformer and GPR model.
-        """
-        # Initialize non redundant coordinate transformer.
-        # choose the point with the highest potential in the initial instanton path as reference point.
         beads_pots = np.copy(self.forces.pots)
         bead_index_at_transition_state = np.argmax(beads_pots)
         ref_x = dstrip(self.beads.q[bead_index_at_transition_state]).copy()
@@ -531,8 +500,15 @@ class MAPNEBGPRMover(Motion):
         ref_x_product = dstrip(self.beads.q[-1]).copy() # coordinate at product side
 
         ref_x_list = np.array([ref_x, ref_x_reactant, ref_x_product])
+        
+        return ref_x_list 
 
+    def _initialize_coordinate_transformer(self, ref_x_list):
+        """
+        Initialize the coordinate transformer that transform the system from the Cartesian coordinate into the internal coordinate.
+        """
         names = dstrip(self.beads.names).copy().tolist()
+        ref_x = ref_x_list[0]
         # create coordinate_transformer, which handles the transformation from the Cartesian coordinate to internal coordinate.
         # This is for Coulomb matrix type internal coordinate.
         if self.options["internal_coord"] == "Coulomb":
@@ -549,36 +525,42 @@ class MAPNEBGPRMover(Motion):
         else:
             raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
 
-        # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force.
-        # In the LI-NEB algorithm, when there is ab-initio potential & force data available, we will use that potential and force.
-        # If the ab-initio data point is not available, we use the potential and force generated by Gaussian Process Regression (GPR)
-        self.nebgm.ab_initio_pot = np.copy(self.forces.pots)
-        self.nebgm.ab_initio_force = np.copy(dstrip(self.forces.f))
-
-        self.initial_beads_force_amplitude = np.linalg.norm(
-            dstrip(self.forces.f).copy(), axis=1
-        )
-
-        # for the training data, we have the option to read it from .txt file or generate it using the current geometry.
-        # this provides the flexibility for choosing the training data for the initial model.
+    def _get_training_data(self):
+        """Loads or generate initial training data."""
         read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
         if not read_gpr_training_data_bool:
-            train_x, train_V, train_grad = self.generate_initial_training_data()
+            # choose all NEB beads as initial training data.
+            # We will train the GPR model to optimize hyperparameter using the initial data.
+            train_x = np.copy(self.beads.q)
+            # potential energy has to shift relative to the energy_shift for training.
+            train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
+            train_grad = -np.copy(dstrip(self.forces.f))
+            # count the # of ab-initio calculation we have done.
+            self.ab_initio_bead_calculation_number = (
+                self.ab_initio_bead_calculation_number + self.beads.nbeads
+            )
         else:
             # read stored training data from folder.
             train_x, stored_train_V, stored_train_f =  (
             ipi.utils.nebinstgprtool.read_training_data(prefix="neb_final_gpr_training")
             )
+            train_V = stored_train_V - train_V 
+            train_grad = - stored_train_f
+
             # count the number of ab-initio calculation we have done.
             self.ab_initio_bead_calculation_number = (
                 self.ab_initio_bead_calculation_number + np.shape(train_x)[0]
             )
-            train_V = stored_train_V - train_V 
-            train_grad = - stored_train_f
+        
+        return train_x, train_V, train_grad 
 
+    def _initialize_gpr_model(self, train_x, train_V, train_grad):
+        """
+        Initialize the GPR model.
+        """
         gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(prefix= "neb_final_gpr_training")
-
         fix_dofs = self.optarrays["fix_dofs"]
+
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
             train_x,
             train_V,
@@ -596,6 +578,7 @@ class MAPNEBGPRMover(Motion):
             gpr_fixed_internal_dofs= gpr_fixed_internal_dofs 
         )
         
+        read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
         if read_gpr_training_data_bool:
             # see if there is option to read hyper-parameter without training the model
             neb_final_gpr_folder = "neb_final_gpr_training"
@@ -608,6 +591,31 @@ class MAPNEBGPRMover(Motion):
 
         else:
             self.gpr_model.train_gpr()
+        
+
+    def initialialize_gpr_model(self):
+        """
+        initialize the gaussian process regression model.
+        1. Initialize coordinate transformer to transform between internal coordinate and cartesian coordinate.
+        2. initialize GPR_Wrapper, which combines coordinate transformer and GPR model.
+        """
+        # Initialize non redundant coordinate transformer.
+        # choose the point with the highest potential in the initial instanton path as reference point.
+        ref_x_list = self._select_reference_points()
+
+        self._initialize_coordinate_transformer(ref_x_list)
+
+        # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force.
+        # In the LI-NEB algorithm, when there is ab-initio potential & force data available, we will use that potential and force.
+        # If the ab-initio data point is not available, we use the potential and force generated by Gaussian Process Regression (GPR)
+        self.nebgm.ab_initio_pot = np.copy(self.forces.pots)
+        self.nebgm.ab_initio_force = np.copy(dstrip(self.forces.f))
+
+        # for the training data, we have the option to read it from .txt file or generate it using the current geometry.
+        # this provides the flexibility for choosing the training data for the initial model.
+        train_x, train_V, train_grad = self._get_training_data()
+
+        self._initialize_gpr_model(train_x, train_V, train_grad)
 
     def check_initial_training_result(self):
         """
@@ -1397,8 +1405,6 @@ class MAPNEBGPRMover(Motion):
         average_action_force = np.max([average_action_force, average_action_force_cutoff])
         self.optarrays["spring_k"] = average_action_force / (path_distance / (10 * bead_number))
         self.nebgm.spring_k = self.optarrays["spring_k"]
-        self.nebgm.VSC_k_max = self.optarrays["spring_k"]
-        self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
         # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
         # val1 = spring_k * np.power(dt, 2)
@@ -1406,8 +1412,6 @@ class MAPNEBGPRMover(Motion):
         # spring_k_scale = spring_k_ratio / val1
         # self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
         # self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
-        # self.nebgm.VSC_k_max = self.nebgm.spring_k
-        # self.nebgm.VSC_k_ref = self.nebgm.VSC_k_max / self.nebgm.VSC_spring_k_max_ratio
 
         kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
         
@@ -1553,41 +1557,6 @@ class LINEBGradientMapper(object):
         self.kappa = ens.optarrays[
             "kappa"
         ]  # bind end beads energy constraint constant kappa from NEBMover.
-
-        # Option to vary the spring constant and have larger spring constant at two end point. (This is for the case we have the flat potential at end point)
-        self.variable_spring_constant = ens.optarrays[
-            "variable_spring_constant"
-        ]  # bool variable to decide whether to increase the spring constant at two ends.
-        self.VSC_E_ref = ens.optarrays[
-            "VSC_E_ref"
-        ]  # the reference energy (> instanton_path_energy), below reference energy, we increase the spring constant
-        self.VSC_spring_k_max_ratio = ens.optarrays[
-            "VSC_spring_k_max_ratio"
-        ]  # the spring constant k at the end beads, also the maximum spring constant k when we vary the k.
-        self.VSC_k_max = None
-        self.VSC_k_ref = None
-
-        if self.variable_spring_constant:
-            # in case variable_spring_constant = True, we need to check whether VSC_E_ref & VSC_spring_k_max is provided
-            assert (
-                self.VSC_E_ref != 0.0
-            ), "Must provide the value of reference energy (VSC_E_ref) when we vary the spring constant (variable_spring_constant = True)"
-            assert (
-                self.VSC_E_ref > self.instanton_path_energy
-            ), "The reference energy (VSC_E_ref) must be larger than the energy of end beads of instanton path (instanton_path_energy) when we vary the spring constant (variable_spring_constant = True)"
-            print("\n")
-            print(
-                "@Variable Spring Constant: the current ratio between k_max & k_min for variable spring constant is {}: ".format(
-                    self.VSC_spring_k_max_ratio
-                )
-            )
-            print(
-                "We use linear interpolation to choose spring constant for beads whose energy is between VSC_E_ref and the energy of end beads."
-            )
-            print("\n")
-
-            self.VSC_k_max = self.spring_k
-            self.VSC_k_ref = self.VSC_k_max / self.VSC_spring_k_max_ratio
 
         self.energy_shift = ens.optarrays["energy_shift"]
 
@@ -2018,35 +1987,8 @@ class LINEBGradientMapper(object):
         """ """
         beads_energy = self.beads_energy
 
-        spring_k_list = np.zeros([nimage - 1])
-
-        if not self.variable_spring_constant:
-            # do not vary the spring constant for different beads.
-            spring_k_list = np.ones([nimage - 1]) * self.spring_k
-        else:
-            end_beads_energy = self.instanton_path_energy
-            k_change = self.VSC_k_max - self.VSC_k_ref
-            E_ref = self.VSC_E_ref
-            k_max = self.VSC_k_max
-
-            for i in range(nimage - 1):
-                if i != nimage - 2 and i != 0:
-                    bead_energy_min = np.min(
-                        [beads_energy[i], beads_energy[i + 1]]
-                    )  # the minimum of the energy of two beads connected by spring.
-                else:
-                    # the end beads spring constant is chosen as k_max.
-                    spring_k_list[i] = k_max
-                    continue
-
-                if bead_energy_min > E_ref:
-                    spring_k_list[i] = self.VSC_k_ref
-                else:
-                    # make the spring constant k change linearly with energy.  The spring is more tight at lower energy.
-                    spring_k_list[i] = k_max - k_change * (
-                        bead_energy_min - end_beads_energy
-                    ) / (E_ref - end_beads_energy)
-
+        spring_k_list = np.ones([nimage - 1]) * self.spring_k
+            
         # spring forces for beads. Note the spring force at two ends are different from spring forces for internal beads.
         spring_force = np.zeros([nimage, 3 * natom])
         # spring force for internal beads
