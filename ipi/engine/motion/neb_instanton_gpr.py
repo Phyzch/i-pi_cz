@@ -81,6 +81,7 @@ class MAPNEBGPRMover(Motion):
         cg_big_step= 1.0,
         instanton_time_step=4.0,
         stage="neb",
+        opt = "neb",
         instanton_bead_number=20,
         instanton_path_energy=0.00,
         instanton_temperature=1.0,
@@ -147,9 +148,11 @@ class MAPNEBGPRMover(Motion):
         # parameters to pass in from input.xml
         self.options = {}
 
-        # mode for optimization
+        # mode for optimization (geometry optimization algorithm)
         self.options["mode"] = mode
-        
+        # optimizer for optimization (neb / string / improved string)
+        self.options["opt"] = opt
+
         self.options["asr"] = asr
         self.options["stage"] = stage
         self.options["tolerances"] = tolerances
@@ -224,9 +227,26 @@ class MAPNEBGPRMover(Motion):
         # regularization value for linear regression of constrained parts of hessian.
         self.optarrays["ridge_regularization_alpha"] = ridge_regularization_alpha 
 
-        self.nebgm = LINEBGradientMapper()
         self.rp_map = RP_MAP()
 
+        # choose optimization method based on optimizer we provide in input.xml
+        if self.options["opt"] == "neb":
+            self.optimizer = LINEBMethod()
+        elif self.options["opt"] == "string":
+            self.optimizer = StringMethod()
+        elif self.options["opt"] == "improved_string":
+            self.optimizer = ImprovedStringMethod()
+        else:
+            raise ValueError("The opt Value does not match any existing options. Please choose either neb/string/improved_string.")
+        
+        # choose gradient mapper based on the optimizer we provide in input.xml:
+        if self.options["opt"] == "neb":
+            self.gm = LINEBGradientMapper()
+        elif self.options["opt"] == "string" or self.options["opt"] == "improved_string":
+            self.gm = StringGradientMapper()
+        else:
+            raise ValueError("The opt Value does not match any existing options. Please choose either neb/string/improved_string.")
+        
         # variables for neb move
         self.velocity_mscaled = None
         self.x = None
@@ -283,20 +303,16 @@ class MAPNEBGPRMover(Motion):
         self.coordinate_transformer = None  # coordinate transformer between the Cartesian coordinate and the internal coordinate
         self.gpr_model = None  # Gaussian Process Regression model instance.
 
-        self.ab_initio_bead_calculation_number = (
-            0  # record the number of ab initio calculation on beads.
+         # used to record the time for the calculation.
+        self.start_time = timer() 
+        
+        # record the number of ab initio calculation on beads.
+        SharedData.ab_initio_bead_calculation_number = (
+            0  
         )
 
-        self.internal_coordinate_closest_r_list = (
-            []
-        )  # measure the distance of beads from the training data in internal coordinate.
-        self.trust_region_distance_cutoff = (
-            0  # the distance cutoff for the trust region in internal coordinate system.
-        )
-
-        self.start_time = timer()  # used to record the time for the calculation.
-
-        self.neb_optimization_step = 0
+        # number of optimization steps.
+        SharedData.inner_loop_optimization_step = 0
 
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBGPRMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
@@ -330,13 +346,14 @@ class MAPNEBGPRMover(Motion):
         self.gpr_beads = Beads(self.beads.natoms, 1)
         self.gpr_forces = self.forces.copy(self.gpr_beads, self.cell)
 
-        self.nebgm.bind(self)
+        self.gm.bind(self)
         self.rp_map.bind(self)
+        self.optimizer.bind(self)
 
     def step(self, step=None):
         """
         Does one simulation time step.
-        if stage = 'neb', we will do LI-NEB with Gaussian Process Regression.
+        if stage = 'neb', we will do path searching (LI-NEB/string) with Gaussian Process Regression.
         if stage = 'instanton', we will evolve instanton beads along the path.
         if stage = 'converged', we will stop the simulation.
         """
@@ -366,15 +383,13 @@ class MAPNEBGPRMover(Motion):
         if self.options["stage"] == "converged":
             self.converge_stage_motion(step)
         elif self.options["stage"] == "neb":
-            self.neb_stage_motion(step)
-
+            self.path_searching_stage_motion(step)
         elif self.options["stage"] == "instanton":
             self.instanton_stage_motion(step)
         else:
             raise ValueError(
                 "unrecognized stage parameter. The stage has to be neb or instanton or converged"
             )
-
 
     def _initial_step(self, step):
         """
@@ -399,8 +414,9 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["instanton_path_energy"] = (
             self.optarrays["instanton_path_energy"] + self.optarrays["energy_shift"]
         )  # shift the instanton path energy according to energy shift.
-        self.nebgm.instanton_path_energy = self.optarrays["instanton_path_energy"]
+        self.gm.instanton_path_energy = self.optarrays["instanton_path_energy"]
         self.rp_map.instanton_path_energy = self.optarrays["instanton_path_energy"]
+        self.optimizer.instanton_path_energy = self.optarrays["instanton_path_energy"]
 
     def _open_neb_output_file(self):
         """
@@ -427,13 +443,25 @@ class MAPNEBGPRMover(Motion):
         self.action_outloop_info_file = open(action_outloop_info_file_name, "w")
         self.action_outloop_info_file.write("step action \n")
 
-    def neb_stage_motion(self, step):
+        file_object_list = {
+            "opt_grad": self.optimization_gradient_file,
+            "opt_grad_outloop": self.optimization_gradient_outloop_file,
+            "geometry_info": self.geometry_info_file,
+            "action_info": self.action_info_file,
+            "action_info_outloop": self.action_outloop_info_file
+        }
+        self.optimizer.bind_output_file(file_object_list)
+
+    def path_searching_stage_motion(self, step):
         """
         Use nudged elastic band method to find minimum action path.
         then we switch to the "instanton" stage.
         perform LI-NEB algorithm on the surrogated PES generated by GPR. 
         stop the algorithm either when LI-NEB converge or one bead moves out of the trust region.
         """
+        # print geometry when outer_loop_step % alt = 0. for record.
+        self.print_geometry(step)
+
         self.neb_loop_initialize(step)
         
         early_stop_bool, outrange_bead_index_list, grad_max_inner_bead, grad_max_end_bead = self.neb_loop(step)
@@ -443,19 +471,19 @@ class MAPNEBGPRMover(Motion):
             str(step) + " "
             + str(grad_max_inner_bead) + " "
             + str(grad_max_end_bead) + " "
-            + str(self.ab_initio_bead_calculation_number) + "\n"
+            + str(SharedData.ab_initio_bead_calculation_number) + "\n"
         )
 
         self.action_outloop_info_file.write(
             str(step) + " "
             + str(self.action) + " "
-            + str(self.ab_initio_bead_calculation_number) + "\n "
+            + str(SharedData.ab_initio_bead_calculation_number) + "\n "
         )
 
         # update Gaussian Process Regression model with new training data
         self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
 
-        print("optimization step so far for neb stage: " + str(self.neb_optimization_step))
+        print("optimization step so far for neb stage: " + str(SharedData.inner_loop_optimization_step))
 
     def instanton_stage_motion(self, step):
         """
@@ -464,7 +492,7 @@ class MAPNEBGPRMover(Motion):
         info(
             "Now generate instanton path from Minimum Action Path (MAP) found by NEB."
         )
-        print("total optimization step for neb stage: " + str(self.neb_optimization_step))
+        print("total optimization step for neb stage: " + str(SharedData.inner_loop_optimization_step))
 
         self.rp_map.generate_ring_polymer_beads(self.beads, step)
 
@@ -481,11 +509,11 @@ class MAPNEBGPRMover(Motion):
         """
         # output number of ab-initio calculation.
         ipi.utils.nebinstgprtool.print_ab_initio_calculation_number(
-            self.ab_initio_bead_calculation_number, self.output_maker, step
+            SharedData.ab_initio_bead_calculation_number, self.output_maker, step
         )
         print(
             "ab initio calculation number : "
-            + str(self.ab_initio_bead_calculation_number)
+            + str(SharedData.ab_initio_bead_calculation_number)
         )
 
         # output the time for execuation
@@ -551,8 +579,8 @@ class MAPNEBGPRMover(Motion):
             train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
             train_grad = -np.copy(dstrip(self.forces.f))
             # count the # of ab-initio calculation we have done.
-            self.ab_initio_bead_calculation_number = (
-                self.ab_initio_bead_calculation_number + self.beads.nbeads
+            SharedData.ab_initio_bead_calculation_number = (
+                SharedData.ab_initio_bead_calculation_number + self.beads.nbeads
             )
         else:
             # read stored training data from folder.
@@ -563,8 +591,8 @@ class MAPNEBGPRMover(Motion):
             train_grad = - stored_train_f
 
             # count the number of ab-initio calculation we have done.
-            self.ab_initio_bead_calculation_number = (
-                self.ab_initio_bead_calculation_number + np.shape(train_x)[0]
+            SharedData.ab_initio_bead_calculation_number = (
+                SharedData.ab_initio_bead_calculation_number + np.shape(train_x)[0]
             )
         
         return train_x, train_V, train_grad 
@@ -623,8 +651,8 @@ class MAPNEBGPRMover(Motion):
         # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force.
         # In the LI-NEB algorithm, when there is ab-initio potential & force data available, we will use that potential and force.
         # If the ab-initio data point is not available, we use the potential and force generated by Gaussian Process Regression (GPR)
-        self.nebgm.ab_initio_pot = np.copy(self.forces.pots)
-        self.nebgm.ab_initio_force = np.copy(dstrip(self.forces.f))
+        self.gm.ab_initio_pot = np.copy(self.forces.pots)
+        self.gm.ab_initio_force = np.copy(dstrip(self.forces.f))
 
         # for the training data, we have the option to read it from .txt file or generate it using the current geometry.
         # this provides the flexibility for choosing the training data for the initial model.
@@ -634,8 +662,8 @@ class MAPNEBGPRMover(Motion):
 
         # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
         # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
-        self.nebgm.gpr_model = self.gpr_model
-        self.nebgm.coordinate_transformer = self.coordinate_transformer
+        self.gm.gpr_model = self.gpr_model
+        self.gm.coordinate_transformer = self.coordinate_transformer
 
         self.rp_map.gpr_model = self.gpr_model
         self.rp_map.coordinate_transformer = self.coordinate_transformer
@@ -722,8 +750,8 @@ class MAPNEBGPRMover(Motion):
                 test_q,
             )
 
-            self.ab_initio_bead_calculation_number = (
-                self.ab_initio_bead_calculation_number + 1
+            SharedData.ab_initio_bead_calculation_number = (
+                SharedData.ab_initio_bead_calculation_number + 1
             )   
 
         if nbeads >= 4:
@@ -742,8 +770,8 @@ class MAPNEBGPRMover(Motion):
                 test_q,
             )
 
-            self.ab_initio_bead_calculation_number = (
-            self.ab_initio_bead_calculation_number + 1
+            SharedData.ab_initio_bead_calculation_number = (
+            SharedData.ab_initio_bead_calculation_number + 1
             )
 
         pass
@@ -774,17 +802,14 @@ class MAPNEBGPRMover(Motion):
             []
         )  # index for beads that move out of trusted region that causes the early stop.
 
-        # print geometry when outer_loop_step % alt = 0. for record.
-        self.print_geometry(outer_loop_step)
-
         # first check the gradient of current geometry before making the move. 
         # If it pass the criterion, we do not need to start the inner loop.
-        grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
+        grad_norm = npnorm(self.gm.optimization_force, axis=1)
 
         grad_max_inner_bead = np.amax(grad_norm[1 : self.beads.nbeads - 1])
         grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
         # amplitude of sum of transverse action force of internal beads.
-        action_forces_sum_amplitude = self.nebgm.action_forces_sum_amplitude
+        action_forces_sum_amplitude = self.gm.action_forces_sum_amplitude
         # output info about neb calculation.
         self.neb_step_info(
             outer_loop_step,
@@ -798,14 +823,13 @@ class MAPNEBGPRMover(Motion):
         print("\n")
         print("@Start outer loop: " + str(outer_loop_step) + "\n")
         
-        self.action_force_sum_list.append(self.nebgm.action_forces_sum_amplitude)
 
         self.converge = False 
 
         while (
             grad_max_inner_bead > tolerances["gradient"]
             or grad_max_end_bead > tolerances["gradient_end_bead"]
-            or ( self.nebgm.action_forces_sum_amplitude > tolerances["action_forces_sum"] )
+            or ( self.gm.action_forces_sum_amplitude > tolerances["action_forces_sum"] )
         ):
             neb_step = neb_step + 1  # neb_step == 0: we have not moved the bead.
 
@@ -832,6 +856,7 @@ class MAPNEBGPRMover(Motion):
 
     def neb_loop_initialize(self, step):
         """
+        TODO: Need to delete this function after we have finished the reconstruction.
         Initialize the action, force, velocity for nudged elastic band calculation. (inner loop calculation.)
         Each time we restart the neb-loop, the PES generated by GPR has changed. Therefore, we should restart the LI-NEB algorithm.
         """
@@ -842,13 +867,13 @@ class MAPNEBGPRMover(Motion):
         self.action = None
         
         # adjust the spring constant k and energy constraint term.
-        self.nebgm.initialize_force(self.x)
+        self.gm.initialize_force(self.x)
         self.update_spring_k_kappa()
 
         mscaled_x = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
-        self.action, self.grad_mscaled = self.nebgm(
+        self.action, self.grad_mscaled = self.gm(
             mscaled_x
         )
         # negative gradient of LI-NEB action for each bead on mass scaled coordinate
@@ -856,10 +881,6 @@ class MAPNEBGPRMover(Motion):
 
 
         if step == 0:
-            # criterion for stop algorithm when the path is no longer improving.
-            self.uphill_steps_cutoffs = 10
-            self.action_force_sum_list = []
-
             # mass scaled velocity. Used in dynamics optimizatioin algorithm,
             # for example: projected velocity verlet or FIRE 
             self.velocity_mscaled = np.zeros(
@@ -894,6 +915,79 @@ class MAPNEBGPRMover(Motion):
                 self.Nup = 0  # number of steps going up hill.
 
 
+    def update_spring_k_kappa(self):
+        """
+        check the amplitude of spring k and kappa. to see if it is appropriate. If not, update it.
+        """
+        dt = self.optarrays["time_step"]
+        spring_k = self.optarrays["spring_k"]
+        left_kappa = self.optarrays["kappa"][
+            "left"
+        ]  # energy constraint constant for left end bead
+        right_kappa = self.optarrays["kappa"][
+            "right"
+        ]  # energy constraint constant for right end bead
+
+        end_bead_energy_converge_value = self.optarrays["end_bead_energy_converge_value"]
+        end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
+        bead_number = self.beads.nbeads
+
+        # # alternative choice of spring constant: we want spring_k * path_distance / (10 * bead_number) = <g>_action.
+        mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
+        path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
+        nimages = self.beads.nbeads
+        natoms = self.beads.natoms
+        action_force = self.gm.compute_neb_action_force(nimages, natoms)
+        average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
+        # near the convergence, the action force can be small. We need a minimum cutoff for spring constant.
+        average_action_force_cutoff = 5e-3 
+        average_action_force = np.max([average_action_force, average_action_force_cutoff])
+        self.optarrays["spring_k"] = average_action_force / (path_distance / (10 * bead_number))
+        self.gm.spring_k = self.optarrays["spring_k"]
+
+        # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
+        # val1 = spring_k * np.power(dt, 2)
+        # spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
+        # spring_k_scale = spring_k_ratio / val1
+        # self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
+        # self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
+
+        kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
+        
+        min_max_force = np.power(10.0, -3)
+        # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2. We use stability criterion to set it as 0.5 (empirical value).
+        m_H = 1837  # mass of hydrogen in atomic unit.
+        # check the left end bead.
+        max_force2 = np.max(
+            np.abs(self.gm.rbf[0])
+        )  # maximum gradient of left end bead.
+        max_force2 = np.max([min_max_force, max_force2])
+        val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
+        left_kappa_scale = kappa_ratio / val2
+        self.optarrays["kappa"]["left"] = (
+            self.optarrays["kappa"]["left"] * left_kappa_scale
+        )
+
+        # make sure the kappa value is not too large for the convergence
+        if abs(self.gm.beads_energy[0] - self.optarrays["instanton_path_energy"]) < end_bead_energy_converge_value:
+            left_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
+            self.optarrays["kappa"]["left"] = np.min([self.optarrays["kappa"]["left"] , left_kappa_for_converge])
+
+        # check the right end bead.
+        max_force3 = np.max(
+            np.abs(self.gm.rbf[-1])
+        )  # maximum gradient of right end bead
+        max_force3 = np.max([min_max_force, max_force3])
+        val3 = max_force3 * np.power(dt, 2) * right_kappa / np.sqrt(m_H)
+        right_kappa_scale = kappa_ratio / val3
+        self.optarrays["kappa"]["right"] = (
+            self.optarrays["kappa"]["right"] * right_kappa_scale
+        )
+
+        # make sure kappa value is not too large for the converge.
+        if abs(self.gm.beads_energy[-1] - self.optarrays["instanton_path_energy"]) < end_bead_energy_converge_value:
+            right_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
+            self.optarrays["kappa"]["right"] = np.min([self.optarrays["kappa"]["right"], right_kappa_for_converge])
 
     def neb_step_info(
         self, 
@@ -929,18 +1023,18 @@ class MAPNEBGPRMover(Motion):
         )
 
         # record total number of optimization step
-        self.neb_optimization_step = self.neb_optimization_step + 1
+        SharedData.inner_loop_optimization_step = SharedData.inner_loop_optimization_step + 1
 
         # store the optimization gradient info.
         self.optimization_gradient_file.write(
-            str(self.neb_optimization_step) + "  "
+            str(SharedData.inner_loop_optimization_step) + "  "
             + str(grad_max_inner_bead) + "  "
             + str(grad_max_end_bead) + "\n"
         )
 
         # store the action info.
         self.action_info_file.write(
-            str(self.neb_optimization_step) + " "
+            str(SharedData.inner_loop_optimization_step) + " "
             + str(self.action) + "\n"
         )
 
@@ -948,11 +1042,11 @@ class MAPNEBGPRMover(Motion):
         # check the optimization gradient for LI-NEB
         print(
             "beads optimization gradient: "
-            + str(npnorm(self.nebgm.neb_optimization_force, axis=1))
+            + str(npnorm(self.gm.optimization_force, axis=1))
         )
         # check the potential of beads.
         beads_energy_relative_to_instanton_energy = (
-            self.nebgm.beads_energy - self.optarrays["instanton_path_energy"]
+            self.gm.beads_energy - self.optarrays["instanton_path_energy"]
         ) * units.unit_to_user("energy", "electronvolt", 1)
         print(
             "beads potential relative to instanton path energy (eV): "
@@ -961,7 +1055,7 @@ class MAPNEBGPRMover(Motion):
         # check distance between beads (effect of spring_k)
         print(
             "distance between beads in mass scaled coordinate: "
-            + str(self.nebgm.beads_mscaled_distance)
+            + str(self.gm.beads_mscaled_distance)
         )
         print("\n")
         print(
@@ -995,7 +1089,7 @@ class MAPNEBGPRMover(Motion):
         x_mscaled = self.x * np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
-        self.action, self.grad_mscaled = self.nebgm(x_mscaled)
+        self.action, self.grad_mscaled = self.gm(x_mscaled)
         self.f_mscaled = -self.grad_mscaled
 
         # check early stop condition if there are beads out of trust region.
@@ -1025,12 +1119,12 @@ class MAPNEBGPRMover(Motion):
         self.neb_optimize_beads_one_step()
 
         # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
-        grad_norm = npnorm(self.nebgm.neb_optimization_force, axis=1)
+        grad_norm = npnorm(self.gm.optimization_force, axis=1)
 
         grad_max_inner_bead = np.amax(grad_norm[1 : nbeads - 1])
         grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
         # amplitude of sum of transverse action force of internal beads.
-        action_forces_sum_amplitude = self.nebgm.action_forces_sum_amplitude
+        action_forces_sum_amplitude = self.gm.action_forces_sum_amplitude
         # output info about neb calculation.
         self.neb_step_info(
             outer_loop_step,
@@ -1065,7 +1159,7 @@ class MAPNEBGPRMover(Motion):
                 x_mscaled, 
                 self.velocity_mscaled,
                 (self.action, self.grad_mscaled),
-                self.nebgm,
+                self.gm,
                 self.time_step
             )
         elif self.options["mode"] == "cg":
@@ -1073,7 +1167,7 @@ class MAPNEBGPRMover(Motion):
             ipi.utils.nebinstool.conjugate_gradient(
                 x_mscaled,
                 (self.action, self.grad_mscaled),
-                self.nebgm,
+                self.gm,
                 self.conjugate_search_direction,
                 self.optarrays["cg_big_step"]
             )
@@ -1083,7 +1177,7 @@ class MAPNEBGPRMover(Motion):
             # the x_mscaled will be updated in the mintools.FIRE() code.
             self.velocity_mscaled, self.alpha, self.Ndn, self.Nup, self.time_step  = \
               ipi.utils.mintools.FIRE(x_mscaled,
-                                self.nebgm,
+                                self.gm,
                                 fdf0,
                                 self.velocity_mscaled,
                                 self.alpha,
@@ -1101,8 +1195,8 @@ class MAPNEBGPRMover(Motion):
                                 self.alpha_shrink
                                 )
             # update action & mass scaled optimization gradient.
-            self.action = self.nebgm.action 
-            self.grad_mscaled = self.nebgm.neb_optimization_gradient
+            self.action = self.gm.action 
+            self.grad_mscaled = self.gm.optimization_gradient
         else:
             softexit.trigger(
                 status="bad",
@@ -1159,12 +1253,12 @@ class MAPNEBGPRMover(Motion):
         )
 
         # set ab_initio pot and force in nebgm.
-        self.nebgm.ab_initio_pot[bead_index_for_update] = ab_initio_beads_energy
-        self.nebgm.ab_initio_force[bead_index_for_update] = np.copy(ab_initio_beads_forces)
+        self.gm.ab_initio_pot[bead_index_for_update] = ab_initio_beads_energy
+        self.gm.ab_initio_force[bead_index_for_update] = np.copy(ab_initio_beads_forces)
 
         # count the # of ab-initio calculation we have done.
-        self.ab_initio_bead_calculation_number = (
-            self.ab_initio_bead_calculation_number + 1
+        SharedData.ab_initio_bead_calculation_number = (
+            SharedData.ab_initio_bead_calculation_number + 1
         )
 
         # compute the difference between ab initio force and gpr force.
@@ -1260,12 +1354,12 @@ class MAPNEBGPRMover(Motion):
             )
 
             # set ab initio pot and force in nebgm
-            self.nebgm.ab_initio_pot[large_uncertainty_bead_index] = np.copy(ab_initio_beads_energy_for_update)
-            self.nebgm.ab_initio_force[large_uncertainty_bead_index] = np.copy(ab_initio_forces_for_update)
+            self.gm.ab_initio_pot[large_uncertainty_bead_index] = np.copy(ab_initio_beads_energy_for_update)
+            self.gm.ab_initio_force[large_uncertainty_bead_index] = np.copy(ab_initio_forces_for_update)
 
             # count the number of ab initio calculations we have done.
-            self.ab_initio_bead_calculation_number = (
-                self.ab_initio_bead_calculation_number + beads_number_to_update
+            SharedData.ab_initio_bead_calculation_number = (
+                SharedData.ab_initio_bead_calculation_number + beads_number_to_update
             )
 
             # check whether the updated ab-initio forces are close to gpr predicted forces. 
@@ -1397,85 +1491,11 @@ class MAPNEBGPRMover(Motion):
         )
 
     # ------ code below is for auxiliary functions --------------
-    def update_spring_k_kappa(self):
-        """
-        check the amplitude of spring k and kappa. to see if it is appropriate. If not, update it.
-        """
-        dt = self.optarrays["time_step"]
-        spring_k = self.optarrays["spring_k"]
-        left_kappa = self.optarrays["kappa"][
-            "left"
-        ]  # energy constraint constant for left end bead
-        right_kappa = self.optarrays["kappa"][
-            "right"
-        ]  # energy constraint constant for right end bead
-
-        end_bead_energy_converge_value = self.optarrays["end_bead_energy_converge_value"]
-        end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
-        bead_number = self.beads.nbeads
-
-        # # alternative choice of spring constant: we want spring_k * path_distance / (10 * bead_number) = <g>_action.
-        mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
-        path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
-        nimages = self.beads.nbeads
-        natoms = self.beads.natoms
-        action_force = self.nebgm.compute_neb_action_force(nimages, natoms)
-        average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
-        # near the convergence, the action force can be small. We need a minimum cutoff for spring constant.
-        average_action_force_cutoff = 5e-3 
-        average_action_force = np.max([average_action_force, average_action_force_cutoff])
-        self.optarrays["spring_k"] = average_action_force / (path_distance / (10 * bead_number))
-        self.nebgm.spring_k = self.optarrays["spring_k"]
-
-        # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
-        # val1 = spring_k * np.power(dt, 2)
-        # spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
-        # spring_k_scale = spring_k_ratio / val1
-        # self.optarrays["spring_k"] = self.optarrays["spring_k"] * spring_k_scale
-        # self.nebgm.spring_k = self.nebgm.spring_k * spring_k_scale
-
-        kappa_ratio = self.optarrays["dynamical_adjust_ratio"]["kappa"]
-        
-        min_max_force = np.power(10.0, -3)
-        # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2. We use stability criterion to set it as 0.5 (empirical value).
-        m_H = 1837  # mass of hydrogen in atomic unit.
-        # check the left end bead.
-        max_force2 = np.max(
-            np.abs(self.nebgm.rbf[0])
-        )  # maximum gradient of left end bead.
-        max_force2 = np.max([min_max_force, max_force2])
-        val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
-        left_kappa_scale = kappa_ratio / val2
-        self.optarrays["kappa"]["left"] = (
-            self.optarrays["kappa"]["left"] * left_kappa_scale
-        )
-
-        # make sure the kappa value is not too large for the convergence
-        if abs(self.nebgm.beads_energy[0] - self.optarrays["instanton_path_energy"]) < end_bead_energy_converge_value:
-            left_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
-            self.optarrays["kappa"]["left"] = np.min([self.optarrays["kappa"]["left"] , left_kappa_for_converge])
-
-        # check the right end bead.
-        max_force3 = np.max(
-            np.abs(self.nebgm.rbf[-1])
-        )  # maximum gradient of right end bead
-        max_force3 = np.max([min_max_force, max_force3])
-        val3 = max_force3 * np.power(dt, 2) * right_kappa / np.sqrt(m_H)
-        right_kappa_scale = kappa_ratio / val3
-        self.optarrays["kappa"]["right"] = (
-            self.optarrays["kappa"]["right"] * right_kappa_scale
-        )
-
-        # make sure kappa value is not too large for the converge.
-        if abs(self.nebgm.beads_energy[-1] - self.optarrays["instanton_path_energy"]) < end_bead_energy_converge_value:
-            right_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
-            self.optarrays["kappa"]["right"] = np.min([self.optarrays["kappa"]["right"], right_kappa_for_converge])
-
     def print_geometry(self, step):
         """
         print beads geometry and beads energy.
         """
-        pots = self.nebgm.beads_energy
+        pots = self.gm.beads_energy
         if (
             self.options["alt_out_step"] > 0
             and np.mod(step, self.options["alt_out_step"]) == 0
@@ -1495,7 +1515,7 @@ class MAPNEBGPRMover(Motion):
             )
 
             # print number of ab initio calculations and number of optimization step for each file.
-            self.geometry_info_file.write(f"{step} {self.neb_optimization_step} {self.ab_initio_bead_calculation_number} \n")
+            self.geometry_info_file.write(f"{step} {SharedData.inner_loop_optimization_step} {SharedData.ab_initio_bead_calculation_number} \n")
 
     def save_instanton_ring_polymer(self):
         """
@@ -1515,8 +1535,598 @@ class MAPNEBGPRMover(Motion):
                 self.output_maker,
             )
 
+class SharedData:
+    """
+    class store class variable which will be shared between Optimization Method (LINEBMethod / StringMethod) and MAPNEBGPRMover
+    """
+    inner_loop_optimization_step = 0
+    ab_initio_bead_calculation_number = 0
 
-class LINEBGradientMapper(object):
+class DummyMethod(object):
+    """
+    base Method class to optimize the instanton path.
+    """
+
+    def __init__(self):
+        """
+        """
+        # measure the distance of beads from the training data in internal coordinate.  
+        self.internal_coordinate_closest_r_list = (
+            []
+        )  
+
+    
+    def bind(self, ens: MAPNEBGPRMover):
+        """
+        bind beads and cells from MAPNEBGPRMover.
+        Also bind Gaussian Process Regression (GPR) model and internal coordinate transformer. 
+        """
+        self.options= {}
+        self.optarrays = {}
+
+        self.beads = ens.beads.copy()
+        self.cell = ens.cell.copy()
+        self.fixatoms = ens.fixatoms.copy()
+        self.fixatoms_mask = np.copy(ens.fixatoms_mask)
+        self.asr = ens.options["asr"]
+        self.time_step = ens.optarrays["time_step"]
+
+        # optimization method (FIRE / CG/ Quick-Min)
+        self.options["mode"]  = ens.options["mode"]
+        # for FIRE algorithm.
+        self.optarrays["FIRE"] = ens.optarrays["FIRE"]
+        
+        self.optarrays["neb_inner_loop_step_max"] = ens.optarrays["neb_inner_loop_step_max"]
+
+        self.optarrays["gpr_trust_region"] = ens.optarrays["gpr_trust_region"]
+        # bind the instanton path energy from NEB mover.
+        self.instanton_path_energy = ens.optarrays[
+            "instanton_path_energy"
+        ]  
+        self.energy_shift = ens.optarrays["energy_shift"]
+
+        # bind the end beads energy constraint constant kappa.
+        self.kappa = ens.optarrays[
+            "kappa"
+        ]
+        # when end bead's energy is within converge value criterion
+        # we will assume the end bead is on equal energy surface
+        self.end_bead_energy_converge_value = ens.optarrays["end_bead_energy_converge_value"]
+        self.options["tolerances"] = ens.options["tolerances"]
+        self.dynamical_adjust_ratio = ens.optarrays["dynamical_adjust_ratio"]
+
+        # bind the gpr model from MAPNEBGPRMover
+        self.gpr_model = ens.gpr_model 
+        self.coordinate_transformer = ens.coordinate_transformer
+        self.gm = ens.gm 
+
+    def bind_output_file(self, file_object_list):
+        """
+        bind the output file object.
+        """
+        self.optimization_gradient_file = file_object_list["opt_grad"]
+        self.optimization_gradient_outloop_file = file_object_list["opt_grad_outloop"]
+        self.geometry_info_file = file_object_list["geometry_info"]
+        self.action_info_file = file_object_list["action_info"]
+        self.action_outloop_info_file = file_object_list["action_info_outloop"]
+
+    def inner_loop_initialize(self, step):
+        """
+        initialize optimization algorithms' parameters (FIRE/ Quick-Min/ CG) for inner loop.
+        update parameter for string/ LI-NEB method if necessary.
+        """
+        # coordinate of free moving atoms
+        self.x = np.copy(self.beads.q[:, self.fixatoms_mask])
+
+        # discretized action of the path.
+        self.action = None
+
+        # initialize the force to prepare for update of constraint parameters. 
+        self.gm.initialize_force(self.x)
+        
+        # update_constraint_parameters (kappa and spring_k (for LINEB))
+        self.update_constraint_parameters()
+
+        mscaled_x = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
+        self.action, self.grad_mscaled = self.gm(
+            mscaled_x
+        )
+        # negative gradient of action for each bead in mass scaled coordinate.
+        self.f_mscaled = -self.grad_mscaled 
+
+        if step == 0:
+             # mass scaled velocity. Used in dynamics optimizatioin algorithm,
+            # for example: projected velocity verlet or FIRE 
+            self.velocity_mscaled = np.zeros(
+                [self.beads.nbeads, 3 * (self.beads.natoms - len(self.fixatoms))]
+            )
+
+            if self.options["mode"] == "cg":
+                # use conjugate gradient method. 
+                # The search is performed in the mass scaled coordinate.
+                # initialize the search direction as gradient direction.
+                self.conjugate_search_direction = self.f_mscaled
+            
+            if self.options["mode"] == "FIRE":
+                # initialize parameter for FIRE method.
+                self.alpha0 = self.optarrays["FIRE"]["alpha0"]
+                self.alpha = self.alpha0
+                self.alpha_shrink = self.optarrays["FIRE"]["alpha_shrink"]
+
+                self.dtmax = self.time_step * self.optarrays["FIRE"]["tmax"]
+                self.dtmin = self.time_step * self.optarrays["FIRE"]["tmin"]
+
+                self.Ndelay = self.optarrays["FIRE"]["Ndelay"]
+                self.finc = self.optarrays["FIRE"]["finc"]
+                self.fdec = self.optarrays["FIRE"]["fdec"]
+
+                self.Nmax = self.optarrays["FIRE"]["Nmax"]
+                self.maxstep = self.optarrays["FIRE"]["maxstep"]
+
+                self.Ndn = 0  # number of steps going down hill
+                self.Nup = 0  # number of steps going up hill.
+
+    def update_constraint_parameters(self):
+        """
+        update parameters related to the constraint of the end beads & inner beads (for LI-NEB method).
+        """
+        dt = self.time_step
+        # energy constraint constant for left end bead. 
+        left_kappa = self.kappa 
+        # energy constraint constant for right end bead. 
+        right_kappa = self.kappa 
+        
+        # parameter for end bead convergence to energy contour
+        end_bead_energy_converge_value = self.end_bead_energy_converge_value
+        end_bead_gradient_tolerances = self.options["tolerances"]["gradient_end_bead"]
+
+        kappa_ratio = self.dynamical_adjust_ratio["kappa"]
+
+        max_force_cutoff = np.power(10.0, -3)
+        
+        # check |dV/dx| * kappa / sqrt(m_H) * (dt)^2. We use stability criterion to set it as 0.5 (empirical value).
+        # TODO: Need to change this in case the tunneling atom is not hydrogen atom. 
+        # mass of hydrogen in atomic unit. We typically study proton transfer reaction. 
+        m_H = 1837  
+        
+        # check the left end bead.
+        max_force2 = np.max(
+            np.abs(self.gm.rbf[0])
+        )
+        max_force2 = np.max([max_force_cutoff, max_force2])
+        val2 = max_force2 * np.power(dt, 2) * left_kappa / np.sqrt(m_H)
+        left_kappa_scale = kappa_ratio / val2
+        self.kappa["left"] = self.kappa["left"] * left_kappa_scale 
+
+        # make sure the kappa value we set is not too large for the convergence.
+        if abs(self.gm.beads_energy[0] - self.instanton_path_energy) < end_bead_energy_converge_value:
+            left_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
+            self.kappa["left"] = np.min([self.kappa["left"], left_kappa_for_converge])
+
+        # check the right end bead.
+        max_force3 = np.max(
+            np.abs(self.gm.rbf[-1])
+        ) 
+        max_force3 = np.max([max_force_cutoff, max_force3])
+        val3 = max_force3 * np.power(dt, 2) * right_kappa / np.sqrt(m_H)
+        right_kappa_scale = kappa_ratio / val3
+        self.kappa["right"] = self.kappa["right"] * right_kappa_scale 
+        # make sure the kappa value we set is not too large for the convergence.
+        if abs(self.gm.beads_energy[-1] - self.instanton_path_energy) < end_bead_energy_converge_value:
+            right_kappa_for_converge = 0.2 * end_bead_gradient_tolerances / end_bead_energy_converge_value
+            self.kappa["right"] = np.min([self.kappa["right"], right_kappa_for_converge])
+
+    def optimize_beads_one_step(self):
+        """
+        Use different optimizer to optimize the LI-NEB beads.
+        See: THE JOURNAL OF CHEMICAL PHYSICS 128, 134106 2008 for benchmark of different optimizer's performance
+        """
+        old_x = np.copy(self.x)
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
+        # neb move using gradient of LINEBGradient
+        # See: J. Chem. Phys. 128, 134106 (2008) for the performance of different optimization algorithm
+        if self.options["mode"] == "verlet":
+            x_mscaled, self.velocity_mscaled, self.action, self.grad_mscaled = \
+            ipi.utils.nebinstool.projected_verlet(
+                x_mscaled, 
+                self.velocity_mscaled,
+                (self.action, self.grad_mscaled),
+                self.gm,
+                self.time_step
+            )
+        elif self.options["mode"] == "cg":
+            x_mscaled, self.action, self.grad_mscaled, self.conjugate_search_direction= \
+            ipi.utils.nebinstool.conjugate_gradient(
+                x_mscaled,
+                (self.action, self.grad_mscaled),
+                self.gm,
+                self.conjugate_search_direction,
+                self.optarrays["cg_big_step"]
+            )
+        elif self.options["mode"] == "FIRE":
+            fdf0 = (self.action, self.grad_mscaled)
+            # one step using FIRE. 
+            # the x_mscaled will be updated in the mintools.FIRE() code.
+            self.velocity_mscaled, self.alpha, self.Ndn, self.Nup, self.time_step  = \
+              ipi.utils.mintools.FIRE(x_mscaled,
+                                self.gm,
+                                fdf0,
+                                self.velocity_mscaled,
+                                self.alpha,
+                                self.Ndn,
+                                self.Nup,
+                                self.time_step,
+                                self.maxstep,
+                                self.dtmax,
+                                self.dtmin,
+                                self.Ndelay,
+                                self.Nmax,
+                                self.finc,
+                                self.fdec,
+                                self.alpha0,
+                                self.alpha_shrink
+                                )
+            # update action & mass scaled optimization gradient.
+            self.action = self.gm.action 
+            self.grad_mscaled = self.gm.optimization_gradient
+        else:
+            softexit.trigger(
+                status="bad",
+                message="Only projected velocity verlet (verlet), conjugate gradient (cg) and FIRE are currently implemented. set mode == 'verlet/cg/FIRE' ",
+            )
+
+        self.f_mscaled = -self.grad_mscaled
+        # update new position
+        self.x = x_mscaled / np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
+        # project out translation & rotational dofs depending on asr mode.
+        natoms = self.beads.natoms - len(self.fixatoms)
+        m = self.beads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
+
+        if (self.options["mode"] == "verlet" or self.options["mode"] == "FIRE"):
+            # project out translation & rotational mode in velocity.
+            self.velocity_mscaled = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(self.x), natoms, self.velocity_mscaled, asr= self.options["asr"], mscaled_bool= True)
+
+        # project out translation & rotational mode from step.
+        dx = self.x - old_x 
+        projected_dx = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(old_x), natoms, dx, asr= self.options["asr"])
+        self.x = old_x + projected_dx 
+
+        self.beads.q[:, self.fixatoms_mask] = self.x
+
+    def step_info(self,
+                  outer_loop_step,
+                  inner_loop_step,
+                  grad_max_inner_bead,
+                  grad_max_end_bead,
+                  action_forces_sum_amplitude
+                  ):
+        """
+        output the information about convergence check for each inner loop step.
+        """
+        tolerances = self.options["tolerances"]
+
+        print("\n")
+        info(
+            "@Inner step summary: Outer loop # {} , inner loop # {}, \n \
+              max force gradient for inner bead {:4.2e}, (condition {:4.2e}), \n \
+              max force gradient for end bead {:4.2e} (condition {:4.2e}) \n\
+              sum of gradient of action for internal beads {:4.2e} (condition {:4.2e}) \n \
+              action {} ".format(
+                outer_loop_step,
+                inner_loop_step,
+                grad_max_inner_bead,
+                tolerances["gradient"],
+                grad_max_end_bead,
+                tolerances["gradient_end_bead"],
+                action_forces_sum_amplitude,
+                tolerances["action_forces_sum"],
+                self.action
+            ),
+            verbosity.low
+        )
+
+        # record total number of optimization step
+        SharedData.inner_loop_optimization_step = SharedData.inner_loop_optimization_step + 1
+
+        # store the optimization gradient info
+        self.optimization_gradient_file.write(
+            str(SharedData.inner_loop_optimization_step) + "  "
+            + str(grad_max_inner_bead) + "  "
+            + str(grad_max_end_bead) + "\n"
+        )
+
+        # store the action info 
+        self.action_info_file.write(
+            str(SharedData.inner_loop_optimization_step) + " "
+             + str(self.action) + "\n"
+        )
+
+        # check the optimization gradient for LI-NEB / string
+        print(
+            "beads optimization gradient: "
+            + str(npnorm(self.gm.optimization_force, axis=1))
+        )
+
+        # check the potential of beads.
+        beads_energy_relative_to_instanton_energy = (
+            self.gm.beads_energy - self.optarrays["instanton_path_energy"]
+        ) * units.unit_to_user("energy", "electronvolt", 1)
+        print(
+            "beads potential relative to instanton path energy (eV): "
+            + str(beads_energy_relative_to_instanton_energy)
+        )
+
+        # check the distance between beads (equal distance constraint)
+        print(
+            "distance between beads in mass scaled coordinate: "
+            + str(self.gm.beads_mscaled_distance)
+        )
+        print("\n")
+        print(
+            "@Finish Inner loop: outer loop step {}, LI-NEB inner loop step {}".format(
+                outer_loop_step, inner_loop_step
+            )
+        )
+        print("\n")
+        print("\n")
+
+
+    def inner_loop_step(self, outer_loop_step, inner_loop_step, grad_max_inner_bead, grad_max_end_bead):
+        """
+        LI-NEB or string method move for one step
+        """
+        nbeads = self.beads.nbeads
+
+        neb_inner_loop_step_max = self.optarrays["neb_inner_loop_step_max"]
+
+        if self.options["mode"] == "FIRE":
+            if inner_loop_step % self.optarrays["FIRE"]["neb_step_update_kappa"] == 0:
+                self.update_constraint_parameters()
+        else:
+            self.update_constraint_parameters()
+        
+        if inner_loop_step > neb_inner_loop_step_max:
+            self.converge = True 
+        
+        # We have changed the kappa / spring constant, thus recompute grad mapper optimization force.
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.action, self.grad_mscaled = self.gm(x_mscaled)
+        self.f_mscaled = - self.grad_mscaled 
+
+        # check early stop condition if there are beads out of trust region.
+        # the trust region is defined in the internal coordinate, scaled by length scale of the kernel.
+        (
+            early_stop_bool,
+            outrange_bead_index_list,
+            self.internal_coordinate_closest_r_list,
+        ) = ipi.utils.nebinstgprtool.check_neb_early_stop(
+            self.beads.q,
+            self.optarrays["gpr_trust_region"],
+            self.gpr_model,
+            outer_loop_step,
+            inner_loop_step
+        )
+
+        # stop the step early if the beads is out of trust region.
+        if early_stop_bool:
+            return (
+                grad_max_inner_bead,
+                grad_max_end_bead,
+                early_stop_bool,
+                outrange_bead_index_list,
+            )
+    
+        # move beads 1 step using gradient of gm.
+        # call either FIRE / Quick-MIN / CG method. 
+        # for string method, we also need to re-parametrize the path & velocity 
+        # if the bead distance constraint is no longer satisfied.
+        self.optimize_beads_one_step()
+
+        # compute maximum LI-NEB gradient among all beads. used for monitoring the convergence of LI-NEB.
+        grad_norm = npnorm(self.gm.optimization_force, axis=1)
+
+        grad_max_inner_bead = np.amax(grad_norm[1 : nbeads - 1])
+        grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
+        # amplitude of sum of transverse action force of internal beads.
+        action_forces_sum_amplitude = self.gm.action_forces_sum_amplitude
+
+        # output info about calculation.
+        self.step_info(
+            outer_loop_step,
+            inner_loop_step,
+            grad_max_inner_bead,
+            grad_max_end_bead,
+            action_forces_sum_amplitude
+        )
+
+        return (
+            grad_max_inner_bead,
+            grad_max_end_bead,
+            early_stop_bool,
+            outrange_bead_index_list,
+        )
+
+    def inner_loop(self, outer_loop_step):
+        """
+        the inner loop of Line Integral Nudged Elastic Band / String method.
+        The loop will stop once one of the two criteria is met:
+        (1) The optimization algorithm converge on the surrogated PES generated by Gaussian Process Regression model.
+            This is the case when all the gradient of beads are smaller than the tolerance value.
+        (2) One bead move out of the trust region. In this case, PES generated by GPR is not reliable any more,
+            we need to early stop the algorithm and compute the ab-initio V & F at that given bead & add to the training data.
+            The trust region is defined in the internal coordinate, scaled by the length scale of the squared exponential kernel.
+        """
+        info(
+            " @NEB: start inner loop neb for step {}".format(outer_loop_step),
+            verbosity.debug,
+        )
+
+        tolerances = self.options[
+            "tolerances"
+        ]
+
+        inner_loop_step = 0
+
+        early_stop_bool = False 
+        # index for beads that move out of trusted region that causes the early stop.
+        outrange_bead_index_list = ([])
+
+        # first check the gradient of current geometry before making the move.
+        # If it pass the criterion, we do not need to start the inner loop.
+        grad_norm = npnorm(self.gm.optimization_force, axis=1)
+        
+        grad_max_inner_bead = np.amax(grad_norm[1 : self.beads.nbeads - 1])
+        grad_max_end_bead = np.amax(np.array([grad_norm[0], grad_norm[-1]]))
+        # amplitude of sum of transverse action force of internal beads.
+        action_forces_sum_amplitude = self.gm.action_forces_sum_amplitude
+
+        # output the step info
+        self.step_info(
+            outer_loop_step,
+            inner_loop_step,
+            grad_max_inner_bead,
+            grad_max_end_bead,
+            action_forces_sum_amplitude
+        )
+
+        print("\n")
+        print("@Start outer loop: " + str(outer_loop_step) + "\n")
+
+        self.converge = False
+
+        while (
+            grad_max_inner_bead > tolerances["gradient"]
+            or grad_max_end_bead > tolerances["gradient_end_bead"]
+            or ( self.gm.action_forces_sum_amplitude > tolerances["action_forces_sum"] )
+        ):
+            inner_loop_step = inner_loop_step + 1  # inner_loop_step == 0: we have not moved the bead.
+
+            (
+                grad_max_inner_bead,
+                grad_max_end_bead,
+                early_stop_bool,
+                outrange_bead_index_list,
+            ) = self.inner_loop_step(outer_loop_step, inner_loop_step, grad_max_inner_bead, grad_max_end_bead)
+
+            if self.converge:
+                # too many optimization steps. The system has converged on the energy surface.
+                self.converge = False 
+                break 
+            
+            # beads move out of trust region.
+            if early_stop_bool:
+                break 
+        
+        if not early_stop_bool:
+            print("@LI-NEB/String converge on GPR PES")
+        
+        return early_stop_bool, outrange_bead_index_list, grad_max_inner_bead, grad_max_end_bead
+
+class LINEBMethod(DummyMethod):
+    """
+    Line Integral Nudged Elastic Band method to optimize the instanton path.
+    """
+    
+    def __init__(self):
+        """
+        """
+    
+    def bind(self, ens: MAPNEBGPRMover):
+        """
+        call base class (DummyMethod)'s bind function.
+        bind spring constnat k for LINEB algorithm.
+        """
+        super(LINEBMethod, self).bind(ens)
+
+        self.spring_k = ens.optarrays["spring_k"]
+
+    def update_constraint_parameters(self):
+        # update end bead constraint parameter kappa.
+        super(LINEBMethod, self).update_constraint_parameters()
+
+        # update spring constant.
+        dt = self.time_step 
+        bead_number = self.beads.nbeads
+
+        # alternative choice of spring constant: we want spring_k * path_distance / (10 * bead_number) = <g>_action.
+        mscaled_x = self.x *  np.sqrt(self.beads.m3[:, self.fixatoms_mask])
+        path_distance = np.sum(np.linalg.norm(mscaled_x[1:] - mscaled_x[:-1], axis= 1))
+        nimages = self.beads.nbeads
+        natoms = self.beads.natoms
+        action_force = self.gm.compute_neb_action_force(nimages, natoms)
+        average_action_force =  np.mean(np.linalg.norm(action_force[1:-1], axis= 1))
+        # near the convergence, the action force can be small. We need a minimum cutoff for spring constant.
+        average_action_force_cutoff = 5e-3 
+        average_action_force = np.max([average_action_force, average_action_force_cutoff])
+        self.spring_k = average_action_force / (path_distance / (10 * bead_number))
+        self.gm.spring_k = self.spring_k
+
+        # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
+        # val1 = spring_k * np.power(dt, 2)
+        # spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
+        # spring_k_scale = spring_k_ratio / val1
+        # self.spring_k = self.spring_k * spring_k_scale
+        # self.gm.spring_k = self.gm.spring_k * spring_k_scale
+
+class StringMethod(DummyMethod):
+    """
+    String method to optimize the instanton path.
+    """
+    def __init__(self):
+        """
+        """
+    
+    def bind(self, ens: MAPNEBGPRMover):
+        """
+        call base class (DummyMethod)'s bind function.
+        """
+        super(StringMethod, self).bind(ens)
+
+    def optimize_beads_one_step(self):
+        # call function to use optimizer to move bead for one step.
+        super(StringMethod, self).optimize_beads_one_step()
+
+        # TODO: re-parametrize the path & velocity.
+
+
+class ImprovedStringMethod(StringMethod):
+    """
+    Improved String method to optimize the instanton path.
+    """
+    def __init__(self):
+        """
+        """
+    
+    def bind(self, ens):
+        """
+        call base class (DummyMethod)'s bind function.
+        """
+        super(ImprovedStringMethod, self).bind(ens)
+
+class GradientMapper(object):
+    """
+    Creation of Gradient of target function that will be minimized
+    """
+    def __init__(self):
+        """
+        """
+
+    def bind(self, ens: MAPNEBGPRMover):
+        """
+        """
+
+class LINEBGradientMapper(GradientMapper):
     """Creation of the Line Integral function that will be minimized.
         Functional analog of a GradientMapper in geop.py
 
@@ -1537,7 +2147,7 @@ class LINEBGradientMapper(object):
 
         self.action = None  # abbreviated action.
         self.action_forces = None  # minus gradient of abbreviated action
-        self.neb_optimization_force = (
+        self.optimization_force = (
             None  # neb force for optimization of action with constraints at two ends.
         )
         self.action_force = (
@@ -1703,13 +2313,13 @@ class LINEBGradientMapper(object):
         self.btau = self.compute_ENO_tangent_vector()
 
         # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
-        self.neb_optimization_force = self.compute_neb_optimization_force(
+        self.optimization_force = self.compute_neb_optimization_force(
             nimage, natoms, self.btau
         )
 
         # project out translation (&rotational) dofs depending on the asr mode. (symmetry of the system.)
         m = self.dbeads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
-        self.neb_optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.neb_optimization_force, asr= self.asr, mscaled_bool= True)
+        self.optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.optimization_force, asr= self.asr, mscaled_bool= True)
         self.transverse_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.transverse_force, asr= self.asr, mscaled_bool= True)
 
         # sum of transverse forces for all internal beads 
@@ -1717,9 +2327,9 @@ class LINEBGradientMapper(object):
         # self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.action_forces[1: -1], axis=1))
         self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.transverse_force[1:-1], axis= 1))
 
-        self.neb_optimization_gradient = - self.neb_optimization_force
+        self.optimization_gradient = - self.optimization_force
 
-        return self.action, np.copy(self.neb_optimization_gradient)
+        return self.action, np.copy(self.optimization_gradient)
 
     def compute_tangent_vector(self, nimage, natom):
         """
@@ -2124,6 +2734,18 @@ class LINEBGradientMapper(object):
 
         return neb_optimization_force
 
+class StringGradientMapper(GradientMapper):
+    """
+    Creation of Gradient of target function for String method.
+    Here the spring force constraint is removed. 
+    """
+    def __init__(self):
+        """
+        """
+    
+    def bind(self, ens: MAPNEBGPRMover):
+        """
+        """
 
 class RP_MAP(object):
     """
