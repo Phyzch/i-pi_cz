@@ -99,15 +99,12 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
     # make the variable in the range of [0, 1]
     neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1]
 
+    # object for cubic spline interpolation. interpolate along axis 0.
     cs = CubicSpline(
         neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type="natural"
-    )  # object for cubic spline interpolation. interpolate along axis 0.
+    )  
 
-    cs1 = CubicSpline(np.arange(neb_bead_number), neb_bead_path_r_scaled)
-
-    new_a = np.linspace(0, neb_bead_number - 1, num=interpolation_bead_number)
-
-    new_bead_r_scaled = cs1(new_a)
+    new_bead_r_scaled = np.linspace(0, 1, num= interpolation_bead_number)
 
     bead_path_x = cs(new_bead_r_scaled)
 
@@ -120,23 +117,24 @@ def path_cubic_interpolation(neb_bead_q, interpolation_bead_number):
     return bead_path_x, bead_path_r
 
 
-def path_cubic_spline_function(neb_bead_q):
+def path_cubic_spline_function(neb_bead_q, interpolation_func):
     """
     return cubic spline function of minimum action path using the location of neb beads.
     The spline function x = Cs(r), will r is the normalized distance along the path. (at the end of path, r=1).
 
     :param: neb_bead_q: coordinate of nudged elastic band bead
+    :param: interpolation_func: function to interpolate using cubic interpolation along the path. 
 
     :return cs: CubicSpline function : scipy.interpolate.CubicSpline
     """
-    neb_bead_q_array = np.array(neb_bead_q)
+    interpolation_func_array = np.array(interpolation_func)
     neb_bead_distance = np.linalg.norm(neb_bead_q[1:] - neb_bead_q[:-1], axis=1)
     neb_bead_path_r = np.concatenate([[0], np.cumsum(neb_bead_distance)])
     # make the variable in the range of [0, 1]
     neb_bead_path_r_scaled = neb_bead_path_r / neb_bead_path_r[-1]
 
     cs = CubicSpline(
-        neb_bead_path_r_scaled, neb_bead_q_array, axis=0, bc_type="natural"
+        neb_bead_path_r_scaled, interpolation_func_array, axis=0, bc_type="natural"
     )
 
     return cs

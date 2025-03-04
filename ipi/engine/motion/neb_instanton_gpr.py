@@ -242,8 +242,10 @@ class MAPNEBGPRMover(Motion):
         # choose gradient mapper (compute optimization gradient) based on the optimizer we provide in input.xml:
         if self.options["opt"] == "neb":
             self.gm = LINEBGradientMapper()
-        elif self.options["opt"] == "string" or self.options["opt"] == "improved_string":
+        elif self.options["opt"] == "string":
             self.gm = StringGradientMapper()
+        elif self.options["opt"] == "improved_string":
+            self.gm = ImprovedStringGradientMapper()
         else:
             raise ValueError("The opt Value does not match any existing options. Please choose either neb/string/improved_string.")
         
@@ -1346,6 +1348,11 @@ class DummyMethod(object):
             self.beads.m3[:, self.fixatoms_mask]
         )
 
+        self.project_out_asr_mode(old_x)
+
+    def project_out_asr_mode(self, old_x):
+        """
+        """
         # project out translation & rotational dofs depending on asr mode.
         natoms = self.beads.natoms - len(self.fixatoms)
         m = self.beads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
@@ -1358,6 +1365,13 @@ class DummyMethod(object):
         dx = self.x - old_x 
         projected_dx = ipi.utils.nebinstool.apply_symmetry_projection(m, np.copy(old_x), natoms, dx, asr= self.options["asr"])
         self.x = old_x + projected_dx 
+
+        # update grad_mscaled and f_mscaled.
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+        self.action, self.grad_mscaled = self.gm(x_mscaled)
+        self.f_mscaled = - self.grad_mscaled 
 
         self.beads.q[:, self.fixatoms_mask] = self.x
 
@@ -1656,8 +1670,52 @@ class StringMethod(DummyMethod):
         # call function to use optimizer to move bead for one step.
         super(StringMethod, self).optimize_beads_one_step()
 
-        # TODO: re-parametrize the path & velocity.
+        # redistribute beads along the path use cubic interpolation.
+        self.redistribute_beads()
+    
 
+    def redistribute_beads(self):
+        """
+        move beads to the equal distance position using cubic interpolation.
+        update the velocity of beads along the path using cubic interpolation.
+        update the gradient and force at the new bead location along the path.
+        """
+        x_mscaled = self.x * np.sqrt(
+            self.beads.m3[:, self.fixatoms_mask]
+        )
+
+        nbeads = self.beads.nbeads
+        bead_distance = np.linalg.norm(x_mscaled[1:] - x_mscaled[:-1], axis= 1)
+        path_length = np.sum(bead_distance)
+        bead_distance_diff_cutoff = path_length / (10 * (nbeads -1))
+        bead_distance_diff = np.abs(bead_distance[1:] - bead_distance[:-1])
+        redistribute_bool = (np.max(bead_distance_diff) > bead_distance_diff_cutoff)
+
+        if redistribute_bool:
+            # equal spacing interpolation in mass scaled coordinate using cubic spline
+            path_coord_cs = ipi.utils.nebinstool.path_cubic_spline_function(np.copy(x_mscaled),
+                                                                            np.copy(x_mscaled))
+            interpolated_r = np.linspace(0, 1, self.beads.nbeads)
+
+            interpolated_x_mscaled = path_coord_cs(interpolated_r)
+            x_mscaled = interpolated_x_mscaled
+            self.x = x_mscaled / np.sqrt(
+                self.beads.m3[:, self.fixatoms_mask]
+            )
+
+            # for MD type optimization algorithm, we also need to interpolate the velocity.
+            if (self.options["mode"] == "verlet" or self.options["mode"] == "FIRE"):
+                velocity_cs = ipi.utils.nebinstool.path_cubic_spline_function(np.copy(x_mscaled),
+                                                                            np.copy(self.velocity_mscaled))
+                interpolated_velocity_mscaled = velocity_cs(interpolated_r)
+                self.velocity_mscaled = interpolated_velocity_mscaled    
+
+
+            # update grad_mscaled and f_mscaled.
+            self.action, self.grad_mscaled = self.gm(x_mscaled)
+            self.f_mscaled = - self.grad_mscaled 
+
+            self.beads.q[:, self.fixatoms_mask] = self.x
 
 class ImprovedStringMethod(StringMethod):
     """
@@ -2458,7 +2516,20 @@ class StringGradientMapper(GradientMapper):
 
         return neb_optimization_force
 
+class ImprovedStringGradientMapper(GradientMapper):
+    """
+    Create the gradient for target function in improved string method. (J. Chem. Phys. 126, 164103 (2007))
+    We no longer perform the nudging & projection for force.
+    """
+    def __init__(self):
+        """
+        """
+        super(ImprovedStringGradientMapper, self).__init__()
 
+    def bind(self, ens: MAPNEBGPRMover):
+        """
+        """
+        super(ImprovedStringGradientMapper, self).bind(ens)
 
 # ------ End code for Gradient Mapper -------
 
@@ -2589,6 +2660,7 @@ class RP_MAP(object):
 
         # Cubic interpolation of neb beads to enable accurate dynamics evolution.
         self.cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(
+            np.copy(self.neb_beads.q),
             np.copy(self.neb_beads.q)
         )
 
@@ -2693,7 +2765,7 @@ class RP_MAP(object):
 
         t = t + dt
         x = self.cubic_spline(r_distance)
-        v = self.cubic_spline(r_distance, nu=1) * v_r
+        v = self.cubic_spline(r_distance, nu= 1) * v_r
 
         return t, r_distance, v_r, x, v
 

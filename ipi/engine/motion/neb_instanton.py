@@ -1078,6 +1078,7 @@ class RP_MAP(object):
 
         # Cubic spline interpolation of neb beads to enable accurate dynamics evolution.
         self.cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(
+            np.copy(self.neb_beads.q),
             np.copy(self.neb_beads.q)
         )
 
