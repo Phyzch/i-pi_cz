@@ -235,7 +235,9 @@ class MAPNEBGPRMover(Motion):
         elif self.options["opt"] == "string":
             self.optimizer = StringMethod()
         elif self.options["opt"] == "improved_string":
-            self.optimizer = ImprovedStringMethod()
+            # The bead redistribution part is the same as string method. 
+            # but the gradient mapper (gm) is different.
+            self.optimizer = StringMethod()
         else:
             raise ValueError("The opt Value does not match any existing options. Please choose either neb/string/improved_string.")
         
@@ -1654,7 +1656,7 @@ class LINEBMethod(DummyMethod):
 
 class StringMethod(DummyMethod):
     """
-    String method to optimize the instanton path.
+    String method/ Improved String Method to optimize the instanton path.
     """
     def __init__(self):
         """
@@ -1716,20 +1718,6 @@ class StringMethod(DummyMethod):
             self.f_mscaled = - self.grad_mscaled 
 
             self.beads.q[:, self.fixatoms_mask] = self.x
-
-class ImprovedStringMethod(StringMethod):
-    """
-    Improved String method to optimize the instanton path.
-    """
-    def __init__(self):
-        """
-        """
-    
-    def bind(self, ens):
-        """
-        call base class (DummyMethod)'s bind function.
-        """
-        super(ImprovedStringMethod, self).bind(ens)
 
 # -------  Start the code for GradientMapper -------------- 
 class GradientMapper(object):
