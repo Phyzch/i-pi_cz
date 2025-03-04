@@ -2519,7 +2519,7 @@ class StringGradientMapper(GradientMapper):
 class ImprovedStringGradientMapper(GradientMapper):
     """
     Create the gradient for target function in improved string method. (J. Chem. Phys. 126, 164103 (2007))
-    We no longer perform the nudging & projection for force.
+    We no longer perform the nudging & projection for the optimization force.
     """
     def __init__(self):
         """
@@ -2530,6 +2530,139 @@ class ImprovedStringGradientMapper(GradientMapper):
         """
         """
         super(ImprovedStringGradientMapper, self).bind(ens)
+
+    def __call__(self, mscaled_q):
+        """
+        Returns the projected gradient for string method. (Phys. Rev. B 66, 052301)
+        Here, unlike the LI-NEB algorithm. The spring force term is removed. 
+        Instead, we will perform re-parametrization if beads move out of position. 
+        :param: mscaled_q: mass scaled coordinates for updated freely moving particles.
+
+        rbf: physical forces for free moving beads.
+        rbq: position for freely moving beads.
+        btau: tangent vector directions.
+        """
+        # coordinate q.
+        q = mscaled_q / np.sqrt(
+            self.dbeads.m3[:, self.fixatoms_mask]
+        )
+
+        if not np.allclose(self.rbeads.q, q):
+            self.initialize_force(q)
+
+        # mass scaled coordinate.
+        self.mscaled_q = np.copy(mscaled_q)
+
+        # Number of images
+        nimage = self.dbeads.nbeads
+        # Number of atoms that is free to move.
+        natoms = self.dbeads.natoms - len(self.fixatoms)
+
+        # energy contour constraint force for two end beads.
+        self.end_beads_energy_constraint_forces = np.zeros([2, 3 * natoms])
+        self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
+
+        # compute abbreviated action for the ring polymer instanton path.
+        self.action = self.compute_abbreviated_action(nimage)
+        
+        # compute abbreviated action force (negative gradient) for each bead.
+        # we only compute action force for inner beads, not for end beads.
+        self.action_forces = self.compute_action_force(nimage, natoms)
+
+        # The code below use Simpson's rule to compute action & action force. 
+        # This will be more accurate.
+        # self.action = self.compute_abbreviated_action_Simpson_rule(nimage)
+        # self.action_forces = self.compute_action_force_Simpson_rule(nimage, natoms)
+
+        # evaluate the optimization forces for the string method. 
+        self.optimization_force = self.compute_string_optimization_force(nimage, natoms, self.btau)
+        # project out translation (&rotation) dofs depending on the asr mode.
+        m = self.dbeads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
+        self.optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.optimization_force, 
+                                                                                 asr= self.asr, mscaled_bool= True)
+        
+        # sum of transverse forces for all internal beads.
+        # This will be one convergence criterion.
+        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.optimization_force[1:-1], axis= 1))
+
+        self.optimization_gradient = - self.optimization_force
+
+        return self.action, np.copy(self.optimization_gradient)
+
+    def compute_string_optimization_force(self, nimage, natoms, btau):
+        """
+        compute the optimization forces for beads in string method. 
+
+        :param: nimag: number of images (replica). scalar
+        :param: natom: number of freely moving atoms. scalar
+        :param: btau: tangent vector for internal beads.  size: [nimag, 3 * natoms]
+        
+        :return: optimization_force: the optimization force for string method. size:[nimage, 3 * natom]
+        """
+        mscaled_q = np.copy(self.mscaled_q)
+        mscaled_f = np.copy(self.mscaled_f)
+        beads_energy = self.beads_energy
+
+        # kappa: constraint force that pull beads back to energy contour.
+        left_kappa = self.kappa["left"]  # kappa for the left end beads
+        right_kappa = self.kappa["right"]  # kappa for the right end beads.
+
+        neb_optimization_force = np.zeros([nimage, 3 * natoms])
+
+        # end_beads_energy_constraint_force: force to draw end beads back to isoenergy contours.
+        # unit vector along force at beads: 0
+        f0 = mscaled_f[0] / npnorm(mscaled_f[0])
+        # unit vector along force at beads: nimage - 1
+        f1 = mscaled_f[nimage - 1] / npnorm(
+            mscaled_f[nimage - 1]
+        )
+
+        end_beads_energy_constraint_force = np.zeros([2, 3 * natoms])
+        # kappa * (V(r) - E) * \hat{f}(r) for beads 0
+        end_beads_energy_constraint_force[0] = (
+            f0 * left_kappa * (beads_energy[0] - self.instanton_path_energy)
+        )  
+        # kappa * (V(r) - E) * \hat{f}(r) for beads n-1.
+        end_beads_energy_constraint_force[1] = (
+            f1 * right_kappa * (beads_energy[nimage - 1] - self.instanton_path_energy)
+        ) 
+        self.end_beads_energy_constraint_forces = end_beads_energy_constraint_force
+
+        # for internal beads, using simplified string method,
+        # we do not project out parallel component of action forces.
+        for ii in range(1, nimage - 1):
+            neb_optimization_force[ii] = self.action_forces[ii]
+
+        # for two end beads.
+        # add energy constraint force for two end beads.
+        neb_optimization_force[0] = end_beads_energy_constraint_force[0]
+        neb_optimization_force[nimage - 1] = end_beads_energy_constraint_force[1]
+
+        # add force term to end beads to make sure the path along end beads aligns with gradient of potential.
+        # spring force for end bead 1
+        unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(
+            mscaled_q[1] - mscaled_q[0]
+        )
+        spring_force_bead0 = (
+            unit_vec_1 * np.linalg.norm(self.action_forces[1])
+        )
+        neb_optimization_force[0] = neb_optimization_force[0] + (
+            spring_force_bead0 - np.dot(spring_force_bead0, f0) * f0
+        )
+
+        # spring force for end bead 2
+        unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(
+            mscaled_q[nimage - 2] - mscaled_q[nimage - 1]
+        )
+        spring_force_bead1 = (
+            unit_vec_2 * np.linalg.norm(self.action_forces[-2])
+        )
+        neb_optimization_force[nimage -1] = neb_optimization_force[nimage -1] + (
+            spring_force_bead1 - np.dot(spring_force_bead1, f1) * f1
+        )
+
+        return neb_optimization_force
+
 
 # ------ End code for Gradient Mapper -------
 
