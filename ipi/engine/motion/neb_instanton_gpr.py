@@ -1680,28 +1680,6 @@ class GradientMapper(object):
     def __init__(self):
         """
         """
-
-    def bind(self, ens: MAPNEBGPRMover):
-        """
-        """
-
-class LINEBGradientMapper(GradientMapper):
-    """Creation of the Line Integral function that will be minimized.
-        Functional analog of a GradientMapper in geop.py
-
-        Fixed atoms are excluded via boolean mask. 1 = moving, 0 = fixed.
-        Reference paper: J. Chem. Phys. 148, 102334 (2018)
-    Attributes:
-        spring_k: spring constants
-        kappa: energy constraint constant at two end beads.
-        action: abbreviated action W for the LI-NEB path.
-        action_forces: negative gradient of abbreviated action W: - \nabla W
-        neb_optimization_force: the force for LI-NEB method. See eq.(18) and eq.(19), (21) in the paper.
-        neb_transverse_force: projection of action_force along transverse direction of NEB beads.
-    """
-
-    def __init__(self):
-        self.spring_k = None  # spring constants for internal beads
         self.kappa = None  # spring constants for beads at two ends.
 
         self.action = None  # abbreviated action.
@@ -1716,10 +1694,12 @@ class LINEBGradientMapper(GradientMapper):
         self.instanton_path_energy = None  # energy E of instanton path in JWKB approximation. See: Section II. A in J. Chem. Phys. 148, 102334 (2018)
         self.ENO_order = 3
 
+        self.gpr_model = None 
+        self.coordinate_transformer = None
+
+
     def bind(self, ens: MAPNEBGPRMover):
         """
-        :param: ens: A NEBMover instance.
-        Copy beads, cell, forces of NEB mover to itself.
         """
         self.dbeads = ens.beads.copy()
         self.dcell = ens.cell.copy()
@@ -1741,18 +1721,12 @@ class LINEBGradientMapper(GradientMapper):
         self.rbeads = Beads(ens.beads.natoms, ens.beads.nbeads)
         self.rbeads.q[:] = ens.beads.q[:]
 
-        self.spring_k = ens.optarrays[
-            "spring_k"
-        ]  # bind spring force spring_k from NEBMover.
         self.kappa = ens.optarrays[
             "kappa"
         ]  # bind end beads energy constraint constant kappa from NEBMover.
 
         self.energy_shift = ens.optarrays["energy_shift"]
 
-        # bind the gpr model from NEBMover.
-        self.gpr_model = ens.gpr_model
-        self.coordinate_transformer = ens.coordinate_transformer
         self.ab_initio_pot = np.zeros([self.dbeads.nbeads])
         self.ab_initio_force = np.zeros([self.dbeads.nbeads, 3 * self.dbeads.natoms])
 
@@ -1802,7 +1776,7 @@ class LINEBGradientMapper(GradientMapper):
                 beads_forces[i] = self.ab_initio_force[i]
                 self.ab_initio_force[i] = np.zeros([3 * self.dbeads.natoms])
         
-        # For Simpson's rule 
+        # For using Simpson's rule to compute action W.  
         midpoint_test_x = (self.rbeads.q[:-1] + self.rbeads.q[1:]) / 2
         midpoint_potential_shift, midpoint_grad_x, _, _ = (
             self.gpr_model.predict_latent_function(
@@ -1822,73 +1796,6 @@ class LINEBGradientMapper(GradientMapper):
 
         return beads_potential, beads_forces
 
-
-    def __call__(self, mscaled_q):
-        """Returns the projection for neb optimization.
-        update reduced bead coordinates (&dbeads coordinate) (sticly speaking the free-moving atom parts) with x.
-        :param: msacled_q: new mass scaled coordinates for updated freely moving particles.
-
-        rbf: physical forces for reduced beads
-        rbq: position for reduced beads
-        btau: tangent vector directions.
-        """
-        # coordinate q.
-        q = mscaled_q / np.sqrt(
-            self.dbeads.m3[:, self.fixatoms_mask]
-        )
-        
-        if not np.allclose(self.rbeads.q, q):
-            self.initialize_force(q)
-
-        # mass scaled coordinate.
-        self.mscaled_q = np.copy(mscaled_q)
-
-        # Number of images
-        nimage = self.dbeads.nbeads
-        # Number of atoms that is free to move.
-        natoms = self.dbeads.natoms - len(self.fixatoms)
-
-        self.spring_forces = np.zeros([nimage, 3 * natoms])
-        self.end_bead_energy_constraint_forces = np.zeros([2, 3 * natoms])
-        self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
-
-        # abbreviated action for the ring polymer instanton path.
-        self.action = self.compute_neb_action(nimage)
-
-        # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
-        self.action_forces = self.compute_neb_action_force(
-            nimage, natoms
-        )
-
-        # Change code above to implement Simpson's rule
-        # self.action = self.compute_neb_action_Simpson_rule(nimage)
-
-        # self.action_forces = self.compute_neb_action_force_Simpson_rule(
-        #     nimage, natom
-        # )
-
-        # compute direction of tangent vector, using improved methods.
-        # self.btau = self.compute_tangent_vector(nimage, natoms)
-        self.btau = self.compute_ENO_tangent_vector()
-
-        # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
-        self.optimization_force = self.compute_neb_optimization_force(
-            nimage, natoms, self.btau
-        )
-
-        # project out translation (&rotational) dofs depending on the asr mode. (symmetry of the system.)
-        m = self.dbeads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
-        self.optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.optimization_force, asr= self.asr, mscaled_bool= True)
-        self.transverse_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.transverse_force, asr= self.asr, mscaled_bool= True)
-
-        # sum of transverse forces for all internal beads 
-        # (the action force for the end bead is set to be 0)
-        # self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.action_forces[1: -1], axis=1))
-        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.transverse_force[1:-1], axis= 1))
-
-        self.optimization_gradient = - self.optimization_force
-
-        return self.action, np.copy(self.optimization_gradient)
 
     def compute_tangent_vector(self, nimage, natom):
         """
@@ -1935,19 +1842,6 @@ class LINEBGradientMapper(GradientMapper):
 
         return btau
     
-    def compute_ENO_tangent_vector(self):
-        """
-        compute tangent vector using essentially non-oscillatory scheme.
-        See https://dx.doi.org/10.4310/CMS.2003.v1.n2.a10
-        """
-        mscaled_q = np.copy(self.mscaled_q)
-        beads_energy = self.beads_energy
-        eno_object = ipi.utils.nebinstool.Essentially_Nonoscillatory_Polynomial(mscaled_q,
-                                                                                beads_energy,
-                                                                                order = self.ENO_order)
-        
-        btau = eno_object.compute_tangent_vector()
-        return btau 
 
     def compute_neb_action(self, nimage):
         """
@@ -2047,6 +1941,22 @@ class LINEBGradientMapper(GradientMapper):
             action_force[j] = gj
 
         return action_force
+
+# -------- The code below implement method to compute tangent vector / action / action gradient with higher accuracy ----- 
+    def compute_ENO_tangent_vector(self):
+        """
+        compute tangent vector using essentially non-oscillatory scheme.
+        See https://dx.doi.org/10.4310/CMS.2003.v1.n2.a10
+        """
+        mscaled_q = np.copy(self.mscaled_q)
+        beads_energy = self.beads_energy
+        eno_object = ipi.utils.nebinstool.Essentially_Nonoscillatory_Polynomial(mscaled_q,
+                                                                                beads_energy,
+                                                                                order = self.ENO_order)
+        
+        btau = eno_object.compute_tangent_vector()
+        return btau 
+
 
     def compute_neb_action_Simpson_rule(self, nimage):
         """
@@ -2170,6 +2080,106 @@ class LINEBGradientMapper(GradientMapper):
             action_force[j] = gj 
         
         return action_force 
+
+
+class LINEBGradientMapper(GradientMapper):
+    """Creation of the Line Integral function that will be minimized.
+        Functional analog of a GradientMapper in geop.py
+
+        Fixed atoms are excluded via boolean mask. 1 = moving, 0 = fixed.
+        Reference paper: J. Chem. Phys. 148, 102334 (2018)
+    Attributes:
+        spring_k: spring constants
+        kappa: energy constraint constant at two end beads.
+        action: abbreviated action W for the LI-NEB path.
+        action_forces: negative gradient of abbreviated action W: - \nabla W
+        neb_optimization_force: the force for LI-NEB method. See eq.(18) and eq.(19), (21) in the paper.
+        neb_transverse_force: projection of action_force along transverse direction of NEB beads.
+    """
+
+    def __init__(self):
+        super(LINEBGradientMapper, self).__init__()
+        self.spring_k = None  # spring constants for internal beads
+
+    def bind(self, ens: MAPNEBGPRMover):
+        """
+        :param: ens: A NEBMover instance.
+        Copy beads, cell, forces of NEB mover to itself.
+        """
+        super(LINEBGradientMapper, self).bind(ens)
+        # bind spring force spring_k from NEBMover.
+        self.spring_k = ens.optarrays[
+            "spring_k"
+        ]  
+
+    def __call__(self, mscaled_q):
+        """Returns the projection for neb optimization.
+        update reduced bead coordinates (&dbeads coordinate) (sticly speaking the free-moving atom parts) with x.
+        :param: msacled_q: new mass scaled coordinates for updated freely moving particles.
+
+        rbf: physical forces for reduced beads
+        rbq: position for reduced beads
+        btau: tangent vector directions.
+        """
+        # coordinate q.
+        q = mscaled_q / np.sqrt(
+            self.dbeads.m3[:, self.fixatoms_mask]
+        )
+        
+        if not np.allclose(self.rbeads.q, q):
+            self.initialize_force(q)
+
+        # mass scaled coordinate.
+        self.mscaled_q = np.copy(mscaled_q)
+
+        # Number of images
+        nimage = self.dbeads.nbeads
+        # Number of atoms that is free to move.
+        natoms = self.dbeads.natoms - len(self.fixatoms)
+
+        self.spring_forces = np.zeros([nimage, 3 * natoms])
+        self.end_bead_energy_constraint_forces = np.zeros([2, 3 * natoms])
+        self.beads_mscaled_distance = npnorm(mscaled_q[1:] - mscaled_q[:-1], axis=1)
+
+        # abbreviated action for the ring polymer instanton path.
+        self.action = self.compute_neb_action(nimage)
+
+        # negative gradient of abbreviated action for each bead. We only compute it for the internal beads (excluding two ends)
+        self.action_forces = self.compute_neb_action_force(
+            nimage, natoms
+        )
+
+        # Change code above to implement Simpson's rule
+        # self.action = self.compute_neb_action_Simpson_rule(nimage)
+
+        # self.action_forces = self.compute_neb_action_force_Simpson_rule(
+        #     nimage, natom
+        # )
+
+        # #compute direction of tangent vector, using improved methods.
+        # self.btau = self.compute_tangent_vector(nimage, natoms)
+        # compute direction of tangent vector, using Essentially non-oscillatory method.
+        self.btau = self.compute_ENO_tangent_vector()
+
+        # evaluate the nudged elastic band optimization forces for perpendicular action forces and the spring force. (on mass scaled coordinate for free moving atoms.)
+        self.optimization_force = self.compute_neb_optimization_force(
+            nimage, natoms, self.btau
+        )
+
+        # project out translation (&rotational) dofs depending on the asr mode. (symmetry of the system.)
+        m = self.dbeads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
+        self.optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.optimization_force, asr= self.asr, mscaled_bool= True)
+        self.transverse_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.transverse_force, asr= self.asr, mscaled_bool= True)
+
+        # sum of transverse forces for all internal beads 
+        # (the action force for the end bead is set to be 0)
+        # self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.action_forces[1: -1], axis=1))
+        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.transverse_force[1:-1], axis= 1))
+
+        self.optimization_gradient = - self.optimization_force
+
+        return self.action, np.copy(self.optimization_gradient)
+
 
 
 
