@@ -865,32 +865,61 @@ class MAPNEBGPRMover(Motion):
     def update_GPR_model_with_beads_cause_early_stop(self, outrange_bead_index_list):
         """
         compute the ab initio potential and forces for beads far away from the trust region that causes the early stop.
+        TODO: refactor this code. Among the data point that cause early stop, choose the point that has the largest uncertainty
+        and update the model.
+        The trust region could change at early stage if we add more data.
         """
         force_diff_list = []
         std_grad_x_trace_list = []
-        for outrange_bead_index in outrange_bead_index_list:
-            bead_index_for_update = outrange_bead_index
-            training_x = np.array([dstrip(self.beads.q[bead_index_for_update]).copy()])
 
-            # evaluate the gpr predicted V & f. For comparison with ab-initio V & F.
-            _, training_grad_x, _, var_grad_x_trace = self.gpr_model.predict_latent_function(
-                training_x
-            )
-            std_grad_x_trace = np.sqrt(var_grad_x_trace)
-            std_grad_x_trace_list.append(std_grad_x_trace)
+        # for outrange_bead_index in outrange_bead_index_list:
+        #     bead_index_for_update = outrange_bead_index
+        #     outrange_bead_x = np.array([dstrip(self.beads.q[bead_index_for_update]).copy()])
 
-            training_bead_forces = -training_grad_x[0]
+        #     # evaluate the gpr predicted V & f. For comparison with ab-initio V & F.
+        #     _, training_grad_x, _, var_grad_x_trace = self.gpr_model.predict_latent_function(
+        #         outrange_bead_x
+        #     )
+        #     std_grad_x_trace = np.sqrt(var_grad_x_trace)
+        #     std_grad_x_trace_list.append(std_grad_x_trace)
 
-            # compute ab initio force for the bead and add it to the GPR model.
-            # evaluate the difference between ab initio force and force predicted by GPR.
-            force_diff_ratio, force_diff = self.update_GPR_model_one_bead_subroutine(
-                training_x, bead_index_for_update, training_bead_forces
-            )
-            force_diff_list.append(force_diff)
+        #     training_bead_forces = -training_grad_x[0]
 
-        std_grad_x_trace_list = np.array(std_grad_x_trace_list)
-        self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis=1)
+        #     # compute ab initio force for the bead and add it to the GPR model.
+        #     # evaluate the difference between ab initio force and force predicted by GPR.
+        #     force_diff_ratio, force_diff = self.update_GPR_model_one_bead_subroutine(
+        #         outrange_bead_x, bead_index_for_update, training_bead_forces
+        #     )
+        #     force_diff_list.append(force_diff)
+
+
+        # std_grad_x_trace_list = np.array(std_grad_x_trace_list)
+        # self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis=1)
         
+        # choose the point with largest uncertainty and add it to the training data.
+        outrange_bead_index_list = np.array(outrange_bead_index_list)
+        outrange_bead_x = np.copy(self.beads.q[outrange_bead_index_list])
+
+        # evaluate the gpr predicted V & f. Also the uncertainty of prediction.
+        _, outrange_bead_grad, _, var_grad_x_trace_list = self.gpr_model.predict_latent_function(
+            outrange_bead_x
+        )
+        std_grad_x_trace_list = np.sqrt(var_grad_x_trace_list)
+        outrange_bead_with_largest_uncertainty = np.argmax(std_grad_x_trace_list)
+
+        bead_index_for_update = outrange_bead_index_list[outrange_bead_with_largest_uncertainty]
+        training_x = np.array([outrange_bead_x[outrange_bead_with_largest_uncertainty]])
+        training_bead_forces = - outrange_bead_grad[outrange_bead_with_largest_uncertainty]
+        force_diff_ratio, force_diff = self.update_GPR_model_one_bead_subroutine(
+            training_x, bead_index_for_update, training_bead_forces
+        )
+
+        force_diff_list.append(force_diff)
+        self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis= 1)
+
+        print(f"@update gpr model due to early stop. bead index: {bead_index_for_update}")
+
+
 
     def update_GPR_model_image_with_large_uncertainty(self, step):
         """
@@ -1045,13 +1074,13 @@ class MAPNEBGPRMover(Motion):
         self.options["stage"] = "instanton"
 
         # store potential and forces for the final LI-NEB beads.
-        self.LINEB_pots = (
-            self.gpr_model.train_cartesian_targets[-self.beads.nbeads :, 0]
-            + self.optarrays["energy_shift"]
+        beads_potential_shift, beads_potential_grad_x, _, _ = (
+            self.gpr_model.predict_latent_function(np.copy(self.beads.q))
         )
-        self.LINEB_forces = -self.gpr_model.train_cartesian_targets[
-            -self.beads.nbeads :, 1:
-        ]
+        self.LINEB_pots = (
+            beads_potential_shift + self.optarrays["energy_shift"]
+        )
+        self.LINEB_forces = - beads_potential_grad_x
 
         ipi.utils.nebinstgprtool.store_training_data(
             self.beads.q, self.LINEB_pots, self.LINEB_forces, prefix="LINEB_beads"
