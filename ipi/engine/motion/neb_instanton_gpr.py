@@ -865,36 +865,12 @@ class MAPNEBGPRMover(Motion):
     def update_GPR_model_with_beads_cause_early_stop(self, outrange_bead_index_list):
         """
         compute the ab initio potential and forces for beads far away from the trust region that causes the early stop.
-        TODO: refactor this code. Among the data point that cause early stop, choose the point that has the largest uncertainty
+        Among the beads that move out of the trust region, choose the point that has the largest uncertainty
         and update the model.
         The trust region could change at early stage if we add more data.
         """
         force_diff_list = []
         std_grad_x_trace_list = []
-
-        # for outrange_bead_index in outrange_bead_index_list:
-        #     bead_index_for_update = outrange_bead_index
-        #     outrange_bead_x = np.array([dstrip(self.beads.q[bead_index_for_update]).copy()])
-
-        #     # evaluate the gpr predicted V & f. For comparison with ab-initio V & F.
-        #     _, training_grad_x, _, var_grad_x_trace = self.gpr_model.predict_latent_function(
-        #         outrange_bead_x
-        #     )
-        #     std_grad_x_trace = np.sqrt(var_grad_x_trace)
-        #     std_grad_x_trace_list.append(std_grad_x_trace)
-
-        #     training_bead_forces = -training_grad_x[0]
-
-        #     # compute ab initio force for the bead and add it to the GPR model.
-        #     # evaluate the difference between ab initio force and force predicted by GPR.
-        #     force_diff_ratio, force_diff = self.update_GPR_model_one_bead_subroutine(
-        #         outrange_bead_x, bead_index_for_update, training_bead_forces
-        #     )
-        #     force_diff_list.append(force_diff)
-
-
-        # std_grad_x_trace_list = np.array(std_grad_x_trace_list)
-        # self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis=1)
         
         # choose the point with largest uncertainty and add it to the training data.
         outrange_bead_index_list = np.array(outrange_bead_index_list)
