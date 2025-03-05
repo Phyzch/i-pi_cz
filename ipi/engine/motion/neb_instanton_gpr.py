@@ -577,20 +577,53 @@ class MAPNEBGPRMover(Motion):
         else:
             raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
 
+    def _generate_initial_training_data(self):
+        """
+        Compute potential and force for initial training data.
+        We only compute 3 data point (including end beads) as initial training data to avoid computational cost scales with # of beads we add.
+        """
+        # # choose all NEB beads as initial training data.
+        # # We will train the GPR model to optimize hyperparameter using the initial data.
+        # train_x = np.copy(self.beads.q)
+        # # potential energy has to shift relative to the energy_shift for training.
+        # train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
+        # train_grad = -np.copy(dstrip(self.forces.f))
+        # # count the # of ab-initio calculation we have done.
+        # SharedData.ab_initio_bead_calculation_number = (
+        #     SharedData.ab_initio_bead_calculation_number + self.beads.nbeads
+        # )
+
+        # choose two end beads and the bead in the middle as initial training data.
+        # We will train the GPR model to optimize hyperparameter using the initial data.
+        initial_bead_number = 3 
+        nbeads = self.beads.nbeads
+
+        self.initial_data_bead = Beads(self.beads.natoms, initial_bead_number)
+        self.initial_data_forces = self.forces.copy(self.initial_data_bead, self.cell)
+        
+        train_x = np.zeros([initial_bead_number, np.shape(self.beads.q)[1]])
+
+        bead_index = np.linspace(0, nbeads - 1, initial_bead_number).astype(int)
+        for i in range(initial_bead_number):
+            train_x[i] = self.beads.q[bead_index[i]]
+            self.initial_data_bead.q[i] = train_x[i]
+        
+        # potential energy has to shift relative to the energy_shift for training.
+        train_V = np.copy(self.initial_data_forces.pots) - self.optarrays["energy_shift"]
+        train_grad = - np.copy(dstrip(self.initial_data_forces.f))
+        # count the # of ab-initio calculations we have done.
+        SharedData.ab_initio_bead_calculation_number = (
+            SharedData.ab_initio_bead_calculation_number + initial_bead_number
+        )
+
+        return train_x, train_V, train_grad
+
     def _get_training_data(self):
-        """Loads or generate initial training data."""
+        """
+        Loads or generate initial training data."""
         read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
         if not read_gpr_training_data_bool:
-            # choose all NEB beads as initial training data.
-            # We will train the GPR model to optimize hyperparameter using the initial data.
-            train_x = np.copy(self.beads.q)
-            # potential energy has to shift relative to the energy_shift for training.
-            train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
-            train_grad = -np.copy(dstrip(self.forces.f))
-            # count the # of ab-initio calculation we have done.
-            SharedData.ab_initio_bead_calculation_number = (
-                SharedData.ab_initio_bead_calculation_number + self.beads.nbeads
-            )
+            train_x, train_V, train_grad = self._generate_initial_training_data()
         else:
             # read stored training data from folder.
             train_x, stored_train_V, stored_train_f =  (
@@ -612,6 +645,8 @@ class MAPNEBGPRMover(Motion):
         """
         gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(prefix= "neb_final_gpr_training")
         fix_dofs = self.optarrays["fix_dofs"]
+
+        training_data_num = np.shape(train_x)[0]
 
         self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
             train_x,
@@ -686,14 +721,13 @@ class MAPNEBGPRMover(Motion):
         """
         # first check the prediction of the training data. See if there is under-fitting.
         predicted_V_shift, predicted_grad, _, var_grad_x_trace = (
-            self.gpr_model.predict_latent_function(self.beads.q)
+            self.gpr_model.predict_latent_function(self.initial_data_bead.q)
         )
-        std_grad_x_trace = np.sqrt(var_grad_x_trace)
 
         predicted_forces = -predicted_grad
 
-        ab_initio_V_shift = self.forces.pots - self.optarrays["energy_shift"]
-        ab_initio_forces = self.forces.f
+        ab_initio_V_shift = self.initial_data_forces.pots - self.optarrays["energy_shift"]
+        ab_initio_forces = self.initial_data_forces.f
 
         # check length scale for possible over-fitting
         scaled_kernel_lengthscale = self.gpr_model.output_kernel_lengthscale()
@@ -706,17 +740,6 @@ class MAPNEBGPRMover(Motion):
         print(
             "@initial gpr training info: check the overfitting and underfitting of kernel length scale"
         )
-        for i in range(self.gpr_model.gpr_SE_kernel_number):
-            print("kernel {}: ".format(i))
-            print(
-                "square root of kernel output scale (\u03C3): "
-                + str(kernel_output_scale_std[i])
-            )
-            print(
-                "kernel_length_scale / input scale:   "
-                + str(scaled_kernel_lengthscale[i])
-            )
-        print("\n")
 
         # check the force noise and potential noise. We can see for force noise of certain internal coordinate, it is quite large.
         force_range = self.gpr_model.output_normalized_force_range()
@@ -744,10 +767,10 @@ class MAPNEBGPRMover(Motion):
 
         # check overfitting on the unseen test data to test over-fitting.
         print("@initial gpr training info: Test Overfitting of GPR model.")
-        nbeads = self.beads.nbeads
+        nbeads = self.initial_data_bead.nbeads
 
         if nbeads >= 2:
-            test_q = self.beads.q[0] * 1 / 4 + self.beads.q[1] * 3 / 4
+            test_q = self.initial_data_bead.q[0] * 1 / 4 + self.initial_data_bead.q[1] * 3 / 4
             print("q[0] * 1/4 + q[1] * 3/4")
             (
                 predicted_test_V_shift,
