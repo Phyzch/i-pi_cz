@@ -285,6 +285,17 @@ class InputNebInstGPR(InputDictionary):
             },
         ),
 
+        "ENO_order": (
+            InputValue,
+            {
+                "dtype": int,
+                "default" : 3,
+                "help": """
+                order of essentially non-oscillatory method for approximating the tangent direction of the path.
+                """
+            }
+        ),
+
         "end_bead_energy_converge_value":(
             InputValue,
             {
@@ -753,6 +764,7 @@ class InputNebInstGPR(InputDictionary):
         self.energy_shift.store(optarrays["energy_shift"])
         self.spring_k.store(optarrays["spring_k"])
         self.kappa.store(optarrays["kappa"])
+        self.ENO_order.store(optarrays["ENO_order"])
         self.dynamical_adjust_ratio.store(optarrays["dynamical_adjust_ratio"])
         self.end_bead_energy_converge_value.store(optarrays["end_bead_energy_converge_value"])
         self.neb_inner_loop_step_max.store(optarrays["neb_inner_loop_step_max"])

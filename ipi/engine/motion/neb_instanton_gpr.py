@@ -91,6 +91,7 @@ class MAPNEBGPRMover(Motion):
         neb_inner_loop_step_max = 100,
         spring_k=0.1,
         kappa={"left": 50, "right": 50},
+        ENO_order = 3, 
         dynamical_adjust_ratio= {"spring_k": 0.1,
                                  "kappa": 0.2},
         end_bead_energy_converge_value = 1e-3,
@@ -200,6 +201,7 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["neb_inner_loop_step_max"] = neb_inner_loop_step_max
         self.optarrays["spring_k"] = spring_k
         self.optarrays["kappa"] = kappa
+        self.optarrays["ENO_order"] = ENO_order
         self.optarrays["dynamical_adjust_ratio"] = dynamical_adjust_ratio
         self.optarrays["end_bead_energy_converge_value"] = end_bead_energy_converge_value
 
@@ -1736,7 +1738,6 @@ class GradientMapper(object):
         )
 
         self.instanton_path_energy = None  # energy E of instanton path in JWKB approximation. See: Section II. A in J. Chem. Phys. 148, 102334 (2018)
-        self.ENO_order = 3
 
         self.gpr_model = None 
         self.coordinate_transformer = None
@@ -1773,6 +1774,8 @@ class GradientMapper(object):
 
         self.ab_initio_pot = np.zeros([self.dbeads.nbeads])
         self.ab_initio_force = np.zeros([self.dbeads.nbeads, 3 * self.dbeads.natoms])
+
+        self.ENO_order = ens.optarrays["ENO_order"]
 
     def initialize_force(self, q):
         """
