@@ -627,9 +627,9 @@ class MAPNEBGPRMover(Motion):
         else:
             # read stored training data from folder.
             train_x, stored_train_V, stored_train_f =  (
-            ipi.utils.nebinstgprtool.read_training_data(prefix="neb_final_gpr_training")
+                ipi.utils.nebinstgprtool.read_training_data(prefix="neb_final_gpr_training")
             )
-            train_V = stored_train_V - train_V 
+            train_V = stored_train_V - self.optarrays["energy_shift"] 
             train_grad = - stored_train_f
 
             # count the number of ab-initio calculation we have done.
@@ -2593,8 +2593,11 @@ class ImprovedStringGradientMapper(GradientMapper):
         # self.action = self.compute_abbreviated_action_Simpson_rule(nimage)
         # self.action_forces = self.compute_action_force_Simpson_rule(nimage, natoms)
 
+        # compute direction of the tangent vector, using Essentially Non-oscillatory method.
+        self.btau = self.compute_ENO_tangent_vector()
+
         # evaluate the optimization forces for the string method. 
-        self.optimization_force = self.compute_string_optimization_force(nimage, natoms, self.btau)
+        self.optimization_force = self.compute_string_optimization_force(nimage, natoms)
         # project out translation (&rotation) dofs depending on the asr mode.
         m = self.dbeads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
         self.optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.optimization_force, 
@@ -2602,13 +2605,13 @@ class ImprovedStringGradientMapper(GradientMapper):
         
         # sum of transverse forces for all internal beads.
         # This will be one convergence criterion.
-        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.optimization_force[1:-1], axis= 1))
+        self.action_forces_sum_amplitude = np.sum(np.linalg.norm(self.transverse_force[1:-1], axis= 1))
 
         self.optimization_gradient = - self.optimization_force
 
         return self.action, np.copy(self.optimization_gradient)
 
-    def compute_string_optimization_force(self, nimage, natoms, btau):
+    def compute_string_optimization_force(self, nimage, natoms):
         """
         compute the optimization forces for beads in string method. 
 
@@ -2651,6 +2654,11 @@ class ImprovedStringGradientMapper(GradientMapper):
         # we do not project out parallel component of action forces.
         for ii in range(1, nimage - 1):
             neb_optimization_force[ii] = self.action_forces[ii]
+
+        self.transverse_force = np.zeros([nimage, 3 * natoms])
+        for ii in range(1, nimage -1):
+            self.transverse_force[ii] = (self.action_forces[ii]
+                - np.dot(self.action_forces[ii], self.btau[ii]) * self.btau[ii])
 
         # for two end beads.
         # add energy constraint force for two end beads.
