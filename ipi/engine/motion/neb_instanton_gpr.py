@@ -373,9 +373,7 @@ class MAPNEBGPRMover(Motion):
             self.initialialize_gpr_model()
 
             # check the training result on the test data which is unseen by GPR.
-            read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
-            if not read_gpr_training_data_bool:
-                self.check_initial_training_result()
+            self.check_initial_training_result()
 
         # Check if we enter the program directly into "instanton" stage:
         if self.options["stage"] == "instanton" and step == 0:
@@ -638,6 +636,14 @@ class MAPNEBGPRMover(Motion):
             SharedData.ab_initio_bead_calculation_number = (
                 SharedData.ab_initio_bead_calculation_number + np.shape(train_x)[0]
             )
+
+            # used to test the overfitting/ underfitting of the GPR model.
+            bead_number_to_test = 3
+            self.initial_data_bead = Beads(self.beads.natoms, bead_number_to_test)
+            self.initial_data_forces = self.forces.copy(self.initial_data_bead, self.cell)
+
+            for i in range(bead_number_to_test):
+                self.initial_data_bead.q[i] = train_x[i]
         
         return train_x, train_V, train_grad 
 
@@ -730,13 +736,6 @@ class MAPNEBGPRMover(Motion):
 
         ab_initio_V_shift = self.initial_data_forces.pots - self.optarrays["energy_shift"]
         ab_initio_forces = self.initial_data_forces.f
-
-        # check length scale for possible over-fitting
-        scaled_kernel_lengthscale = self.gpr_model.output_kernel_lengthscale()
-
-        # check the size of covariance function (kernel).
-        kernel_output_scale_var = self.gpr_model.output_kernel_outputscale()
-        kernel_output_scale_std = np.sqrt(kernel_output_scale_var)
 
         print("\n")
         print(
