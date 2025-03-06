@@ -373,7 +373,9 @@ class MAPNEBGPRMover(Motion):
             self.initialialize_gpr_model()
 
             # check the training result on the test data which is unseen by GPR.
-            self.check_initial_training_result()
+            read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
+            if not read_gpr_training_data_bool:
+                self.check_initial_training_result()
 
         # Check if we enter the program directly into "instanton" stage:
         if self.options["stage"] == "instanton" and step == 0:
