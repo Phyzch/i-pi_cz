@@ -23,6 +23,7 @@ def check_neb_early_stop(
     gpr_model: GPModelWithDerivativesWrapper,
     outerloop_step,
     inner_loop_neb_step,
+    m3
 ):
     """
     check early stoage criterion for LI-NEB algorithm with machine learning.
@@ -71,6 +72,15 @@ def check_neb_early_stop(
         gpr_model.output_free_moving_training_internal_inputs()
     )
 
+    # #For dbebug
+    # gpr_training_data_cartesian_coordinate = np.copy(gpr_model.train_cartesian_inputs)
+    # ref_Bq = gpr_model.coordinate_transformer.compute_delocalized_wilson_matrix_Bq(
+    #     np.array([gpr_model.coordinate_transformer.ref_x])
+    # )[0]
+    # # Vt is eigenvector for internal coordinate.
+    # U, S, Vt = np.linalg.svd(ref_Bq, full_matrices= False)
+    # free_moving_internal_dofs = gpr_model.FixingDofs.free_moving_dofs 
+
     # compute the distance and find beads that move out of the trusted region.
     nbeads = np.shape(beads_x)[0]
     internal_coordinate_closest_r_list = []
@@ -78,24 +88,48 @@ def check_neb_early_stop(
         bead_internal_q = beads_free_moving_internal_coordinate[bead_index]
 
         # distance between gpr training data and beads.
-        internal_coordinate_r = np.linalg.norm(
+        internal_coordinate_diff =  (
             (
                 bead_internal_q[np.newaxis, :]
                 - gpr_training_free_moving_internal_coordinate
             )
-            / effective_kernel_length_scale,
-            axis=1,
-        )
+            / effective_kernel_length_scale)
+
+        internal_coordinate_r = np.linalg.norm(internal_coordinate_diff, axis= 1)
 
         nearest_gpr_data_index = np.argmin(internal_coordinate_r)
 
         # distance r between beads and the closest gpr training data
         internal_coordinate_closest_r = internal_coordinate_r[nearest_gpr_data_index]
 
+    #    # Cartesian coordinate
+    #     cartesian_coordinate_diff = (
+    #         beads_x[bead_index] - gpr_training_data_cartesian_coordinate
+    #     )[nearest_gpr_data_index] 
+    #     dalton_unit = ipi.utils.units.UnitMap["mass"]["dalton"]
+    #     # atom mass in dalton unit
+    #     atom_mass = m3[0] / dalton_unit
+    #     # mass in dalton unit, length in angstrom unit. 
+    #     mass_scaled_cartesian_coordinate_diff = (np.sqrt(atom_mass) * cartesian_coordinate_diff 
+    #                                              / ipi.utils.units.UnitMap["length"]["angstrom"])
+    #     mass_scaled_cartesian_distance = np.linalg.norm(mass_scaled_cartesian_coordinate_diff)
+
         internal_coordinate_closest_r_list.append(internal_coordinate_closest_r)
         if internal_coordinate_closest_r > distance_cutoff:
             early_stop_bool = True
             out_range_bead_index_list.append(bead_index)
+
+            # # analyze the internal coordinate that causes early stop.
+            # internal_coordinate_diff_closest_point = internal_coordinate_diff[nearest_gpr_data_index]
+            # free_moving_internal_coordinate_index_sorted = np.argsort(- np.abs(internal_coordinate_diff_closest_point))
+            # internal_coordinate_index_sorted = free_moving_internal_dofs[free_moving_internal_coordinate_index_sorted]
+            # print(f"outrange bead index: {bead_index}. internal coordinate that causes early stop: {internal_coordinate_index_sorted[:5]}." 
+            #       f"internal coordinate distance: {internal_coordinate_diff_closest_point[free_moving_internal_coordinate_index_sorted[:5]]}"
+            #       f"mass scaled distance in cartesian coordinate: {mass_scaled_cartesian_distance}")
+            
+            # eigenvector = Vt[internal_coordinate_index_sorted[0]]
+            # cartesian_coordinate_index_sorted = np.argsort(- np.abs(eigenvector))
+            # pass 
 
     internal_coordinate_closest_r_list = np.array(internal_coordinate_closest_r_list)
 
