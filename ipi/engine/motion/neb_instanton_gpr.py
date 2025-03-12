@@ -591,6 +591,7 @@ class MAPNEBGPRMover(Motion):
         # # potential energy has to shift relative to the energy_shift for training.
         # train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
         # train_grad = -np.copy(dstrip(self.forces.f))
+        # train_grad = ipi.utils.nebinstool.fixing_dofs(train_grad, self.optarrays["fix_dofs"])
         # # count the # of ab-initio calculation we have done.
         # SharedData.ab_initio_bead_calculation_number = (
         #     SharedData.ab_initio_bead_calculation_number + self.beads.nbeads
@@ -614,6 +615,7 @@ class MAPNEBGPRMover(Motion):
         # potential energy has to shift relative to the energy_shift for training.
         train_V = np.copy(self.initial_data_forces.pots) - self.optarrays["energy_shift"]
         train_grad = - np.copy(dstrip(self.initial_data_forces.f))
+        train_grad = ipi.utils.nebinstool.fixing_dofs(train_grad, self.optarrays["fix_dofs"])
         # count the # of ab-initio calculations we have done.
         SharedData.ab_initio_bead_calculation_number = (
             SharedData.ab_initio_bead_calculation_number + initial_bead_number
@@ -634,7 +636,7 @@ class MAPNEBGPRMover(Motion):
             )
             train_V = stored_train_V - self.optarrays["energy_shift"] 
             train_grad = - stored_train_f
-
+            train_grad = ipi.utils.nebinstool.fixing_dofs(train_grad, self.optarrays["fix_dofs"])
             # count the number of ab-initio calculation we have done.
             SharedData.ab_initio_bead_calculation_number = (
                 SharedData.ab_initio_bead_calculation_number + np.shape(train_x)[0]
@@ -829,6 +831,7 @@ class MAPNEBGPRMover(Motion):
         # get energy and forces (in Cartesian coordinate) from force engine. ab initio calculation.
         ab_initio_beads_energy = dstrip(self.gpr_forces.pots).copy()
         ab_initio_beads_forces = dstrip(self.gpr_forces.f).copy()
+        ab_initio_beads_forces = ipi.utils.nebinstool.fixing_dofs(ab_initio_beads_forces, self.optarrays["fix_dofs"])
         ab_initio_beads_grad = -ab_initio_beads_forces
 
         # update GPR model with coordinate (training_x), potential (beads_energy) and forces in cartesian coordiante (beads_forces)
@@ -954,6 +957,7 @@ class MAPNEBGPRMover(Motion):
             ab_initio_beads_energy_for_update = dstrip(forces_for_update.pots).copy()
             ab_initio_shifted_energy_for_update = ab_initio_beads_energy_for_update - self.optarrays["energy_shift"]
             ab_initio_forces_for_update = dstrip(forces_for_update.f).copy() 
+            ab_initio_forces_for_update = ipi.utils.nebinstool.fixing_dofs(ab_initio_forces_for_update, self.optarrays["fix_dofs"])
             ab_initio_grad_x_for_update = - ab_initio_forces_for_update
 
             # update gpr model with new data 
@@ -1808,6 +1812,7 @@ class GradientMapper(object):
         self.dbeads = ens.beads.copy()
         self.dcell = ens.cell.copy()
         self.fixatoms = ens.fixatoms.copy()
+        self.fix_dofs = ens.optarrays["fix_dofs"]
         self.asr = ens.options["asr"]
         
         self.instanton_path_energy = ens.optarrays[
@@ -1882,6 +1887,8 @@ class GradientMapper(object):
                 beads_forces[i] = self.ab_initio_force[i]
                 self.ab_initio_force[i] = np.zeros([3 * self.dbeads.natoms])
         
+        beads_forces = ipi.utils.nebinstool.fixing_dofs(beads_forces, self.fix_dofs)
+        
         # For using Simpson's rule to compute action W.  
         midpoint_test_x = (self.rbeads.q[:-1] + self.rbeads.q[1:]) / 2
         midpoint_potential_shift, midpoint_grad_x, _, _ = (
@@ -1896,6 +1903,8 @@ class GradientMapper(object):
         nimage = self.dbeads.nbeads
         self.midpoint_beads_energy = midpoint_beads_energy
         self.midpoint_rbf = midpoint_forces.copy()[:, self.fixatoms_mask]
+        self.midpoint_rbf = ipi.utils.nebinstool.fixing_dofs(self.midpoint_rbf, self.fix_dofs)
+
         self.mscaled_midpoint_f = self.midpoint_rbf / np.sqrt(
             self.dbeads.m3[:nimage - 1, self.fixatoms_mask]
         )

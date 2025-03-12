@@ -671,6 +671,16 @@ def apply_symmetry_projection(m, beads_q, natoms, vec, asr= "none", mscaled_bool
     
     return projected_vecs 
 
+def fixing_dofs(force_vec, fix_dofs):
+    """
+    set force_vec components correspond to fix_dofs to 0.
+    :param: force_vec: 2d force vector. [nbeads, 3 * natoms]
+    :param: fix_dofs: dofs to fix.
+    """
+    assert np.shape(force_vec)[1] > np.max(fix_dofs)
+    force_vec[:, fix_dofs] = 0
+    return force_vec
+
 class Essentially_Nonoscillatory_Polynomial(object):
     """
     construct essentially non-oscillatory polynomial (ENO) to represent the path.
