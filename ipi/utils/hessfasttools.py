@@ -11,18 +11,21 @@ from ipi.utils.internal.internaltools import non_redundant_coordinate_transforme
 import torch
 import numpy as np
 from ipi.utils.messages import verbosity, info
+from sklearn.linear_model import LinearRegression, Ridge 
 
 class SelectiveHessianCalculation:
     """
     perform hessian calculations in the internal coordinate.
-    for rigid dofs, we only compute it for one bead and use the value for all other ring polymer beads.
+    for rigid dofs, we sample it with smaller number of beads
+    and use linear regression to fit hessian of other beads.
+
+    The class should store the training set of Hessian along rigid dofs for linear regression.
     """
     def __init__(self,
                  train_x: np.ndarray,
                  coordinate_transformer: non_redundant_coordinate_transformer,
-                 rigid_internal_dofs_cutoff: np.ndarray,
-                 single_rp_bead,
-                 single_rp_force):
+                 rigid_internal_dofs_cutoff: np.ndarray
+                 ):
         """
         decide the rigid_internal_dofs for the training data. 
         :param: train_x: all training data that we are interested in computing hessians about.
@@ -34,10 +37,8 @@ class SelectiveHessianCalculation:
         :param: single_rp_force: Force object for 1 ring polymer bead.
         """
         self.coordinate_transformer = coordinate_transformer
-        assert single_rp_bead.nbeads == 1, "The bead number for single_rp_bead not equal to 1."
-        self.single_rp_bead = single_rp_bead 
-        self.single_rp_force = single_rp_force 
 
+        self.nbeads = np.shape(train_x)[0]
         # the change along the internal coordinate will be computed using Wilson's B matrix.
         # This is to treat planar molecules.
         Bq = coordinate_transformer.compute_delocalized_wilson_matrix_Bq(np.array([train_x[0]]))[0]
@@ -71,7 +72,7 @@ class SelectiveHessianCalculation:
                 if train_inputs_change[i] < rigid_internal_dofs_cutoff
             ]
         )
-        # FIXME: Set rigid_internal_dofs = 0 first. Check the error from coordinate transformation & hessian calculation.
+        # For debug: Set rigid_internal_dofs = 0 first. Check the error from coordinate transformation & hessian calculation.
         # self.rigid_internal_dofs = np.array([])
 
         print(f"@hessian calculation: rigid internal dofs: {self.rigid_internal_dofs}")
@@ -81,9 +82,40 @@ class SelectiveHessianCalculation:
         else:
             self.flexible_internal_dofs = np.arange(input_dim)
 
+        # for hessian matrix operation.
+        if len(self.rigid_internal_dofs) != 0:
+            self.rigid_internal_dofs_2d_index = np.meshgrid(self.rigid_internal_dofs,
+                                                            self.rigid_internal_dofs,
+                                                            indexing= 'ij')
+            self.cross_term_2d_index = np.meshgrid(self.rigid_internal_dofs,
+                                                   self.flexible_internal_dofs,
+                                                   indexing= 'ij')
+
         print(f"@hessian calculation: flexible internal dofs: {self.flexible_internal_dofs}")
-        self.rigid_hessian_component_bool = False 
-        self.rigid_hessian_component = np.zeros([input_dim, input_dim])
+
+        self.rigid_mode_train_q_dataset = np.zeros([])
+        self.rigid_mode_hessians_q_dataset = np.zeros([])
+
+        self.rigid_dofs_reg_model = None 
+        self.cross_term_reg_model = None 
+
+    def load_rigid_dofs_hessian(self, rigid_mode_train_x, rigid_mode_hessians_q):
+        """
+        load the hessian components along rigid internal dofs.
+        :param: rigid_mode_train_x: cartesian coordinate x for training data for rigid mode hessian fitting.
+        :param: rigid_mode_hessians_q: hessians along internal coordinate for rigid modes.  (flexible mode component is set to 0).
+        """
+        info("Load rigid hessian component", verbosity.low)
+        rigid_mode_train_q = self.coordinate_transformer.get_internal_coordinate_q(rigid_mode_train_x)
+        self.rigid_mode_train_q_dataset = np.concatenate(
+                [self.rigid_mode_train_q_dataset, rigid_mode_train_q], 
+                axis= 0
+            )
+        
+        self.rigid_mode_hessians_q_dataset = np.concatenate(
+                [self.rigid_mode_hessians_q_dataset, rigid_mode_hessians_q],
+                axis= 0
+            )
     
     def get_internal_coordinate_hessian_component(self, train_x, train_q, beads, forces, hess, index_q, d= 0.001):
         """
@@ -146,90 +178,155 @@ class SelectiveHessianCalculation:
         hess[:, index_q, :] = gq
         hess[:, :, index_q] = gq 
     
-    def compute_rigid_dofs_hessian(self, train_x, train_q):
+    def compute_rigid_dofs_hessian(self, 
+                                   new_train_x,
+                                   new_rp_bead,
+                                   new_rp_force):
         """
-        give hessians along rigid internal dofs.
-        If self.rigid_hessian_component_bool = False, we compute hessians along rigid internal dofs.
-           result stored in self.rigid_hessian_component.
-        If self.rigid_hessian_component_bool = True. we do nothing.
+        compute hessians along rigid internal dofs for new data point.
+        This code is used to add new data point for hessian along rigid dofs.
 
-        :param: train_x: data in cartesian coordinate. should be only 1 bead.
-        :param: train_q: data in internal coordinate. should be only 1 bead.
+        :param: new_train_x: new data point in cartesian coordinate to compute hessian in rigid dofs. 
+        :param: new_rp_bead: ring polymer beads for new data point for rigid dofs sampling.
+        :param: new_rp_force: force engine for new data point for rigid dofs sampling.
+        :return: new_rigid_hessian_component: The computed hessian components along the rigid dofs.
         """
-        if  not self.rigid_hessian_component_bool:
-            self.rigid_hessian_component_bool = True 
-            assert np.shape(train_x)[0] == 1, "The shape of train_x passed to compute hessians along rigid dofs is not 1."
-
-            info(" @get hessian: rigid mode. Computing hessians.")
-            rigid_ndofs = len(self.rigid_internal_dofs)
-            rigid_hessian_component = self.rigid_hessian_component[np.newaxis,:]
-            for index, index_q in enumerate(self.rigid_internal_dofs):
-                info(
-                    "@get hessian: rigid mode. Computing hessian: %d of %d" %(index, rigid_ndofs),
-                    verbosity.low
-                )
-                self.get_internal_coordinate_hessian_component(
-                    train_x,
-                    train_q,
-                    self.single_rp_bead,
-                    self.single_rp_force,
-                    rigid_hessian_component,
-                    index_q
-                )
-            
-            self.rigid_hessian_component = rigid_hessian_component[0]
-            
-    def load_rigid_dofs_hessian(self, train_x, grad_x, hessian_x):
-        """
-        load the hessian components along rigid internal dofs.
-        This function is used when we load hessian data from file, 
-        so, we do not need to re-compute hessian for rigid components.
-        :param: train_x: training data in Cartesian coordinate.
-        :param: grad_x : gradient data in Cartesian coordinate. 
-        :param: hessian_x: hessian data in Cartesian coordinate. 
-        """
-        if not self.rigid_hessian_component_bool:
-            self.rigid_hessian_component_bool = True 
-            info("Load rigid hessian component", verbosity.low)
-            hessian_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
-                train_x,
-                grad_x,
-                hessian_x
+        new_rigid_bead_num = np.shape(new_train_x)[0]
+        new_train_q = self.coordinate_transformer.get_internal_coordinate_q(new_train_x)
+        assert new_rp_bead.nbeads == new_rigid_bead_num, "The bead number does not match for rigid dofs hessian calculation."
+        info(" @get hessian: rigid mode. Computing hessians.")
+        rigid_ndofs = len(self.rigid_internal_dofs)
+        input_dim_q = np.shape(new_train_q)[1]
+        new_rigid_hessian_component = np.zeros([new_rigid_bead_num, input_dim_q, input_dim_q])
+        for index, index_q in enumerate(self.rigid_internal_dofs):
+            info(
+                "@get hessian: rigid mode. Computing hessian: %d of %d" %(index, rigid_ndofs),
+                verbosity.low
             )
-
-            hessian_q_mean = np.mean(hessian_q, axis= 0)
-
-            for index_q in self.rigid_internal_dofs:
-                self.rigid_hessian_component[index_q, :] = hessian_q_mean[index_q, :]
-                self.rigid_hessian_component[:, index_q] = hessian_q_mean[:, index_q]
+            self.get_internal_coordinate_hessian_component(
+                new_train_x,
+                new_train_q,
+                new_rp_bead,
+                new_rp_force,
+                new_rigid_hessian_component,
+                index_q
+            )
         
+        self.rigid_mode_train_q_dataset = np.concatenate(
+                [self.rigid_mode_train_q_dataset, new_train_q], 
+                axis= 0
+            )
+        
+        self.rigid_mode_hessians_q_dataset = np.concatenate(
+                [self.rigid_mode_hessians_q_dataset, new_rigid_hessian_component],
+                axis= 0
+            )
+    
+    def linear_regression_fit_hessian(self, 
+                                      ridge_regularization_alpha= 0.1):
+        """
+        fit the hessian along rigid modes using linear regression model.
+        We construct linear regression model in this function.
+
+        :param: ridge_regularization_alpha: the regularization strength for ridge regression.
+        """
+        rigid_internal_dofs = self.rigid_internal_dofs
+        data_num = len(self.rigid_mode_hessians_q_dataset)
+
+        # use scikit learn linear regression fit.
+        # x_shape: [n_samples, n_features]
+        # y_shape: [n_samples, n_targets]
+        # we need to flatten hessians into 1d array [n_targets] for each sample.
+        rigid_dofs_hessians = self.rigid_mode_hessians_q_dataset[:, self.rigid_internal_dofs_2d_index[0], self.rigid_internal_dofs_2d_index[1]]
+        y = rigid_dofs_hessians.reshape((data_num, -1))
+        x = np.copy(self.rigid_mode_train_q_dataset)
+        rigid_dofs_reg_model = Ridge(alpha= ridge_regularization_alpha).fit(x, y)
+
+        cross_term_hessians = self.rigid_mode_hessians_q_dataset[:,
+                                                                 self.cross_term_2d_index[0],
+                                                                 self.cross_term_2d_index[1]]
+        
+        y1 = cross_term_hessians.reshape(data_num, 1)
+        x1 = np.copy(self.rigid_mode_train_q_dataset)
+        cross_term_reg_model = Ridge(alpha= ridge_regularization_alpha).fit(x1, y1)
+        cross_term_reg_model.fit(x1, y1)
+
+        self.rigid_dofs_reg_model = rigid_dofs_reg_model
+        self.cross_term_reg_model = cross_term_reg_model
+    
+    def linear_regression_predict_hessian(self, 
+                                          predict_inputs: np.ndarray, 
+                                          hessians_q: np.ndarray):
+        """
+        predict hessians along constrained dofs using Linear regression model.
+
+        :param: predict_inputs: input data for linear regression model to predict hessians.
+        :param: hessians_q: hessian data. The data along constrained dofs will be predicted by linear regression model.
+        """
+        data_num = predict_inputs.shape[0]
+        num_rigid_dofs = len(self.rigid_internal_dofs)
+        num_flexible_dofs = len(self.flexible_internal_dofs)
+
+        # predict block diagonal component for rigid dofs
+        predict_rigid_hessians = self.rigid_dofs_reg_model.predict(predict_inputs)
+        predict_rigid_hessians = predict_rigid_hessians.reshape((data_num, num_rigid_dofs, num_rigid_dofs))
+        hessians_q[:, self.rigid_internal_dofs_2d_index[0], self.rigid_internal_dofs_2d_index[1]] = (
+            predict_rigid_hessians
+        )
+
+        # predict cross term between rigid dofs and flexible dofs.
+        predict_cross_term_hessians = self.cross_term_reg_model.predict(predict_inputs)
+        predict_cross_term_hessians = predict_cross_term_hessians.reshape((data_num, num_rigid_dofs, num_flexible_dofs))
+        hessians_q[:, self.cross_term_2d_index[0], self.cross_term_2d_index[1]] = predict_cross_term_hessians
+        hessians_q[:, self.cross_term_2d_index[1], self.cross_term_2d_index[0]] = predict_cross_term_hessians
+
+    
+    def rigid_modes_hessian_preprocess(self, 
+                                       rigid_mode_train_x, 
+                                       rigid_mode_hessians_q,
+                                       new_train_x= [],
+                                       new_rp_bead= None,
+                                       new_rp_force= None,
+                                       ridge_regularization_alpha= 0.1):
+        """
+        prepare for linear regression prediction of rigid hessian components.
+        (1) load existing hessian data along rigid dofs.
+        (2) compute hessians along rigid dofs for new data point (new_train_x)
+        (3) construct linear regression model.
+
+        :param: rigid_mode_train_x: cartesian coordinate x for training data for rigid mode hessian fitting.
+        :param: rigid_mode_hessians_q: hessians along internal coordinate for rigid modes.  (flexible mode component is set to 0).
+        """
+        self.load_rigid_dofs_hessian(rigid_mode_train_x, rigid_mode_hessians_q)
+        
+        # compute new data point for rigid dofs.
+        if len(new_train_x) > 0:
+            self.compute_rigid_dofs_hessian(new_train_x, new_rp_bead, new_rp_force)
+        
+        # construct the linear regression model.
+        self.linear_regression_fit_hessian(ridge_regularization_alpha= ridge_regularization_alpha)
+
     def get_hessian(self, rp_beads, rp_forces, x0, d= 0.001):
         """
         Compute hessian as finite difference of forces in the internal coordinate.
         Then transform hessian in internal coordinate back to Cartesian coordinate.
 
-        For rigid modes, we compute it once for 1 bead or load it if it has been computed previously.
+        For rigid modes, we use linear regression model to generate hessian components.
         For flexible modes, we compute their hessian components for all beads.
         """
+        if self.rigid_dofs_reg_model is None:
+            raise ValueError("Forget to preprocess the linear regression model for hessians along rigid modes?")
+        
         q = self.coordinate_transformer.get_internal_coordinate_q(x0)
-        nbeads = rp_beads.nbeads 
+        nbeads = rp_beads.nbeads
         assert np.shape(x0)[0] == nbeads, "The shape of x0 does not match number of beads for Bead object."
 
         hess_q = np.zeros([nbeads, self.input_dim, self.input_dim])
 
-        # compute hessian_q along rigid components if we haven't done so.
-        if not self.rigid_hessian_component_bool:
-            x_single_bead = np.array([x0[0]])
-            q_single_bead = np.array([q[0]])
-            self.compute_rigid_dofs_hessian(x_single_bead,q_single_bead)
+        # use linear regression to fit hessian along rigid modes.
+        self.linear_regression_predict_hessian(q, hess_q)
 
-        # load rigid hessian into dataset.
-        hess_q_rigid = np.repeat(self.rigid_hessian_component[np.newaxis, :], nbeads, axis= 0)
-        for index_q in self.rigid_internal_dofs:
-            hess_q[:, index_q, :] = hess_q_rigid[:, index_q, :]
-            hess_q[:,:, index_q]  = hess_q_rigid[:, :, index_q]
-        
-        # compute hessian along flexible modes. Results store in hess_q
+        # compute hessian along flexible mode
         info(" @get hessian: Flexible modes: Computing hessian", verbosity.low)
         flexible_ndofs = len(self.flexible_internal_dofs)
         for index, index_q in enumerate(self.flexible_internal_dofs):
@@ -239,10 +336,10 @@ class SelectiveHessianCalculation:
             )
             self.get_internal_coordinate_hessian_component(x0, q, rp_beads, rp_forces, hess_q, index_q, d= d)
 
-        # transform hessian from internal coordinate q back to the Cartesian coordinate x.
-        # compute g_x 
+        # transform hessian (computed + fitted) from internal coordinate q back to the Cartesian coordinate x.
+        # compute gradient: g_x
         rp_beads.q[:] = np.copy(x0)
-        gx = - rp_forces.f 
+        gx = - rp_forces.f
         gq = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(np.copy(x0), gx)
 
         hess_x = self.coordinate_transformer.transform_internal_hessian_to_cartesian_hessian(
@@ -251,3 +348,24 @@ class SelectiveHessianCalculation:
 
         return hess_x 
     
+    def update_hessian_rigid_modes(self, x, f_x, hess_x):
+        """
+        update the hessian along rigid mode in internal dofs with prediction from linear regression model.
+        
+        :param: x: cartesian coordinate.
+        :param: f_x: force
+        :param: hess_x: hessian. 
+        """
+        g_x = - f_x 
+        hess_q = self.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(x, g_x, hess_x)
+        q = self.coordinate_transformer.get_internal_coordinate_q(x)
+
+        # update rigid modes with linear regression.
+        self.linear_regression_predict_hessian(q, hess_q)
+
+        # transform it back to cartesian coordinate.
+        g_q = self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(x, g_x)
+        hess_x = self.coordinate_transformer.transform_internal_hessian_to_cartesian_hessian(x, g_q, hess_q)
+
+        return hess_x
+

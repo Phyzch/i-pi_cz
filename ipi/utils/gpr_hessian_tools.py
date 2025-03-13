@@ -506,8 +506,8 @@ class FixInternalDofs(object):
         y = grads[:, self.rigid_internal_dofs]
         # reg_model = LinearRegression().fit(x,y)
 
-        # ridge regression. avoid over-fitting.
-        reg_model = lin_model(degree= 1, lambda_= force_ridge_regularization_alpha)
+        # ridge regression.
+        reg_model = lin_model(degree= 1, regularization= True, lambda_= force_ridge_regularization_alpha)
         reg_model.fit(x, y)
 
         return reg_model
@@ -544,10 +544,12 @@ class FixInternalDofs(object):
         # to use scikit_learn Linear regression fit.
         # x shape: [n_samples, n_features]
         # y shape: [n_samples, n_targets]
-        # we need to flatten hessians in to 1d array [n_targets] for each sample
+        # we need to flatten hessians into 1d array [n_targets] for each sample
         y = constrained_dofs_hessians.reshape((data_num, -1))
         x = train_inputs
-        constrained_dofs_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x,y)
+        # constrained_dofs_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x,y)
+        constrained_dofs_reg_model = lin_model(1, regularization= True, lambda_ = hessian_ridge_regularization_alpha)
+        constrained_dofs_reg_model.fit(x,y)
 
         constrained_free_moving_cross_term_hessians = hessians[:, 
                                                                self.cross_term_2d_index[0], 
@@ -555,7 +557,9 @@ class FixInternalDofs(object):
                                                                
         y1 = constrained_free_moving_cross_term_hessians.reshape(data_num, -1)
         x1 = train_inputs 
-        cross_term_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x1, y1)
+        # cross_term_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x1, y1)
+        cross_term_reg_model = lin_model(1, regularization= True, lambda_= hessian_ridge_regularization_alpha)
+        cross_term_reg_model.fit(x1, y1)
 
         return constrained_dofs_reg_model, cross_term_reg_model
 
