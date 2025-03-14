@@ -375,7 +375,19 @@ def store_candidate_hessian_data_coordinate(
                            compression= "gzip")
         
         h5f.attrs["candidate_point_number"] = candidate_point_number
-        h5f.create_dataset("used_hessian_index", data= used_hessian_index_in_candidate_list)
+    
+    # write the index of data point that we have already computed hessian information.
+    # we want this data in readable format
+    hessian_index_file_name = os.path.join(
+        prefix, "hessian_index_in_candidate_point_list.txt"
+    )
+    used_hessian_point_num = len(used_hessian_index_in_candidate_list)
+    with open(hessian_index_file_name, "w") as f:
+        f.write("Index for data point that we have computed hessians. \n")
+        for i in range(used_hessian_point_num):
+            used_hessian_index = int(used_hessian_index_in_candidate_list[i])
+            f.write(str(used_hessian_index) + " ")
+        f.write("\n")
 
 
 def store_candidate_grad_data_coordinate(
@@ -398,7 +410,18 @@ def store_candidate_grad_data_coordinate(
                            compression= "gzip")
         
         h5f.attrs["candidate_point_number"] = candidate_point_number
-        h5f.create_dataset("used_grad_data_index", data= used_grad_data_index)
+    
+    # write the index of gradient data point that we have already computed gradient information.
+    grad_index_file_name = os.path.join(
+        prefix, "grad_index_in_candidate_point_list.txt"
+    )
+    used_grad_point_num = len(used_grad_index)
+    with open(grad_index_file_name, "w") as f:
+        f.write("Index for data point that we have computed gradients. \n")
+        for i in range(used_grad_point_num):
+            used_grad_index = int(used_grad_index[i])
+            f.write(str(used_grad_index) + " ")
+        f.write("\n")
 
 
 def extract_number_from_line(line):
@@ -438,7 +461,17 @@ def read_candidate_hessian_data_coordinate(prefix):
     h5_file_path = os.path.join(prefix, "candidate_hessian_data_info.h5")
     with h5py.File(h5_file_path, "r") as h5f:
         candidate_hessian_point_x = np.array(h5f["candidate_hessian_point_x"])
-        used_hessian_index_in_candidate_list = np.array(h5f["used_hessian_index"])
+    
+    # read the index of used point in candidate list.
+    hessian_index_file_name = os.path.join(
+        prefix, "hessian_index_in_candidate_point_list.txt"
+    )
+
+    with open(hessian_index_file_name, "r") as f:
+        lines = f.readlines()
+        line = extract_number_from_line(lines[1])
+        used_hessian_index_in_candidate_list = np.array(list(map(int, line)))
+
 
     return candidate_hessian_point_x, used_hessian_index_in_candidate_list
 
@@ -453,7 +486,16 @@ def read_candidate_grad_data_coordinate(prefix):
     h5_file_path = os.path.join(prefix, "candidate_grad_data_info.h5")
     with h5py.File(h5_file_path, "r") as h5f:
         candidate_grad_point_x = h5f["candidate_grad_point_x"]
-        used_grad_index_in_candidate_list = h5f["used_grad_data_index"]
+    
+    # read the index of used point in candidate list.
+    grad_index_file_name = os.path.join(
+        prefix, "grad_index_in_candidate_point_list.txt"
+    )
+
+    with open(grad_index_file_name, "r") as f:
+        lines = f.readlines()
+        line = extract_number_from_line(lines[1])
+        used_grad_index_in_candidate_list = np.array(list(map(int, line)))
 
     return candidate_grad_point_x, used_grad_index_in_candidate_list
 
