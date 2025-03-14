@@ -111,7 +111,7 @@ class SelectiveHessianCalculation:
                 [self.rigid_mode_train_q_dataset, rigid_mode_train_q], 
                 axis= 0
             )
-        
+
         self.rigid_mode_hessians_q_dataset = np.concatenate(
                 [self.rigid_mode_hessians_q_dataset, rigid_mode_hessians_q],
                 axis= 0

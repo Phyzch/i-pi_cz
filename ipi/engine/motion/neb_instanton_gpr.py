@@ -127,6 +127,7 @@ class MAPNEBGPRMover(Motion):
         candidate_grad_data_number= 100,
         new_grad_data_index= np.zeros(0, int),
         selective_hessian_bool= False,
+        new_hessian_data_index_rigid_mode= np.zeros(0, int),
         internal_coord = "bond",
         cross_validation_bool= False,
         ridge_regularization_alpha = {
@@ -225,6 +226,10 @@ class MAPNEBGPRMover(Motion):
 
         # for store ab initio grads along the path used for gpr hessian model.
         self.optarrays["new_grad_data_index"] = new_grad_data_index
+
+        # for store ab initio hessians along rigid modes for selective
+        # number of beads for gpr hessian model.
+        self.optarrays["new_hessian_data_index_rigid_mode"] = new_hessian_data_index_rigid_mode
 
         # regularization value for linear regression of constrained parts of hessian.
         self.optarrays["ridge_regularization_alpha"] = ridge_regularization_alpha 
@@ -2844,6 +2849,7 @@ class RP_MAP(object):
         # options to use compute selective hessians in the internal coordinate.
         # we define the rigid mode in the internal coordinate and only compute hessians for 1 bead along rigid mode.
         self.selective_hessian_bool = nebmover.options["selective_hessian_bool"]
+        self.new_hessian_data_index_rigid_mode = nebmover.optarrays["new_hessian_data_index_rigid_mode"]
 
         # options to do cross validation of gpr hessian model.
         self.cross_validation_bool = nebmover.options["cross_validation_bool"]
@@ -3276,9 +3282,7 @@ class RP_MAP(object):
         )
     
     def construct_new_gpr_hessian_model(self,
-                                        candidate_hessian_point_x,
-                                        single_rp_beads,
-                                        single_rp_forces):
+                                        candidate_hessian_point_x):
         """
         """
         print(
@@ -3311,14 +3315,16 @@ class RP_MAP(object):
         ref_grads = -dstrip(new_forces.f).copy()[0] 
 
         if self.selective_hessian_bool:
+            # TODO: replace this function with function that read & preprocessing 
+            # hessian along rigid modes.
             self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
                 candidate_hessian_point_x,
                 self.coordinate_transformer,
-                self.gpr_rigid_internal_dofs_cutoff,
-                single_rp_beads,
-                single_rp_forces
+                self.gpr_rigid_internal_dofs_cutoff
                 )
             
+
+
             ref_hessians = self.selective_hessian_calculator.get_hessian(
                 new_beads,
                 new_forces,
@@ -3400,10 +3406,10 @@ class RP_MAP(object):
         ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
         pass
     
+    
+
     def load_gpr_hessian_model(self,
-                               candidate_hessian_point_x,
-                               single_rp_beads,
-                               single_rp_forces):
+                               candidate_hessian_point_x):
         """
         load gpr hessian model. The hessian are already computed.
         """
@@ -3438,24 +3444,14 @@ class RP_MAP(object):
         )
 
         if self.selective_hessian_bool:
+            # TODO: replace this function with function that read & preprocessing 
+            # hessian along rigid modes.
             self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
                 candidate_hessian_point_x,
                 self.coordinate_transformer,
-                self.gpr_rigid_internal_dofs_cutoff,
-                single_rp_beads,
-                single_rp_forces   
+                self.gpr_rigid_internal_dofs_cutoff
             )
 
-            # load hessians corresponding to rigid dofs in internal mode.
-            train_x = cartesian_coordinate_x[hessian_index_list]
-            grad_x = training_grads[hessian_index_list]
-            hessian_x = hessian_data_list
-            
-            self.selective_hessian_calculator.load_rigid_dofs_hessian(
-                train_x,
-                grad_x,
-                hessian_x
-            )
 
         self.gpr_hessian_model = (
             ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
@@ -3623,24 +3619,16 @@ class RP_MAP(object):
                 np.copy(self.neb_beads.q), self.candidate_hessian_data_number
             )
         )
-
-        single_rp_beads = Beads(self.rp_beads.natoms, 1)
-        single_rp_forces = self.rp_forces.copy(single_rp_beads, self.dcell)
         
         if self.read_gpr_hessian_folder == "None":
             # create gpr_hessian model using data from gpr model
             self.construct_new_gpr_hessian_model(
-                candidate_hessian_point_x,
-                single_rp_beads,
-                single_rp_forces
+                candidate_hessian_point_x
             )
-            
             pass
         else:
             if not self.cross_validation_bool:
-                self.load_gpr_hessian_model(candidate_hessian_point_x,
-                                            single_rp_beads,
-                                            single_rp_forces)
+                self.load_gpr_hessian_model(candidate_hessian_point_x)
             else:
                 self.cross_validate_gpr_hessian_model()
 

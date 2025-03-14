@@ -580,7 +580,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": int,
                 "default": 100,
-                "help": "number of ab initio potential data we can potentially compute and add to the path. \
+                "help": "number of ab initio gradient data we can potentially compute and add to the path. \
                     we can choose indices from these data points and use them to construct gpr_hessian model"
             },
         ),
@@ -590,8 +590,8 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": int,
                 "default": input_default(factory= np.zeros, args=(0,)),
-                "help": "The index for new data point which we will compute potential. \
-                    These potential data will be added to the gpr_hessian model"
+                "help": "The index for new data point which we will compute gradient. \
+                    These gradient data will be added to the gpr_hessian model"
             }
         ),
         "train_grad_model_bool":(
@@ -633,6 +633,17 @@ class InputNebInstGPR(InputDictionary):
                 """
             }
         ),
+        "new_hessian_data_index_rigid_mode":(
+            InputValue,
+            {
+                "dtype": int,
+                "default": input_default(factory= np.zeros, args=(0,)),
+                "help": """The index for new data point in which we will compute hessian along
+                        rigid modes. 
+                """
+            }
+        ),
+
         "internal_coord":(
             InputValue,
             {
@@ -802,7 +813,8 @@ class InputNebInstGPR(InputDictionary):
         # about computing hessian for gpr model & rate calculation.
         self.new_hessian_data_index.store(optarrays["new_hessian_data_index"])
         self.new_grad_data_index.store(optarrays["new_grad_data_index"])
-
+        self.new_hessian_data_index_rigid_mode.store(optarrays["new_hessian_data_index_rigid_mode"])
+        
         # regularization factor for ridge model : modeling hessians along stiff modes.
         self.ridge_regularization_alpha.store(optarrays["ridge_regularization_alpha"])
 
