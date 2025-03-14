@@ -3643,7 +3643,7 @@ class RP_MAP(object):
         (1) compute ab initio hessian at new hessian data index.
         (2) add new hessian data into gpr_hessian_model.
         """
-        if os.path.exists( os.path.join(self.read_gpr_hessian_folder, "candidate_hessian_coord.txt") ):
+        if os.path.exists( os.path.join(self.read_gpr_hessian_folder, "candidate_hessian_data_info.h5") ):
             ab_initio_hessian_file_exists = True 
         else:
             ab_initio_hessian_file_exists = False
@@ -3744,7 +3744,7 @@ class RP_MAP(object):
     def add_new_grad_data(self):
         """
         """
-        if os.path.exists( os.path.join(self.read_gpr_hessian_folder, "candidate_gradient_coord.txt") ):
+        if os.path.exists( os.path.join(self.read_gpr_hessian_folder, "candidate_grad_data_info.h5") ):
             ab_initio_grad_file_exists = True 
         else:
             ab_initio_grad_file_exists = False

@@ -275,13 +275,12 @@ def store_training_data_with_hessian(
     """
     store the training data (coord, pot, grad) + hessian
     """
-    ndofs = np.shape(cartesian_coordinate_x)[1]
-
     store_training_data(cartesian_coordinate_x, V, forces, prefix)
     
     # use HDF5 file store data
     h5_file_path = os.path.join(prefix, "training_data.h5")
     with h5py.File(h5_file_path, "a") as h5f:
+        # the index of data point that stores hessian information.
         h5f.create_dataset("hessian_index_list", data= hessian_index_list, compression= "gzip")
         h5f.create_dataset("hessians", data= hessians, compression= "gzip")
 
@@ -292,6 +291,7 @@ def read_training_data(prefix):
     """
     # read data from use HDF5 file 
     h5_file_path = os.path.join(prefix, "training_data.h5")
+    assert os.path.exists(h5_file_path), "training data (training_data.h5) for gpr model does not exist."
     
     with h5py.File(h5_file_path, "r") as h5f:
         cartesian_coordinate_x = np.array(h5f["cartesian_coordinate_x"])
@@ -306,6 +306,7 @@ def read_hessian_data(prefix):
     h5_file_path = os.path.join(prefix, "training_data.h5")
 
     with h5py.File(h5_file_path, "r") as h5f:
+        # the index of data point that contains hessian information.
         hessian_index_list = np.array(h5f["hessian_index_list"])
         hessian_data_list = np.array(h5f["hessians"])
 
@@ -384,9 +385,8 @@ def store_candidate_hessian_data_coordinate(
     used_hessian_point_num = len(used_hessian_index_in_candidate_list)
     with open(hessian_index_file_name, "w") as f:
         f.write("Index for data point that we have computed hessians. \n")
-        for i in range(used_hessian_point_num):
-            used_hessian_index = int(used_hessian_index_in_candidate_list[i])
-            f.write(str(used_hessian_index) + " ")
+        indices = [str(int(used_hessian_index_in_candidate_list[i])) for i in range(used_hessian_point_num)]
+        f.write(" ".join(indices) + "\n")
         f.write("\n")
 
 
@@ -415,12 +415,10 @@ def store_candidate_grad_data_coordinate(
     grad_index_file_name = os.path.join(
         prefix, "grad_index_in_candidate_point_list.txt"
     )
-    used_grad_point_num = len(used_grad_index)
+    used_grad_point_num = len(used_grad_data_index)
     with open(grad_index_file_name, "w") as f:
         f.write("Index for data point that we have computed gradients. \n")
-        for i in range(used_grad_point_num):
-            used_grad_index = int(used_grad_index[i])
-            f.write(str(used_grad_index) + " ")
+        f.write(" ".join(str(int(used_grad_data_index[i])) for i in range(used_grad_point_num)) + " ")
         f.write("\n")
 
 
@@ -459,6 +457,8 @@ def read_candidate_hessian_data_coordinate(prefix):
 
     # read candidate hessian coordinate
     h5_file_path = os.path.join(prefix, "candidate_hessian_data_info.h5")
+    assert os.path.exists(h5_file_path), "candidate hessian data point file does not exist"
+
     with h5py.File(h5_file_path, "r") as h5f:
         candidate_hessian_point_x = np.array(h5f["candidate_hessian_point_x"])
     
@@ -472,7 +472,6 @@ def read_candidate_hessian_data_coordinate(prefix):
         line = extract_number_from_line(lines[1])
         used_hessian_index_in_candidate_list = np.array(list(map(int, line)))
 
-
     return candidate_hessian_point_x, used_hessian_index_in_candidate_list
 
 def read_candidate_grad_data_coordinate(prefix):
@@ -484,6 +483,8 @@ def read_candidate_grad_data_coordinate(prefix):
     assert os.path.exists(prefix), "the prefix folder should have already been created."
 
     h5_file_path = os.path.join(prefix, "candidate_grad_data_info.h5")
+    assert os.path.exists(h5_file_path), "candidate grad data point file does not exist"
+    
     with h5py.File(h5_file_path, "r") as h5f:
         candidate_grad_point_x = h5f["candidate_grad_point_x"]
     
