@@ -634,7 +634,7 @@ class InputNebInstGPR(InputDictionary):
             }
         ),
         "new_hessian_data_index_rigid_mode":(
-            InputValue,
+            InputArray,
             {
                 "dtype": int,
                 "default": input_default(factory= np.zeros, args=(0,)),

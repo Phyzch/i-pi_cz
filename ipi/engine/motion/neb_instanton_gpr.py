@@ -3281,6 +3281,39 @@ class RP_MAP(object):
             train_x, train_V_to_store, train_f_to_store, prefix="neb_final_gpr_training"
         )
     
+    def construct_selective_hessian_calculator(self, candidate_hessian_point_x):
+        """
+        initialize SelectiveHessianCalculation class.
+        Use this function to only compute a few number of beads along rigid mode 
+        and perform linear regression.
+        - load existing hessian computed along the rigid mode.
+        - compute new hessian along rigid mode if required.
+        - construct linear regression model. 
+        """
+        self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
+            candidate_hessian_point_x,
+            self.coordinate_transformer,
+            self.gpr_rigid_internal_dofs_cutoff
+            )
+        
+        if len(self.new_hessian_data_index_rigid_mode) > 0:
+            # for computing new data point for hessian along rigid modes.
+            new_train_x_rigid_mode =  candidate_hessian_point_x[self.new_hessian_data_index_rigid_mode]
+            new_rigid_mode_bead_number = len(new_train_x_rigid_mode)
+            new_rigid_mode_rp_bead = Beads(self.neb_beads.natoms, new_rigid_mode_bead_number)
+            new_rigid_mode_rp_force = self.rp_forces.copy(new_rigid_mode_rp_bead, self.dcell)
+
+            self.selective_hessian_calculator.rigid_modes_hessian_preprocess(
+                prefix= self.read_gpr_hessian_folder,
+                new_train_x= new_train_x_rigid_mode,
+                new_rp_bead = new_rigid_mode_rp_bead,
+                new_rp_force = new_rigid_mode_rp_force
+            )
+        else:
+            self.selective_hessian_calculator.rigid_modes_hessian_preprocess(
+                prefix= self.read_gpr_hessian_folder
+            )
+
     def construct_new_gpr_hessian_model(self,
                                         candidate_hessian_point_x):
         """
@@ -3315,15 +3348,8 @@ class RP_MAP(object):
         ref_grads = -dstrip(new_forces.f).copy()[0] 
 
         if self.selective_hessian_bool:
-            # TODO: replace this function with function that read & preprocessing 
-            # hessian along rigid modes.
-            self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
-                candidate_hessian_point_x,
-                self.coordinate_transformer,
-                self.gpr_rigid_internal_dofs_cutoff
-                )
-            
-
+            # initialize the selective_hessian_calculator.
+            self.construct_selective_hessian_calculator(candidate_hessian_point_x)
 
             ref_hessians = self.selective_hessian_calculator.get_hessian(
                 new_beads,
@@ -3432,6 +3458,18 @@ class RP_MAP(object):
 
         training_V_shifted = training_V - self.energy_shift
         training_grads = -training_forces
+
+
+        if self.selective_hessian_bool:
+            # initialize the selective hessian calculator to compute hessian along rigid modes.
+            self.construct_selective_hessian_calculator(candidate_hessian_point_x)
+            # update the hessian along the rigid mode.
+            hessian_data_list = self.selective_hessian_calculator.update_hessian_rigid_modes(
+                cartesian_coordinate_x[hessian_index_list],
+                training_forces[hessian_index_list],
+                hessian_data_list
+            )
+
         # choose the first data point with hessian information as the reference point for mean function.
         ref_x = cartesian_coordinate_x[hessian_index_list[0]]
         ref_V_shifted = np.array([training_V_shifted[hessian_index_list[0]]])
@@ -3442,16 +3480,6 @@ class RP_MAP(object):
         ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
             np.array([ref_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
         )
-
-        if self.selective_hessian_bool:
-            # TODO: replace this function with function that read & preprocessing 
-            # hessian along rigid modes.
-            self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
-                candidate_hessian_point_x,
-                self.coordinate_transformer,
-                self.gpr_rigid_internal_dofs_cutoff
-            )
-
 
         self.gpr_hessian_model = (
             ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
@@ -3840,6 +3868,10 @@ class RP_MAP(object):
                 self.data_destination_folder
             )
 
+            if self.selective_hessian_bool:
+                # store the information about hessian along rigid mode.
+                self.selective_hessian_calculator.store_rigid_dofs_hessian(self.data_destination_folder)
+
             if self.add_new_hessian_data_bool:
                 # store the coordinate of candidate data point for hessian calculation
                 # & current index among candidate points that we have already computed hessian.
@@ -3883,7 +3915,12 @@ class RP_MAP(object):
                         candidate_grad_point_x,
                         self.grad_index_in_candidate_list,
                         self.data_destination_folder
-                    )    
+                    )
+
+        else:
+             if len(self.new_hessian_data_index_rigid_mode) > 0 and self.selective_hessian_bool:
+                 self.selective_hessian_calculator.store_rigid_dofs_hessian(self.read_gpr_hessian_folder)
+                    
 
     def add_new_hessian_and_grad_data(self):
         """
@@ -3925,11 +3962,11 @@ class RP_MAP(object):
             ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
             pass
                 
-            # store the computed ab inito gradient and hessian data if we compute new data point. 
-            self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,
-                                                    candidate_grad_point_x,
-                                                    ab_initio_hessian_file_exists,
-                                                    candidate_hessian_point_x)
+        # store the computed ab inito gradient and hessian data if we compute new data point. 
+        self.store_ab_initio_hessian_and_grad_data(ab_initio_grad_file_exists,
+                                                candidate_grad_point_x,
+                                                ab_initio_hessian_file_exists,
+                                                candidate_hessian_point_x)
 
     def predict_ring_polymer_hessians_using_gpr(self):
         """

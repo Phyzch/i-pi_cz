@@ -677,8 +677,9 @@ def fixing_dofs(force_vec, fix_dofs):
     :param: force_vec: 2d force vector. [nbeads, 3 * natoms]
     :param: fix_dofs: dofs to fix.
     """
-    assert np.shape(force_vec)[1] > np.max(fix_dofs)
-    force_vec[:, fix_dofs] = 0
+    if len(fix_dofs) > 0:
+        assert np.shape(force_vec)[1] > np.max(fix_dofs)
+        force_vec[:, fix_dofs] = 0
     return force_vec
 
 class Essentially_Nonoscillatory_Polynomial(object):

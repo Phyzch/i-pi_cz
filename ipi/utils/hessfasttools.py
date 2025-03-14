@@ -9,6 +9,8 @@ For flexible internal dofs, we compute hessian for all beads provided. """
 
 from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
 import torch
+import h5py
+import os
 import numpy as np
 from ipi.utils.messages import verbosity, info
 from sklearn.linear_model import LinearRegression, Ridge 
@@ -93,29 +95,50 @@ class SelectiveHessianCalculation:
 
         print(f"@hessian calculation: flexible internal dofs: {self.flexible_internal_dofs}")
 
-        self.rigid_mode_train_q_dataset = np.zeros([])
-        self.rigid_mode_hessians_q_dataset = np.zeros([])
+        self.rigid_mode_train_q_dataset = np.array([])
+        self.rigid_mode_hessians_q_dataset = np.array([])
 
         self.rigid_dofs_reg_model = None 
         self.cross_term_reg_model = None 
 
-    def load_rigid_dofs_hessian(self, rigid_mode_train_x, rigid_mode_hessians_q):
+    def load_rigid_dofs_hessian(self, prefix):
         """
         load the hessian components along rigid internal dofs.
-        :param: rigid_mode_train_x: cartesian coordinate x for training data for rigid mode hessian fitting.
-        :param: rigid_mode_hessians_q: hessians along internal coordinate for rigid modes.  (flexible mode component is set to 0).
+        :param: prefix: folder that will store hessian data along rigid modes
         """
         info("Load rigid hessian component", verbosity.low)
-        rigid_mode_train_q = self.coordinate_transformer.get_internal_coordinate_q(rigid_mode_train_x)
-        self.rigid_mode_train_q_dataset = np.concatenate(
-                [self.rigid_mode_train_q_dataset, rigid_mode_train_q], 
-                axis= 0
-            )
+        file_name = "rigid_mode_hessian.h5"
+        h5_file_path = os.path.join(prefix, file_name)
+        
+        if not os.path.exists(h5_file_path):
+            print("no rigid mode hessian data. skip rigid hessian data loading step.")
+            return
 
-        self.rigid_mode_hessians_q_dataset = np.concatenate(
-                [self.rigid_mode_hessians_q_dataset, rigid_mode_hessians_q],
-                axis= 0
-            )
+        with h5py.File(h5_file_path, "r") as h5f:
+            rigid_mode_train_q = np.array(h5f["rigid_mode_train_q"])
+            rigid_mode_hessians_q = np.array(h5f["rigid_mode_hessians_q"])
+
+        self.rigid_mode_train_q_dataset = rigid_mode_train_q
+
+        self.rigid_mode_hessians_q_dataset = rigid_mode_hessians_q
+    
+    def store_rigid_dofs_hessian(self, prefix):
+        """
+        store hessian components along rigid internal dofs.
+        :param: prefix: folder that will store hessian data along rigid modes.
+        """
+        info("store rigid hessian component", verbosity.low)
+        file_name = "rigid_mode_hessian.h5"
+        h5_file_path = os.path.join(prefix, file_name)
+
+        with h5py.File(h5_file_path, "w") as h5f:
+            h5f.create_dataset("rigid_mode_train_q", 
+                               data= self.rigid_mode_train_q_dataset, compression= 'gzip')
+            
+            h5f.create_dataset("rigid_mode_hessians_q", 
+                               data= self.rigid_mode_hessians_q_dataset, compression = 'gzip')
+        
+        
     
     def get_internal_coordinate_hessian_component(self, train_x, train_q, beads, forces, hess, index_q, d= 0.001):
         """
@@ -212,16 +235,22 @@ class SelectiveHessianCalculation:
                 index_q
             )
         
-        self.rigid_mode_train_q_dataset = np.concatenate(
-                [self.rigid_mode_train_q_dataset, new_train_q], 
-                axis= 0
-            )
+        if len(self.rigid_mode_train_q_dataset) == 0:
+            self.rigid_mode_train_q_dataset = new_train_q 
+        else:
+            self.rigid_mode_train_q_dataset = np.concatenate(
+                    [self.rigid_mode_train_q_dataset, new_train_q], 
+                    axis= 0
+                )
         
-        self.rigid_mode_hessians_q_dataset = np.concatenate(
-                [self.rigid_mode_hessians_q_dataset, new_rigid_hessian_component],
-                axis= 0
-            )
-    
+        if len(self.rigid_mode_hessians_q_dataset) == 0:
+            self.rigid_mode_hessians_q_dataset = new_rigid_hessian_component
+        else:
+            self.rigid_mode_hessians_q_dataset = np.concatenate(
+                    [self.rigid_mode_hessians_q_dataset, new_rigid_hessian_component],
+                    axis= 0
+                )
+        
     def linear_regression_fit_hessian(self, 
                                       ridge_regularization_alpha= 0.1):
         """
@@ -230,9 +259,9 @@ class SelectiveHessianCalculation:
 
         :param: ridge_regularization_alpha: the regularization strength for ridge regression.
         """
-        rigid_internal_dofs = self.rigid_internal_dofs
         data_num = len(self.rigid_mode_hessians_q_dataset)
 
+        assert data_num != 0, "The hessian data point for rigid mode should be larger than 0."
         # use scikit learn linear regression fit.
         # x_shape: [n_samples, n_features]
         # y_shape: [n_samples, n_targets]
@@ -246,7 +275,7 @@ class SelectiveHessianCalculation:
                                                                  self.cross_term_2d_index[0],
                                                                  self.cross_term_2d_index[1]]
         
-        y1 = cross_term_hessians.reshape(data_num, 1)
+        y1 = cross_term_hessians.reshape((data_num, -1))
         x1 = np.copy(self.rigid_mode_train_q_dataset)
         cross_term_reg_model = Ridge(alpha= ridge_regularization_alpha).fit(x1, y1)
         cross_term_reg_model.fit(x1, y1)
@@ -282,8 +311,7 @@ class SelectiveHessianCalculation:
 
     
     def rigid_modes_hessian_preprocess(self, 
-                                       rigid_mode_train_x, 
-                                       rigid_mode_hessians_q,
+                                       prefix,
                                        new_train_x= [],
                                        new_rp_bead= None,
                                        new_rp_force= None,
@@ -294,10 +322,9 @@ class SelectiveHessianCalculation:
         (2) compute hessians along rigid dofs for new data point (new_train_x)
         (3) construct linear regression model.
 
-        :param: rigid_mode_train_x: cartesian coordinate x for training data for rigid mode hessian fitting.
-        :param: rigid_mode_hessians_q: hessians along internal coordinate for rigid modes.  (flexible mode component is set to 0).
+        :param: prefix: folder that contains information about hessians along rigid modes.
         """
-        self.load_rigid_dofs_hessian(rigid_mode_train_x, rigid_mode_hessians_q)
+        self.load_rigid_dofs_hessian(prefix)
         
         # compute new data point for rigid dofs.
         if len(new_train_x) > 0:
@@ -368,4 +395,5 @@ class SelectiveHessianCalculation:
         hess_x = self.coordinate_transformer.transform_internal_hessian_to_cartesian_hessian(x, g_q, hess_q)
 
         return hess_x
+    
 

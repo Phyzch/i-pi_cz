@@ -389,7 +389,6 @@ def store_candidate_hessian_data_coordinate(
         f.write(" ".join(indices) + "\n")
         f.write("\n")
 
-
 def store_candidate_grad_data_coordinate(
         candidate_grad_point_x, used_grad_data_index, prefix
 ):
@@ -420,7 +419,6 @@ def store_candidate_grad_data_coordinate(
         f.write("Index for data point that we have computed gradients. \n")
         f.write(" ".join(str(int(used_grad_data_index[i])) for i in range(used_grad_point_num)) + " ")
         f.write("\n")
-
 
 def extract_number_from_line(line):
     line = re.split(" ", line.strip())
