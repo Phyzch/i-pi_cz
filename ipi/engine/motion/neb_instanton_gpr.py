@@ -133,7 +133,8 @@ class MAPNEBGPRMover(Motion):
         ridge_regularization_alpha = {
             "force": 0.1,
             "hessian": 0.1
-        }
+        },
+        gpr_covar_inverse_nugget= 1e-8
     ):
         """Initialises NEBMover.
 
@@ -233,7 +234,9 @@ class MAPNEBGPRMover(Motion):
 
         # regularization value for linear regression of constrained parts of hessian.
         self.optarrays["ridge_regularization_alpha"] = ridge_regularization_alpha 
-
+        
+        # nugget regularization of pseudo-inverse of covariance matrix
+        self.optarrays["gpr_covar_inverse_nugget"] = gpr_covar_inverse_nugget
         self.rp_map = RP_MAP()
 
         # choose optimization method based on optimizer we provide in input.xml
@@ -653,7 +656,7 @@ class MAPNEBGPRMover(Motion):
             self.initial_data_forces = self.forces.copy(self.initial_data_bead, self.cell)
 
             for i in range(bead_number_to_test):
-                self.initial_data_bead.q[i] = train_x[-i]
+                self.initial_data_bead.q[i] = train_x[i]
         
         return train_x, train_V, train_grad 
 
@@ -680,7 +683,8 @@ class MAPNEBGPRMover(Motion):
             train_bool= False,
             gpr_fix_internal_dofs_bool= self.options["gpr_fix_internal_dofs_bool"],
             gpr_fix_internal_dofs_cutoff= self.options["gpr_fix_internal_dofs_cutoff"],
-            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs 
+            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
+            singular_value_cutoff = self.optarrays["gpr_covar_inverse_nugget"]
         )
         
         read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
@@ -778,6 +782,8 @@ class MAPNEBGPRMover(Motion):
 
         # check overfitting on the unseen test data to test over-fitting.
         print("@initial gpr training info: Test Overfitting of GPR model.")
+        print("The error in test set can be large if we start the model with a small number of data.")
+        print("In this case, the test data is out of trust region of the model.")
         nbeads = self.initial_data_bead.nbeads
 
         if nbeads >= 2:
@@ -2854,6 +2860,7 @@ class RP_MAP(object):
         # options to do cross validation of gpr hessian model.
         self.cross_validation_bool = nebmover.options["cross_validation_bool"]
         self.ridge_regularization_alpha = nebmover.optarrays["ridge_regularization_alpha"]
+        self.gpr_covar_inverse_nugget = nebmover.optarrays["gpr_covar_inverse_nugget"]
 
     def initialize(self, neb_beads, neb_final_step):
         """
@@ -3052,7 +3059,8 @@ class RP_MAP(object):
             train_bool= False,
             gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
             gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
-            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs 
+            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
+            singular_value_cutoff=  self.gpr_covar_inverse_nugget
         )
 
         model_hyperparameter_exists = ipi.utils.nebinstgprtool.load_training_hyperparameter_in_gpr_model(
@@ -3402,7 +3410,8 @@ class RP_MAP(object):
                 gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs_cutoff= self.gpr_rigid_internal_dofs_cutoff,
-                ridge_regularization_alpha= self.ridge_regularization_alpha
+                ridge_regularization_alpha= self.ridge_regularization_alpha,
+                singular_value_cutoff= self.gpr_covar_inverse_nugget
             )
         )
 
@@ -3505,7 +3514,8 @@ class RP_MAP(object):
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
                 gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
-                ridge_regularization_alpha= self.ridge_regularization_alpha
+                ridge_regularization_alpha= self.ridge_regularization_alpha,
+                singular_value_cutoff= self.gpr_covar_inverse_nugget
             )
         )
 
@@ -3614,7 +3624,8 @@ class RP_MAP(object):
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
                 gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
-                ridge_regularization_alpha= self.ridge_regularization_alpha
+                ridge_regularization_alpha= self.ridge_regularization_alpha,
+                singular_value_cutoff= self.gpr_covar_inverse_nugget
             )
         )
 

@@ -35,6 +35,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         likelihood,
         training_data_hessian_data_point_index,
         hessian_fixdofs,
+        singular_value_cutoff
     ):
         """
         :param: train_inputs: training input data.
@@ -74,9 +75,11 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             (self.nactive + 1) * self.nactive / 2
         )  # the size of upper triangle part of the hessian.
 
+        self.singular_value_cutoff = singular_value_cutoff
+
     @property
     @cached(name="mean_cache")
-    def mean_cache(self, singular_value_cutoff = pow(10.0, -6)):
+    def mean_cache(self):
         """
         mean_cache = (K(X,X) + sigma^2 I)^(-1) * y.  here X are inputs of training data. y are targets of training data.
         """
@@ -93,6 +96,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         covar_eigval_min = torch.min(torch.real(covar_eigval)) 
         covar_eigval_max = torch.max(torch.real(covar_eigval))
 
+        singular_value_cutoff = self.singular_value_cutoff
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             covar_inverse = torch.linalg.pinv(train_train_covar_tensor, rtol= singular_value_cutoff) # (K(X,X) + sigma^2 I)^-1 * y
@@ -113,7 +117,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
     @property
     @cached(name= "covar_cached")
-    def covar_cache(self, singular_value_cutoff = pow(10.0, -6)):
+    def covar_cache(self):
         """
         compute the cache for the prediction of the covariance matrix. Which is (K(X,X) + sigma^2 I)^{-1/2}
         use pseudo-inverse (Moore Penrose inverse) when the covariance matrix becomes ill-conditioned. (smallest eigenvalue is close to 0).
@@ -126,6 +130,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         covar_eigval_min = torch.min(torch.real(covar_eigval))
         covar_eigval_max = torch.max(torch.real(covar_eigval))
 
+        singular_value_cutoff = self.singular_value_cutoff
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             U, S ,Vh = torch.linalg.svd(train_train_covar_tensor)

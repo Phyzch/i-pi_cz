@@ -530,7 +530,8 @@ class GPModelWithDerivativesWrapper:
         train_bool= True,
         gpr_fix_internal_dofs_bool= False,
         gpr_fix_internal_dofs_cutoff = 1e-4,
-        gpr_fixed_internal_dofs= None
+        gpr_fixed_internal_dofs= None,
+        singular_value_cutoff = 1e-8
     ):
         """
         initialize the model.
@@ -652,6 +653,7 @@ class GPModelWithDerivativesWrapper:
             kernel_outputscale,
             kernel_lengthscale_ratio,
             moving_likelihood_noise_variance,
+            singular_value_cutoff= singular_value_cutoff 
         )
 
         if train_bool:   

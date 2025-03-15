@@ -44,6 +44,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         ref_mean_pot: torch.Tensor = torch.Tensor([]),
         ref_mean_grad: torch.Tensor = torch.Tensor([]),
         ref_mean_hessian: torch.Tensor = torch.Tensor([]),
+        singular_value_cutoff = 1e-8
     ):
         """
         :param: train_inputs: input coordinate of training data.
@@ -96,6 +97,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             training_data_hessian_data_point_index
         )
 
+        self.singular_value_cutoff = singular_value_cutoff
         # dofs that we will not include in hessian calculations.
         self.hessian_fixdofs = hessian_fixdofs
         ard_num_dims = train_inputs.shape[-1]
@@ -542,6 +544,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                     likelihood=self.likelihood,
                     training_data_hessian_data_point_index=self.training_data_hessian_data_point_index,
                     hessian_fixdofs=self.hessian_fixdofs,
+                    singular_value_cutoff= self.singular_value_cutoff
                 )
 
             # Concatenate the training input and test input into one input for generating the joint distribution
@@ -635,7 +638,7 @@ def train_gpr_model(
     # define loss function for GPs. -- we choose the marginal log likelihood
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-    mll = CustomMarginalLogLikelihood(likelihood, model)
+    mll = CustomMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
 
     # initialize loss_func_change and old_loss to enable while loop
     loss_func_change = 1000

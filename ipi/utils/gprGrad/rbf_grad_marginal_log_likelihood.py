@@ -11,8 +11,10 @@ class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
     We change the forward() function since we want to change the way we compute logarithm of probability.
     """
 
-    def __init__(self, likelihood, model):
+    def __init__(self, likelihood, model, singular_value_cutoff):
         super(RBFGradMarginalLogLikelihood, self).__init__(likelihood, model)
+        # singular value cutoff when we pseudo-inverse the covariance matrix.
+        self.singular_value_cutoff = singular_value_cutoff
 
     def forward(self, function_dist, target, *params):
         r"""
@@ -39,7 +41,7 @@ class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
         num_data = function_dist.event_shape.numel()
         return res.div_(num_data)
     
-    def log_prob_likelihood(self, normal_dist: MultitaskMultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -8)):
+    def log_prob_likelihood(self, normal_dist: MultitaskMultivariateNormal, value: Tensor):
         """
         compute the log probability of observable (target).
         Perform the pseudo-inverse when the covariance matrix is ill-conditioned.
@@ -61,6 +63,8 @@ class RBFGradMarginalLogLikelihood(ExactMarginalLogLikelihood):
         covar_eigval = torch.linalg.eigvals(covar_tensor)
         covar_eigval_min = torch.min(torch.real(covar_eigval))
         covar_eigval_max = torch.max(torch.real(covar_eigval))
+
+        singular_value_cutoff = self.singular_value_cutoff
 
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. 

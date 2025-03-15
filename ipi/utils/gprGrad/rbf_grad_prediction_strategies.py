@@ -14,12 +14,13 @@ from gpytorch import settings
 import functools
 
 class RBFGradPredictionStrategies(DefaultPredictionStrategy):
-    def __init__(self, train_inputs, train_prior_dist, train_labels, likelihood, root=None, inv_root=None):
+    def __init__(self, train_inputs, train_prior_dist, train_labels, likelihood, singular_value_cutoff, root=None, inv_root=None):
         super(RBFGradPredictionStrategies, self).__init__(train_inputs, train_prior_dist, train_labels, likelihood, root= root, inv_root= inv_root)
-    
+        self.singular_value_cutoff = singular_value_cutoff
+
     @property 
     @cached(name="mean_cache")
-    def mean_cache(self, singular_value_cutoff = pow(10.0, -6)):
+    def mean_cache(self):
         """
         compute cache for the prediction of the mean value. 
         use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-defined. (smallest eigenvalue close to 0)
@@ -36,6 +37,8 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
         covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
         covar_eigval_min = torch.min(torch.real(covar_eigval))
         covar_eigval_max = torch.max(torch.real(covar_eigval))
+
+        singular_value_cutoff = self.singular_value_cutoff
 
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
@@ -56,7 +59,7 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
 
     @property
     @cached(name="covar_cache")
-    def covar_cache(self, singular_value_cutoff = pow(10.0, -6)):
+    def covar_cache(self):
         """
         compute cache for the prediction of the covariance matrix. Which is (K(x,x) + sigma^2 I)^{-1/2}
         use pseudo-inverse (Moore-Penrose inverse) when the covariance matrix becomes ill-conditioned. (smallest eigenvalue close to 0)
@@ -70,6 +73,8 @@ class RBFGradPredictionStrategies(DefaultPredictionStrategy):
         covar_eigval_min = torch.min(torch.real(covar_eigval))
         covar_eigval_max = torch.max(torch.real(covar_eigval))
 
+        singular_value_cutoff = self.singular_value_cutoff
+        
         if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
             # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
             U, S ,Vh = torch.linalg.svd(train_train_covar_tensor)

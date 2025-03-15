@@ -25,6 +25,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         kernel_outputscale,
         kernel_lengthscale_ratio,
         likelihood_noise_variance,
+        singular_value_cutoff
     ):
         """
         :param: train_inputs: training data.  torch.Tensor object. shape: [N, d]. N: number of data points. d: input data dimensions.
@@ -43,6 +44,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         """
         self.input_dim = ard_num_dims
         self.output_dim = output_dims
+        self.singular_value_cutoff = singular_value_cutoff
 
         # set the noise prior information and construct the likelihood class.
         likelihood = self._set_likelihood_noise_prior(
@@ -330,6 +332,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                     train_prior_dist=train_output,
                     train_labels=self.train_targets,
                     likelihood=self.likelihood,
+                    singular_value_cutoff= self.singular_value_cutoff
                 )
 
             # Concatenate the input to the training input
@@ -393,7 +396,7 @@ def train_gpr(model: GPModelWithDerivatives,
     # define loss function for GPs. -- we choose the marginal log likelihood
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     # use our own version of marginal log likelihood function to perform the pseudo-inverse of covariance matrix.
-    mll = RBFGradMarginalLogLikelihood(likelihood, model)
+    mll = RBFGradMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
 
     train_inputs = model.train_inputs[
         0

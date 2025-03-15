@@ -11,8 +11,9 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
     We change the __forward__() function since num_data is different for our case (not function_dist.event_shape.numel() in ExactMarginalLogLikelihood)
     """
 
-    def __init__(self, likelihood, model):
+    def __init__(self, likelihood, model, singular_value_cutoff):
         super(CustomMarginalLogLikelihood, self).__init__(likelihood, model)
+        self.singular_value_cutoff = singular_value_cutoff
 
     def forward(self, function_dist, target, *params):
         """
@@ -40,7 +41,7 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
 
         return res
 
-    def log_prob_likelihood(self, normal_dist: MultivariateNormal, value: Tensor, singular_value_cutoff = pow(10.0, -6)):
+    def log_prob_likelihood(self, normal_dist: MultivariateNormal, value: Tensor):
         """
         compute the log probability of observable (target).
         Perform the pseudo-inverse when the covariance matrix is ill-conditioned.
@@ -54,6 +55,7 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
         covar_tensor = covar.to_dense() 
         logdet = torch.logdet(covar_tensor) # log(|K + sigma^2 I|)
         
+        singular_value_cutoff = self.singular_value_cutoff
         pseudo_inverse_covar = torch.linalg.pinv(covar_tensor, rtol= singular_value_cutoff) 
         inv_quad = diff @ pseudo_inverse_covar @ diff # y^t (K+ sigma^2 I)^-1 y
 

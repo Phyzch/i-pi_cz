@@ -850,7 +850,8 @@ class GPModelWithHessiansWrapper:
         ridge_regularization_alpha= {
                 "force": 0.1,
                 "hessian": 0.1,
-            }
+            },
+        singular_value_cutoff = 1e-8
     ):
         """
         :param: train_x: [M, 3 * natom]. initial M training points x in Cartesian coordinate.
@@ -1075,6 +1076,7 @@ class GPModelWithHessiansWrapper:
             ref_mean_V_tensor,
             ref_mean_grad_q_tensor,
             ref_mean_hessian_q_upper_triag_tensor,
+            singular_value_cutoff= singular_value_cutoff
         )
 
         if train_bool:

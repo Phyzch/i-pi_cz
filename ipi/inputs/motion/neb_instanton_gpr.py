@@ -686,6 +686,18 @@ class InputNebInstGPR(InputDictionary):
                 along stiff dofs.
                 """
             }
+        ),
+        "gpr_covar_inverse_nugget": (
+            InputValue,
+            {
+                "dtype": float,
+                "default": 1e-8,
+                "help":
+                """
+                Nugget value add to the pseudo-inverse of covariance matrix in gpr model.
+                See: https://arxiv.org/abs/1602.00853.
+                """
+            }
         )
     }
 
@@ -817,7 +829,8 @@ class InputNebInstGPR(InputDictionary):
         
         # regularization factor for ridge model : modeling hessians along stiff modes.
         self.ridge_regularization_alpha.store(optarrays["ridge_regularization_alpha"])
-
+        self.gpr_covar_inverse_nugget.store(optarrays["gpr_covar_inverse_nugget"])
+        
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()
         rv["mode"] = self.mode.fetch()
