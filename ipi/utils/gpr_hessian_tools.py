@@ -881,6 +881,8 @@ class GPModelWithHessiansWrapper:
         :param: ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x:  
         this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         
+        :param: singular_value_cutoff: singular value cutoff for pesudo-inverse of covariance matrix.
+        
         Several pre-processing steps:
         (1) transform data from Cartesian coordinate into internal coordinate.
         (2) compute noise in the internal coordinate.

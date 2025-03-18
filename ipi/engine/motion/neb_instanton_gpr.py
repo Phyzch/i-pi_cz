@@ -3301,7 +3301,8 @@ class RP_MAP(object):
         self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
             candidate_hessian_point_x,
             self.coordinate_transformer,
-            self.gpr_rigid_internal_dofs_cutoff
+            self.gpr_rigid_internal_dofs_cutoff,
+            self.cross_validation_bool
             )
         
         if len(self.new_hessian_data_index_rigid_mode) > 0:
@@ -3553,7 +3554,8 @@ class RP_MAP(object):
 
         ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
 
-    def cross_validate_gpr_hessian_model(self):
+    def cross_validate_gpr_hessian_model(self,
+                                         candidate_hessian_point_x):
         """
         read training data (potential V, gradient, hessians) from folder. 
         split data into training set and cross validation set.
@@ -3574,6 +3576,17 @@ class RP_MAP(object):
         ) = ipi.utils.nebinstgprtool.read_training_data_with_hessian(
             self.read_gpr_hessian_folder
         )
+
+        if self.selective_hessian_bool:
+            # initialize the selective hessian calculator to compute hessian along rigid modes.
+            self.construct_selective_hessian_calculator(candidate_hessian_point_x)
+            # update the hessian along the rigid mode.
+            hessian_data_list = self.selective_hessian_calculator.update_hessian_rigid_modes(
+                cartesian_coordinate_x[hessian_index_list],
+                training_forces[hessian_index_list],
+                hessian_data_list
+            )
+        
 
         train_set, cv_set = ipi.utils.nebinstgprtool.split_train_cv_data(
             cartesian_coordinate_x,
@@ -3669,7 +3682,7 @@ class RP_MAP(object):
             if not self.cross_validation_bool:
                 self.load_gpr_hessian_model(candidate_hessian_point_x)
             else:
-                self.cross_validate_gpr_hessian_model()
+                self.cross_validate_gpr_hessian_model(candidate_hessian_point_x)
 
             pass
 

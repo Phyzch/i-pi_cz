@@ -26,7 +26,8 @@ class SelectiveHessianCalculation:
     def __init__(self,
                  train_x: np.ndarray,
                  coordinate_transformer: non_redundant_coordinate_transformer,
-                 rigid_internal_dofs_cutoff: np.ndarray
+                 rigid_internal_dofs_cutoff: np.ndarray,
+                 cross_validation_bool
                  ):
         """
         decide the rigid_internal_dofs for the training data. 
@@ -39,6 +40,7 @@ class SelectiveHessianCalculation:
         :param: single_rp_force: Force object for 1 ring polymer bead.
         """
         self.coordinate_transformer = coordinate_transformer
+        self.cross_validation_bool = cross_validation_bool
 
         self.nbeads = np.shape(train_x)[0]
         # the change along the internal coordinate will be computed using Wilson's B matrix.
@@ -74,8 +76,6 @@ class SelectiveHessianCalculation:
                 if train_inputs_change[i] < rigid_internal_dofs_cutoff
             ]
         )
-        # For debug: Set rigid_internal_dofs = 0 first. Check the error from coordinate transformation & hessian calculation.
-        # self.rigid_internal_dofs = np.array([])
 
         print(f"@hessian calculation: rigid internal dofs: {self.rigid_internal_dofs}")
 
@@ -283,6 +283,55 @@ class SelectiveHessianCalculation:
         self.rigid_dofs_reg_model = rigid_dofs_reg_model
         self.cross_term_reg_model = cross_term_reg_model
     
+    def linear_regression_cross_validation(self,
+                                           ridge_regularization_alpha= 0.1):
+        """
+        use leave one out cross-validation method to test the performance of the linear regression model.
+
+        :param: ridge_regularization_alpha: the regularization strength for ridge regression.
+        """
+        np.random.seed(seed= 41)
+        data_num = len(self.rigid_mode_train_q_dataset)
+        cv_index = np.random.choice(data_num, size= 1)
+
+        # cross validation data
+        cv_data_num = 1
+        cv_train_q = self.rigid_mode_train_q_dataset[cv_index]
+        cv_hessians_q = self.rigid_mode_hessians_q_dataset[cv_index]
+        
+        # training data after we leave one data point (cv) out
+        training_data_num = data_num - cv_data_num
+        training_q = np.delete(self.rigid_mode_train_q_dataset, cv_index, axis= 0)
+        hessians_q = np.delete(self.rigid_mode_hessians_q_dataset, cv_index, axis= 0)
+
+        # use linear regression fit 
+        # for block diagonal terms along rigid dofs.
+        rigid_mode_hessians = hessians_q[:, self.rigid_internal_dofs_2d_index[0], self.rigid_internal_dofs_2d_index[1]]
+        y = rigid_mode_hessians.reshape((training_data_num, -1))
+        x = np.copy(training_q)
+        rigid_dofs_reg_model = Ridge(alpha= ridge_regularization_alpha).fit(x, y)
+
+        # test the accuracy 
+        predict_y = rigid_dofs_reg_model.predict(cv_train_q)
+        cv_y = cv_hessians_q[:,self.rigid_internal_dofs_2d_index[0], self.rigid_internal_dofs_2d_index[1]].reshape((cv_data_num, -1))
+        error = np.linalg.norm(predict_y - cv_y, axis= 1) / np.linalg.norm(cv_y, axis= 1)
+        print(f"cross validation error for rigid mode linear regression: block diagonal term: {error}")
+
+        # for cross term
+        cross_term_hessians = hessians_q[:,
+                                        self.cross_term_2d_index[0],
+                                        self.cross_term_2d_index[1]]
+        y1 = cross_term_hessians.reshape((training_data_num, -1))
+        x1 = np.copy(training_q)
+        cross_term_reg_model = Ridge(alpha= ridge_regularization_alpha).fit(x1, y1)
+
+        # test the accuracy.
+        predict_y1 = cross_term_reg_model.predict(cv_train_q)
+        cv_y1 = cv_hessians_q[:, self.cross_term_2d_index[0], self.cross_term_2d_index[1]].reshape((cv_data_num, -1))
+        error1 = np.linalg.norm(predict_y1 - cv_y1, axis= 1) / np.linalg.norm(cv_y1, axis= 1)
+        print(f"cross validation error for rigid mode linear regression: cross term: {error1}")
+
+
     def linear_regression_predict_hessian(self, 
                                           predict_inputs: np.ndarray, 
                                           hessians_q: np.ndarray):
@@ -332,6 +381,11 @@ class SelectiveHessianCalculation:
         
         # construct the linear regression model.
         self.linear_regression_fit_hessian(ridge_regularization_alpha= ridge_regularization_alpha)
+
+        # do cross validation for linear regression fit of hessians.
+        # Only do this if we have hessian data point >= 3. (need at least 2 point for linear regression.)
+        if self.cross_validation_bool and len(self.rigid_mode_train_q_dataset) >= 3:
+            self.linear_regression_cross_validation(ridge_regularization_alpha= ridge_regularization_alpha)
 
     def get_hessian(self, rp_beads, rp_forces, x0, d= 0.001):
         """

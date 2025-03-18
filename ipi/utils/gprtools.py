@@ -547,6 +547,7 @@ class GPModelWithDerivativesWrapper:
                                                        y = f + epsilon.
                             Note the potential V and force f have different noise.
                             The noise for force is defined in the Cartesian coordinate, we need to transform it into the internal coordinate.
+        :param: singular_value_cutoff: singular value cutoff for pesudo-inverse of covariance matrix.
         """
         assert (
             np.shape(train_x)[1] == 3 * natom
