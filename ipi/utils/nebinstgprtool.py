@@ -1090,8 +1090,8 @@ def analyze_hessian_error(coord,
             predicted_hessians
             )
     
-    # error for hessian component that is predicted by linear regression.
-    constrained_dofs_2d_index = gpr_hessian_model.FixingDofs.constrained_internal_dofs_2d_index
+    # error for hessian component that is predicted by linear regression. (block diagonal term)
+    constrained_dofs_2d_index = np.copy(gpr_hessian_model.FixingDofs.constrained_internal_dofs_2d_index)
     constrained_ab_initio_hessian_q = ab_initio_hessian_q[:,
                                                           constrained_dofs_2d_index[0], 
                                                             constrained_dofs_2d_index[1]]
@@ -1102,7 +1102,21 @@ def analyze_hessian_error(coord,
         constrained_predicted_hessian_q, 
         constrained_ab_initio_hessian_q
     )
-    print(f"{data_type}: relative hessian error for constrained dofs of ring polymer beads (modeled by linear regression): {constrained_hessian_error}")
+    print(f"{data_type}: relative hessian error for constrained dofs (modeled by linear regression): {constrained_hessian_error}")
+
+    # error for hessian component that is predicted by linear regression (cross term between rigid mode and flexible mode)
+    cross_term_2d_index = np.copy(gpr_hessian_model.FixingDofs.cross_term_2d_index)
+    cross_term_ab_initio_hessian_q = ab_initio_hessian_q[:,
+                                                         cross_term_2d_index[0],
+                                                         cross_term_2d_index[1]]
+    cross_term_predicted_hessian_q = predicted_hessian_q[:,
+                                                         cross_term_2d_index[0],
+                                                         cross_term_2d_index[1]]
+    cross_term_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
+        cross_term_predicted_hessian_q,
+        cross_term_ab_initio_hessian_q
+    )
+    print(f"{data_type}: relative hessian error for cross term (modeled by linear regression): {cross_term_hessian_error}")
 
     # error for hessian component that is predicted by linear regression.
     free_moving_dofs_2d_index = gpr_hessian_model.FixingDofs.free_moving_dofs_2d_index

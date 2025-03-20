@@ -679,7 +679,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": float,
                 "options": ["force", "hessian"],
-                "default": [0.1, 0.1],
+                "default": [0.1, 0.5],
                 "help":
                 """
                 The regularization amplitude for ridge (linear regression model) for fitting hessians

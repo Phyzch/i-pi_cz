@@ -97,7 +97,7 @@ class SelectiveHessianCalculation:
 
         self.rigid_mode_train_q_dataset = np.array([])
         self.rigid_mode_hessians_q_dataset = np.array([])
-
+        self.rigid_mode_bead_index = np.array([])
         self.rigid_dofs_reg_model = None 
         self.cross_term_reg_model = None 
 
@@ -115,13 +115,12 @@ class SelectiveHessianCalculation:
             return
 
         with h5py.File(h5_file_path, "r") as h5f:
-            rigid_mode_train_q = np.array(h5f["rigid_mode_train_q"])
-            rigid_mode_hessians_q = np.array(h5f["rigid_mode_hessians_q"])
+            self.rigid_mode_train_q_dataset = np.array(h5f["rigid_mode_train_q"])
+            self.rigid_mode_hessians_q_dataset = np.array(h5f["rigid_mode_hessians_q"])
+            self.rigid_mode_bead_index = np.array(h5f["rigid_mode_bead_index"])
 
-        self.rigid_mode_train_q_dataset = rigid_mode_train_q
+            print(f"@bead index for hessian along rigid mode: {self.rigid_mode_bead_index}")
 
-        self.rigid_mode_hessians_q_dataset = rigid_mode_hessians_q
-    
     def store_rigid_dofs_hessian(self, prefix):
         """
         store hessian components along rigid internal dofs.
@@ -136,9 +135,11 @@ class SelectiveHessianCalculation:
                                data= self.rigid_mode_train_q_dataset, compression= 'gzip')
             
             h5f.create_dataset("rigid_mode_hessians_q", 
-                               data= self.rigid_mode_hessians_q_dataset, compression = 'gzip')
+                               data= self.rigid_mode_hessians_q_dataset, compression= 'gzip')
+            h5f.create_dataset("rigid_mode_bead_index",
+                               data= self.rigid_mode_bead_index, compression= 'gzip')
         
-        
+
     
     def get_internal_coordinate_hessian_component(self, train_x, train_q, beads, forces, hess, index_q, d= 0.001):
         """
@@ -204,7 +205,8 @@ class SelectiveHessianCalculation:
     def compute_rigid_dofs_hessian(self, 
                                    new_train_x,
                                    new_rp_bead,
-                                   new_rp_force):
+                                   new_rp_force,
+                                   new_rigid_mode_bead_index):
         """
         compute hessians along rigid internal dofs for new data point.
         This code is used to add new data point for hessian along rigid dofs.
@@ -221,6 +223,12 @@ class SelectiveHessianCalculation:
         rigid_ndofs = len(self.rigid_internal_dofs)
         input_dim_q = np.shape(new_train_q)[1]
         new_rigid_hessian_component = np.zeros([new_rigid_bead_num, input_dim_q, input_dim_q])
+
+        for new_index in new_rigid_mode_bead_index:
+            if new_index in self.rigid_mode_bead_index:
+                raise ValueError(f"repeated data points for rigid mode hessians. new_index: {new_index}." + 
+                                 f"bead index that we have already computed: {self.rigid_mode_bead_index}")
+
         for index, index_q in enumerate(self.rigid_internal_dofs):
             info(
                 "@get hessian: rigid mode. Computing hessian: %d of %d" %(index, rigid_ndofs),
@@ -236,12 +244,15 @@ class SelectiveHessianCalculation:
             )
         
         if len(self.rigid_mode_train_q_dataset) == 0:
-            self.rigid_mode_train_q_dataset = new_train_q 
+            self.rigid_mode_train_q_dataset = new_train_q
+            self.rigid_mode_bead_index = new_rigid_mode_bead_index 
         else:
             self.rigid_mode_train_q_dataset = np.concatenate(
                     [self.rigid_mode_train_q_dataset, new_train_q], 
                     axis= 0
                 )
+            self.rigid_mode_bead_index = np.concatenate([self.rigid_mode_bead_index, 
+                                                         new_rigid_mode_bead_index])
         
         if len(self.rigid_mode_hessians_q_dataset) == 0:
             self.rigid_mode_hessians_q_dataset = new_rigid_hessian_component
@@ -331,6 +342,8 @@ class SelectiveHessianCalculation:
         error1 = np.linalg.norm(predict_y1 - cv_y1, axis= 1) / np.linalg.norm(cv_y1, axis= 1)
         print(f"cross validation error for rigid mode linear regression: cross term: {error1}")
 
+        pass
+
 
     def linear_regression_predict_hessian(self, 
                                           predict_inputs: np.ndarray, 
@@ -364,6 +377,7 @@ class SelectiveHessianCalculation:
                                        new_train_x= [],
                                        new_rp_bead= None,
                                        new_rp_force= None,
+                                       new_rigid_mode_bead_index= [],
                                        ridge_regularization_alpha= 0.1):
         """
         prepare for linear regression prediction of rigid hessian components.
@@ -377,7 +391,7 @@ class SelectiveHessianCalculation:
         
         # compute new data point for rigid dofs.
         if len(new_train_x) > 0:
-            self.compute_rigid_dofs_hessian(new_train_x, new_rp_bead, new_rp_force)
+            self.compute_rigid_dofs_hessian(new_train_x, new_rp_bead, new_rp_force, new_rigid_mode_bead_index)
         
         # construct the linear regression model.
         self.linear_regression_fit_hessian(ridge_regularization_alpha= ridge_regularization_alpha)

@@ -132,7 +132,7 @@ class MAPNEBGPRMover(Motion):
         cross_validation_bool= False,
         ridge_regularization_alpha = {
             "force": 0.1,
-            "hessian": 0.1
+            "hessian": 0.5
         },
         gpr_covar_inverse_nugget= 1e-8
     ):
@@ -962,6 +962,7 @@ class MAPNEBGPRMover(Motion):
             forces_for_update = self.forces.copy(beads_for_update, self.cell)
             
             training_x = np.copy(self.beads.q[large_uncertainty_bead_index])
+            
             beads_for_update.q[:] = training_x
 
             # compute ab-initio potential and forces.
@@ -3316,11 +3317,13 @@ class RP_MAP(object):
                 prefix= self.read_gpr_hessian_folder,
                 new_train_x= new_train_x_rigid_mode,
                 new_rp_bead = new_rigid_mode_rp_bead,
-                new_rp_force = new_rigid_mode_rp_force
+                new_rp_force = new_rigid_mode_rp_force,
+                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode
             )
         else:
             self.selective_hessian_calculator.rigid_modes_hessian_preprocess(
-                prefix= self.read_gpr_hessian_folder
+                prefix= self.read_gpr_hessian_folder,
+                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode
             )
 
     def construct_new_gpr_hessian_model(self,
@@ -3583,7 +3586,7 @@ class RP_MAP(object):
             # update the hessian along the rigid mode.
             hessian_data_list = self.selective_hessian_calculator.update_hessian_rigid_modes(
                 cartesian_coordinate_x[hessian_index_list],
-                training_forces[hessian_index_list],
+                force_data[hessian_index_list],
                 hessian_data_list
             )
         
@@ -3632,7 +3635,7 @@ class RP_MAP(object):
                 ref_mean_V=ref_V_shifted,
                 ref_mean_grad_x=ref_grads,
                 ref_mean_hessian_x=ref_hessians,
-                train_bool= True,
+                train_bool= False,
                 gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
@@ -3640,6 +3643,18 @@ class RP_MAP(object):
                 ridge_regularization_alpha= self.ridge_regularization_alpha,
                 singular_value_cutoff= self.gpr_covar_inverse_nugget
             )
+        )
+
+        # load trained model parameter.
+        model_hyperparameter_exists = \
+            ipi.utils.nebinstgprtool.load_training_hyperparameter_for_gpr_hessian_model(
+                self.gpr_hessian_model,
+                self.read_gpr_hessian_folder
+        )
+        self.gpr_hessian_model.train_model() 
+        
+        ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
+            self.gpr_hessian_model, self.read_gpr_hessian_folder
         )
 
         # analyze training data error.
