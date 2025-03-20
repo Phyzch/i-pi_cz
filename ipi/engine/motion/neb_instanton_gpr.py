@@ -609,20 +609,22 @@ class MAPNEBGPRMover(Motion):
         # We will train the GPR model to optimize hyperparameter using the initial data.
         initial_bead_number = 3 
         nbeads = self.beads.nbeads
-
-        self.initial_data_bead = Beads(self.beads.natoms, initial_bead_number)
+        # compute forces one by one in case we use the 'centroid' trick to avoid 
+        # computing forces for all beads to converge the path.
+        self.initial_data_bead = Beads(self.beads.natoms, 1)
         self.initial_data_forces = self.forces.copy(self.initial_data_bead, self.cell)
         
         train_x = np.zeros([initial_bead_number, np.shape(self.beads.q)[1]])
-
+        train_V = np.zeros([initial_bead_number])
+        train_grad = np.zeros([initial_bead_number, self.beads.natoms * 3])
         bead_index = np.linspace(0, nbeads - 1, initial_bead_number).astype(int)
         for i in range(initial_bead_number):
             train_x[i] = self.beads.q[bead_index[i]]
-            self.initial_data_bead.q[i] = train_x[i]
-        
+            self.initial_data_bead.q[0] = train_x[i]
+            train_V[i] = np.copy(self.initial_data_forces.pots)[0] - self.optarrays["energy_shift"]
+            train_grad[i] = - np.copy(dstrip(self.initial_data_forces.f))[0]
+
         # potential energy has to shift relative to the energy_shift for training.
-        train_V = np.copy(self.initial_data_forces.pots) - self.optarrays["energy_shift"]
-        train_grad = - np.copy(dstrip(self.initial_data_forces.f))
         train_grad = ipi.utils.nebinstool.fixing_dofs(train_grad, self.optarrays["fix_dofs"])
         # count the # of ab-initio calculations we have done.
         SharedData.ab_initio_bead_calculation_number = (
@@ -958,17 +960,21 @@ class MAPNEBGPRMover(Motion):
         else:
             beads_number_to_update = len(large_uncertainty_bead_index)
             # create beads and forces object.
-            beads_for_update = Beads(self.beads.natoms, beads_number_to_update)
+            # we compute bead forces one by one in case we use the centroid 'hack' trick.
+            beads_for_update = Beads(self.beads.natoms, 1)
             forces_for_update = self.forces.copy(beads_for_update, self.cell)
             
             training_x = np.copy(self.beads.q[large_uncertainty_bead_index])
             
-            beads_for_update.q[:] = training_x
-
+            ab_initio_beads_energy_for_update = np.zeros([beads_number_to_update])
+            ab_initio_forces_for_update = np.zeros([beads_number_to_update, 3 * self.beads.natoms])
+            for i in range(beads_number_to_update):
+                beads_for_update.q[0] = training_x[i]
+                ab_initio_beads_energy_for_update[i] = dstrip(forces_for_update.pots).copy()[0]
+                ab_initio_forces_for_update[i] = dstrip(forces_for_update.f).copy()[0] 
+                
             # compute ab-initio potential and forces.
-            ab_initio_beads_energy_for_update = dstrip(forces_for_update.pots).copy()
             ab_initio_shifted_energy_for_update = ab_initio_beads_energy_for_update - self.optarrays["energy_shift"]
-            ab_initio_forces_for_update = dstrip(forces_for_update.f).copy() 
             ab_initio_forces_for_update = ipi.utils.nebinstool.fixing_dofs(ab_initio_forces_for_update, self.optarrays["fix_dofs"])
             ab_initio_grad_x_for_update = - ab_initio_forces_for_update
 
