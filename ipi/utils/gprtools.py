@@ -938,6 +938,7 @@ class GPModelWithDerivativesWrapper:
                 )
 
 
+
     def update_training_variables(self, 
                                   filtered_new_train_inputs_index,
                                   new_train_inputs,

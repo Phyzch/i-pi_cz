@@ -593,18 +593,6 @@ class MAPNEBGPRMover(Motion):
         Compute potential and force for initial training data.
         We only compute 3 data point (including end beads) as initial training data to avoid computational cost scales with # of beads we add.
         """
-        # # choose all NEB beads as initial training data.
-        # # We will train the GPR model to optimize hyperparameter using the initial data.
-        # train_x = np.copy(self.beads.q)
-        # # potential energy has to shift relative to the energy_shift for training.
-        # train_V = np.copy(self.forces.pots) - self.optarrays["energy_shift"]
-        # train_grad = -np.copy(dstrip(self.forces.f))
-        # train_grad = ipi.utils.nebinstool.fixing_dofs(train_grad, self.optarrays["fix_dofs"])
-        # # count the # of ab-initio calculation we have done.
-        # SharedData.ab_initio_bead_calculation_number = (
-        #     SharedData.ab_initio_bead_calculation_number + self.beads.nbeads
-        # )
-
         # choose two end beads and the bead in the middle as initial training data.
         # We will train the GPR model to optimize hyperparameter using the initial data.
         initial_bead_number = 3 
