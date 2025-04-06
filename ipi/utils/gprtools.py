@@ -59,14 +59,13 @@ def predict_latent_function_gp_with_derivative(
 
         # return covariance matrix for each data set.
         # shape: [data_num, model.output_dim, model.output_dim]
-        test_covariance_list = [] 
+        test_covariance_list = torch.zeros([data_num, model.output_dim, model.output_dim])
         for i in range(data_num):
             index = np.arange(i, model.output_dim * data_num, data_num)
             index_2d = np.meshgrid(index, index, indexing= 'ij')
             test_data_point_covariance = test_covariance[index_2d[0], index_2d[1]]
-            test_covariance_list.append(test_data_point_covariance)
-        test_covariance_list = torch.tensor(np.array(test_covariance_list))
-
+            test_covariance_list[i] = test_data_point_covariance
+        
     if covar_bool:
         return test_mean, test_covariance_list
     else:
