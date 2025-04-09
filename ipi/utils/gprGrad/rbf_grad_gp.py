@@ -420,7 +420,7 @@ def train_gpr(model: GPModelWithDerivatives,
         output = model(train_inputs)
         # calculate the loss function. here the returned loss is a torch.tensor.
         loss = -mll(output, train_targets)
-        loss_value = loss.item()
+        loss_value = loss.detach().item()
         loss_value_list.append(loss_value)
 
         if (
