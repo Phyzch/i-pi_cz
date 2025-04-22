@@ -256,7 +256,7 @@ class FixInternalDofs(object):
 
         train_inputs_change1 = np.abs(sq * (vh @ train_x_change))
         train_inputs_change2 = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
-        # we use whichever is smaller : the change within internal coordinate or the change infered from cartesian coordinate
+        # we use whichever is smaller : the change within internal coordinate or the change inferred from cartesian coordinate
         # as the criterion to fix internal dofs.
         train_inputs_change = np.min([train_inputs_change1, train_inputs_change2], axis= 0)
         

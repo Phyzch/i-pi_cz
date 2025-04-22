@@ -486,7 +486,7 @@ elif case == "TS":
         Qrot = 1.0
 
     logQvib = -np.sum(
-        np.log(2 * np.sinh((beta * hbar * np.sqrt(np.delete(hess_eigval, 0)) / 2.0)))  # np.delete(hess_eigval, 0) will return positive hessian eigenvalue at TS
+        np.log(2 * np.sinh((beta * hbar * np.sqrt(np.abs(np.delete(hess_eigval, 0))) / 2.0)))  # np.delete(hess_eigval, 0) will return positive hessian eigenvalue at TS
     )
 
     U = pots.sum() - V0

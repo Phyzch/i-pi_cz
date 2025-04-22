@@ -599,8 +599,7 @@ class MAPNEBGPRMover(Motion):
         nbeads = self.beads.nbeads
         # compute forces one by one in case we use the 'centroid' trick to avoid 
         # computing forces for all beads to converge the path.
-        self.initial_data_bead = Beads(self.beads.natoms, 1)
-        self.initial_data_forces = self.forces.copy(self.initial_data_bead, self.cell)
+        self.initial_data_bead = Beads(self.beads.natoms, initial_bead_number)
         
         train_x = np.zeros([initial_bead_number, np.shape(self.beads.q)[1]])
         train_V = np.zeros([initial_bead_number])
@@ -608,9 +607,10 @@ class MAPNEBGPRMover(Motion):
         bead_index = np.linspace(0, nbeads - 1, initial_bead_number).astype(int)
         for i in range(initial_bead_number):
             train_x[i] = self.beads.q[bead_index[i]]
-            self.initial_data_bead.q[0] = train_x[i]
-            train_V[i] = np.copy(self.initial_data_forces.pots)[0] - self.optarrays["energy_shift"]
-            train_grad[i] = - np.copy(dstrip(self.initial_data_forces.f))[0]
+            self.initial_data_bead.q[i] = train_x[i]
+            self.gpr_beads.q[0] = train_x[i]
+            train_V[i] = np.copy(self.gpr_forces.pots)[0] - self.optarrays["energy_shift"]
+            train_grad[i] = - np.copy(dstrip(self.gpr_forces.f))[0]
 
         # potential energy has to shift relative to the energy_shift for training.
         train_grad = ipi.utils.nebinstool.fixing_dofs(train_grad, self.optarrays["fix_dofs"])
@@ -643,7 +643,6 @@ class MAPNEBGPRMover(Motion):
             # used to test the overfitting/ underfitting of the GPR model.
             bead_number_to_test = 3
             self.initial_data_bead = Beads(self.beads.natoms, bead_number_to_test)
-            self.initial_data_forces = self.forces.copy(self.initial_data_bead, self.cell)
 
             for i in range(bead_number_to_test):
                 self.initial_data_bead.q[i] = train_x[i]
@@ -738,21 +737,16 @@ class MAPNEBGPRMover(Motion):
 
         predicted_forces = -predicted_grad
 
-        ab_initio_V_shift = self.initial_data_forces.pots - self.optarrays["energy_shift"]
-        ab_initio_forces = self.initial_data_forces.f
+        initial_bead_number = self.initial_data_bead.nbeads
+        
+        # check the training error.  
+        ab_initio_V_shift = np.copy(self.gpr_model.train_cartesian_targets[:initial_bead_number,0])
+        ab_initio_forces = np.copy(-self.gpr_model.train_cartesian_targets[:initial_bead_number,1:])
 
         print("\n")
         print(
             "@initial gpr training info: check the overfitting and underfitting of kernel length scale"
         )
-
-        # check the force noise and potential noise. We can see for force noise of certain internal coordinate, it is quite large.
-        # force_range = self.gpr_model.output_normalized_force_range()
-        # V_noises, force_noises = self.gpr_model.output_fitted_gpr_model_noises()
-        # force_noises_ratio = force_noises / force_range
-        # print("potential noise amplitude: " + str(V_noises))
-        # print("force noise ratio  (amplitude / range): " + str(force_noises_ratio))
-        # print("internal coordinate force range: " + str(force_range))
 
         # check the difference between ab-initio potential V and the predicted potential V:
         V_error = np.abs(ab_initio_V_shift - predicted_V_shift) / np.abs(
@@ -774,9 +768,8 @@ class MAPNEBGPRMover(Motion):
         print("@initial gpr training info: Test Overfitting of GPR model.")
         print("The error in test set can be large if we start the model with a small number of data.")
         print("In this case, the test data is out of trust region of the model.")
-        nbeads = self.initial_data_bead.nbeads
 
-        if nbeads >= 2:
+        if initial_bead_number >= 2:
             test_q = self.initial_data_bead.q[0] * 1 / 4 + self.initial_data_bead.q[1] * 3 / 4
             print("q[0] * 1/4 + q[1] * 3/4")
             (
@@ -796,7 +789,7 @@ class MAPNEBGPRMover(Motion):
                 SharedData.ab_initio_bead_calculation_number + 1
             )   
 
-        if nbeads >= 4:
+        if initial_bead_number >= 4:
             test_q = self.beads.q[3] * 1 / 4 + self.beads.q[2] * 3 / 4
             print("q[3] * 1/4 + q[2] * 3/4")
             (
