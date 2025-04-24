@@ -977,7 +977,7 @@ class MAPNEBGPRMover(Motion):
                 SharedData.ab_initio_bead_calculation_number + beads_number_to_update
             )
 
-            # check whether the updated ab-initio forces are close to gpr predicted forces. 
+            # check whether ab-initio forces are close to gpr predicted forces. 
             beads_forces_for_update = beads_forces[large_uncertainty_bead_index]
             force_diff_list = beads_forces_for_update - ab_initio_forces_for_update
             self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis= 1)
@@ -985,6 +985,15 @@ class MAPNEBGPRMover(Motion):
             self.gpr_force_amplitude_list = np.linalg.norm(beads_forces_for_update, axis= 1)
             self.force_diff_ratio_list = (
                 self.force_diff_amplitude_list / self.ab_initio_force_amplitude_list
+            )
+
+            # check whether after update the model, the predicted forces are close to ab-initio forces.
+            _, beads_grad_x_after_update, _, _ = self.gpr_model.predict_latent_function(self.beads.q[large_uncertainty_bead_index])
+            beads_forces_after_update = - beads_grad_x_after_update
+            force_diff_after_update_list = beads_forces_after_update - ab_initio_forces_for_update
+            self.force_diff_amplitude_after_update_list = np.linalg.norm(force_diff_after_update_list, axis= 1)
+            self.force_diff_ratio_after_update_list = (
+                self.force_diff_amplitude_after_update_list / self.ab_initio_force_amplitude_list
             )
 
             # check the uncertainty of force for updated potential.
@@ -3146,7 +3155,7 @@ class RP_MAP(object):
             The selection of the training data is based on the force uncertainty.
         """
         total_data_set_number = 50
-        testing_data_number = 10
+        testing_data_number = 5
         # we interpolate the converged LI-NEB path with N + 2 data point, where 2 end data point is already in the training set of GPR model (as they are end points for LI-NEB path)
         LINEB_path_x, _ = ipi.utils.nebinstool.path_cubic_interpolation(
             self.neb_beads.q, total_data_set_number + 2
@@ -3163,7 +3172,7 @@ class RP_MAP(object):
 
         # create beads and forces object for testing and training data set
         test_beads = Beads(
-            self.neb_beads.natoms, testing_data_number
+            self.neb_beads.natoms, 1
         )  # bead object for instanton ring polymer
         test_forces = self.rp_forces.copy(test_beads, self.dcell)
 
@@ -3171,8 +3180,11 @@ class RP_MAP(object):
         train_forces = self.rp_forces.copy(train_beads, self.dcell)
 
         # compute the ab-initio forces at the test location:
-        test_beads.q[:] = test_x
-        ab_initio_test_data_f = dstrip(test_forces.f).copy()
+        ab_initio_test_data_f = np.zeros([testing_data_number, 3 * self.rp_beads.natoms])
+        for i in range(testing_data_number):
+            test_beads.q[0] = test_x[i]
+            ab_initio_test_data_f[i] = dstrip(test_forces.f).copy()[0]
+
         ab_initio_test_data_f_magnitude = np.linalg.norm(
             ab_initio_test_data_f, axis=1
         )  # magnitude of the ab initio force
