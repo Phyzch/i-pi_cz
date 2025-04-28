@@ -3288,6 +3288,16 @@ class RP_MAP(object):
         ipi.utils.nebinstgprtool.store_training_data(
             train_x, train_V_to_store, train_f_to_store, prefix="neb_final_gpr_training"
         )
+
+        neb_gpr_folder_path = "neb_final_gpr_training"
+        ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_model(self.gpr_model,
+                                                                            neb_gpr_folder_path)
+        
+        # store fixed dofs.
+        ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_model(
+            self.gpr_model,
+            prefix = neb_gpr_folder_path
+        )
     
     def construct_selective_hessian_calculator(self, candidate_hessian_point_x):
         """

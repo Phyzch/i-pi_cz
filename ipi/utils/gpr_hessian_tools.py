@@ -416,20 +416,20 @@ class FixInternalDofs(object):
                     if (train_inputs_change[i] > self.fix_internal_dofs_cutoff) and
                     (train_inputs_change[i] < rigid_internal_dofs_cutoff)
                 ]
-            )
+            ).astype(int)
 
-            self.fixed_internal_dofs = np.array([i for i in self.fixed_internal_dofs if i not in self.rigid_internal_dofs])
+            self.fixed_internal_dofs = np.array([i for i in self.fixed_internal_dofs if i not in self.rigid_internal_dofs]).astype(int)
 
             print(f"@gpr_hessian_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
             print(f"@gpr_hessian_model: rigid internal dofs {self.rigid_internal_dofs}")
         else:
             self.fixed_internal_dofs = np.array(
                 []
-            )
+            ).astype(int)
 
             self.rigid_internal_dofs = np.array(
                 []
-            )
+            ).astype(int)
 
         self.constrained_internal_dofs = np.concatenate(
             [self.fixed_internal_dofs,
