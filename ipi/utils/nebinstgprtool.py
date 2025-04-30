@@ -1052,9 +1052,9 @@ def analyze_force_error(coord,
     print(f"{data_type}: error in free moving internal dofs for force prediction: (GPR model): {free_moving_force_error}")
 
     print("\n")
-    print(f"{data_type}: absolute error for force prediction {df}\n")
-    print(f"{data_type}: absolute error in constrained internal dofs for force prediction (linear regression): {absolute_constrained_force_error}")
-    print(f"{data_type}: absolute error in free moving internal dofs for force prediction (GPR model): {absolute_free_moving_force_error}")
+    # print(f"{data_type}: absolute error for force prediction {df}\n")
+    # print(f"{data_type}: absolute error in constrained internal dofs for force prediction (linear regression): {absolute_constrained_force_error}")
+    # print(f"{data_type}: absolute error in free moving internal dofs for force prediction (GPR model): {absolute_free_moving_force_error}")
 
     pass 
 

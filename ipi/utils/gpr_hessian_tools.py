@@ -7,7 +7,7 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 import torch
 import numpy as np
 # from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
-from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
+from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer # type: ignore
 from .gprHessian.RBFHessian_gp import GPModelWithHessians, train_gpr_model
 from .gprHessian.RBFHessian_utils import (
     take_upper_triangular_part,
@@ -507,7 +507,11 @@ class FixInternalDofs(object):
         # reg_model = LinearRegression().fit(x,y)
 
         # ridge regression.
-        reg_model = lin_model(degree= 1, regularization= True, lambda_= force_ridge_regularization_alpha)
+        if force_ridge_regularization_alpha > 0:
+            reg_model = lin_model(degree= 1, regularization= True, lambda_= force_ridge_regularization_alpha)
+        else:
+            reg_model = lin_model(degree=1, regularization= False)
+    
         reg_model.fit(x, y)
 
         return reg_model
