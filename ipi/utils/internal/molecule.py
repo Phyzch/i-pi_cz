@@ -161,7 +161,7 @@ class NewMolecule(Molecule):
     def build_bonds(self):
         """ 
         Build the bond connectivity graph.
-        Simplified version without using grid algorithm.
+        Simplified version without using grid algorithm. Also change the unit (unit is bohr in i-PI.)
         adapted from Molecule.build_bonds() function from geometric
         """
         Fac = self.top_settings['Fac']  # 1.2 by default.
@@ -171,7 +171,8 @@ class NewMolecule(Molecule):
         # Molecule object can have its own set of radii that overrides the global ones
         # Here .get(a, b) will return top_settings['radii'] if a exist, otherwise return b, which is default radii.
         R = np.array([self.top_settings['radii'].get(i, (Radii[Elements.index(i)-1] if i in Elements else 0.0)) for i in self.elem])
-        # convert R from angstrom to Bohr unit
+        # convert R from angstrom to Bohr unit.
+        # Bohr unit is used in i-PI socket. 
         R = R * ang2bohr
 
         # Create a list of 2-tuples corresponding to combinations of atomic indices.
@@ -238,13 +239,3 @@ class NewMolecule(Molecule):
         self.Data['bonds'] = sorted(list(set(bondlist))) 
 
         self.built_bonds = True
-
-
-    def distance_matrix(self, pbc=True):
-        """ Obtain distance matrix between all pairs of atoms. """
-        # (0,1), (0,2), ..., (0, self.na - 1), (1, 2), ... (1, self.na - 1)
-        AtomIterator = np.ascontiguousarray(np.vstack((np.fromiter(itertools.chain(*[[i]*(self.na-i-1) for i in range(self.na)]),dtype=np.int32),
-                                                    np.fromiter(itertools.chain(*[range(i+1,self.na) for i in range(self.na)]),dtype=np.int32))).T)
-
-        drij = AtomContact(self.xyz[np.newaxis, :], AtomIterator)
-        return AtomIterator, drij
