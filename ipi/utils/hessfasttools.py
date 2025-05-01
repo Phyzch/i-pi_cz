@@ -7,7 +7,7 @@ For flexible internal dofs, we compute hessian for all beads provided. """
 # i-PI Copyright (C) 2014-2015 i-PI developers
 # See the "licenses" directory for full license information.
 
-from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer
+from ipi.utils.internal.ZmatrixInternal import non_redundant_coordinate_transformer
 import torch
 import h5py
 import os

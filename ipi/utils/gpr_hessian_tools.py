@@ -7,7 +7,7 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 import torch
 import numpy as np
 # from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
-from ipi.utils.internal.internaltools import non_redundant_coordinate_transformer # type: ignore
+from ipi.utils.internal.ZmatrixInternal import non_redundant_coordinate_transformer # type: ignore
 from .gprHessian.RBFHessian_gp import GPModelWithHessians, train_gpr_model
 from .gprHessian.RBFHessian_utils import (
     take_upper_triangular_part,
