@@ -43,8 +43,9 @@ import numpy as np
 from numpy.linalg import multi_dot
 from ipi.utils.messages import warning, info 
 
-from ipi.utils.internal.nifty import click, commadash, ang2bohr, bohr2ang, logger, pvec1d, pmat2d
-from ipi.utils.internal.molecule import Molecule, PeriodicTable, Elements, Radii 
+from geometric.nifty import click, commadash, ang2bohr, bohr2ang, logger, pvec1d, pmat2d
+from ipi.utils.internal.molecule import NewMolecule
+from geometric.molecule import PeriodicTable
 
 ## Some vector calculus functions
 def unit_vector(a):
@@ -1699,7 +1700,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
     We do not implement TRIC and constraint in the current class. 
     This is to simplify the implementation.
     """
-    def __init__(self, molecule: Molecule, connect=True, addcart=False, **kwargs):
+    def __init__(self, molecule: NewMolecule, connect=True, addcart=False, **kwargs):
         super(PrimitiveInternalCoordinates, self).__init__()
         # connect = True corresponds to "traditional" internal coordinates with minimum spanning bonds
         # connect = False, addcart = True corresponds to HDLC
@@ -1715,7 +1716,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         # Here each molecule object corresponds to one frame in geomeTRIC.
         self.makePrimitives(molecule)
 
-    def makePrimitives(self, molecule: Molecule):
+    def makePrimitives(self, molecule: NewMolecule):
         """
         Make primitive internal coordinates based on atom connectivity topology of the molecule.
         """
@@ -1758,7 +1759,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         # The dihedral angle internal coordinate is added to self.Internals.
         self.add_dihedral(molecule, noncov, coords)
 
-    def add_noncov(self, molecule: Molecule, D: dict):
+    def add_noncov(self, molecule: NewMolecule, D: dict):
         """
         add non-covalent bond between molecular fragments.
         This is to treat inter-molecular interaction.
@@ -1767,7 +1768,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         in how we generate internal coordinates that characterize inter-molecular interaction.
         Here we only implement the traditional way.
 
-        :param: molecule: Molecule class object. topology of atom connectivity.
+        :param: molecule: NewMolecule class object. topology of atom connectivity.
         :param: D: dictionary of distance between atom pairs.
         """
         # create a weighted graph. The weight of edge is intr-atom distance r.
@@ -1809,7 +1810,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
 
         return noncov 
     
-    def add_angle(self, molecule: Molecule, noncov, coords):
+    def add_angle(self, molecule: NewMolecule, noncov, coords):
         """
         Add angles and linear angles for bonded atoms.
         :param: molecule: Molecular object. Contains information about connectivity between atoms.
@@ -1864,7 +1865,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         return AngDict 
 
     def add_out_of_plane(self, 
-                         molecule:Molecule, 
+                         molecule:NewMolecule, 
                          noncov,
                          coords):
         """
@@ -1896,7 +1897,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         
 
     def add_dihedral(self,
-                     molecule: Molecule,
+                     molecule: NewMolecule,
                      noncov,
                      coords):
         """
@@ -2041,7 +2042,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         return not self.__eq__(other)
 
 class DelocalizedInternalCoordinates(InternalCoordinates):
-    def __init__(self, molecule: Molecule,  connect= True, addcart=False):
+    def __init__(self, molecule: NewMolecule,  connect= True, addcart=False):
         super(DelocalizedInternalCoordinates, self).__init__()
         # HDLC is given by (connect = False, addcart = True)
         # Standard DLC is given by (connect = True, addcart = False)
