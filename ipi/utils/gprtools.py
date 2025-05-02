@@ -7,7 +7,7 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 import torch
 import gpytorch
 import numpy as np
-# from ipi.utils.CoulombInternal import non_redundant_coordinate_transformer
+# from ipi.utils.internal.CoulombInternal import non_redundant_coordinate_transformer
 from ipi.utils.internal.ZmatrixInternal import non_redundant_coordinate_transformer
 import ipi.utils.depend
 from ipi.utils.depend import dstrip

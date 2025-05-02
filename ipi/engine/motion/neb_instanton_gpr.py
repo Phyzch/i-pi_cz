@@ -23,7 +23,7 @@ from ipi.utils.messages import verbosity, info, warning
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
 from ipi.utils.nebinstool import RK4
-import ipi.utils.CoulombInternal  # 1/|ri-rj| : Coloumb matrix.
+import ipi.utils.internal.CoulombInternal  # 1/|ri-rj| : Coloumb matrix.
 import ipi.utils.internal.ZmatrixInternal  # primitive internal coordinate.
 import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
@@ -575,7 +575,7 @@ class MAPNEBGPRMover(Motion):
         # create coordinate_transformer, which handles the transformation from the Cartesian coordinate to internal coordinate.
         # This is for Coulomb matrix type internal coordinate.
         if self.options["internal_coord"] == "Coulomb":
-            self.coordinate_transformer = ipi.utils.CoulombInternal.non_redundant_coordinate_transformer(
+            self.coordinate_transformer = ipi.utils.internal.CoulombInternal.non_redundant_coordinate_transformer(
                 self.beads.natoms, ref_x
             )
         elif self.options["internal_coord"] == "bond":

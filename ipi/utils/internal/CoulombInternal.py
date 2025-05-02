@@ -1,5 +1,5 @@
 """
-packages for transformation between Cartesian coordinate (x) and internal coordinate q.
+packages for transformation between Cartesian coordinate (x) and internal coordinate q using inverse distance matrix.
 See section 2.4 of Faraday Discuss., 2018, 212, 237 and J. Chem. Phys. 105, 192–212 (1996)
 Code written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory, 2024.
 """
