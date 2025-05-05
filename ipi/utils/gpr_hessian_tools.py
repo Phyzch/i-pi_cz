@@ -352,7 +352,8 @@ class FixInternalDofs(object):
         gpr_fix_internal_dofs_bool: bool,
         gpr_fix_internal_dofs_cutoff: float,
         rigid_internal_dofs_cutoff: float,
-        gpr_fixed_internal_dofs = None,
+        gpr_fixed_internal_dofs= None,
+        gpr_rigid_internal_dofs= None,
         force_ridge_regularization_alpha: float = 0.1,
         hessian_ridge_regularization_alpha: float = 0.1
     ):
@@ -410,13 +411,17 @@ class FixInternalDofs(object):
                 self.fixed_internal_dofs = gpr_fixed_internal_dofs
                 print("@gpr_hessian_model: load fixed internal dofs.")
             
-            self.rigid_internal_dofs = np.array(
-                [
-                    i for i in range(self.input_dim)
-                    if (train_inputs_change[i] > self.fix_internal_dofs_cutoff) and
-                    (train_inputs_change[i] < rigid_internal_dofs_cutoff)
-                ]
-            ).astype(int)
+            if gpr_rigid_internal_dofs is None:
+                self.rigid_internal_dofs = np.array(
+                    [
+                        i for i in range(self.input_dim)
+                        if (train_inputs_change[i] > self.fix_internal_dofs_cutoff) and
+                        (train_inputs_change[i] < rigid_internal_dofs_cutoff)
+                    ]
+                ).astype(int)
+            else:
+                self.rigid_internal_dofs = gpr_rigid_internal_dofs
+                print("@gpr_hessian_model: load rigid internal dofs")
 
             self.fixed_internal_dofs = np.array([i for i in self.fixed_internal_dofs if i not in self.rigid_internal_dofs]).astype(int)
 
@@ -851,6 +856,7 @@ class GPModelWithHessiansWrapper:
         gpr_fix_internal_dofs_cutoff= 1e-4,
         gpr_rigid_internal_dofs_cutoff= 5e-2,
         gpr_fixed_internal_dofs= None,
+        gpr_rigid_internal_dofs= None,
         ridge_regularization_alpha= {
                 "force": 0.1,
                 "hessian": 0.1,
@@ -977,6 +983,7 @@ class GPModelWithHessiansWrapper:
             gpr_fix_internal_dofs_cutoff,
             gpr_rigid_internal_dofs_cutoff,
             gpr_fixed_internal_dofs,
+            gpr_rigid_internal_dofs,
             self.force_ridge_regularization_alpha,
             self.hessian_ridge_regularization_alpha 
         )
@@ -1914,3 +1921,10 @@ class GPModelWithHessiansWrapper:
         """
         fixed_internal_dofs = np.copy(self.FixingDofs.fixed_internal_dofs)
         return fixed_internal_dofs
+    
+    def output_rigid_internal_dofs(self):
+        """
+        output internal dofs that are rigid, which will be modeled by Linear regression.
+        """
+        rigid_internal_dofs = np.copy(self.FixingDofs.rigid_internal_dofs)
+        return rigid_internal_dofs

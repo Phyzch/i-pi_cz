@@ -3475,8 +3475,9 @@ class RP_MAP(object):
         ) = ipi.utils.nebinstgprtool.read_training_data_with_hessian(
             self.read_gpr_hessian_folder
         )
-
+        # load fixed internal dofs and rigid internal dofs
         gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(self.read_gpr_hessian_folder)
+        gpr_rigid_internal_dofs = ipi.utils.nebinstgprtool.read_rigid_internal_dofs(self.read_gpr_hessian_folder)
 
         training_V_shifted = training_V - self.energy_shift
         training_grads = -training_forces
@@ -3527,6 +3528,7 @@ class RP_MAP(object):
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
                 gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
+                gpr_rigid_internal_dofs= gpr_rigid_internal_dofs,
                 ridge_regularization_alpha= self.ridge_regularization_alpha,
                 singular_value_cutoff= self.gpr_covar_inverse_nugget
             )
@@ -3614,8 +3616,10 @@ class RP_MAP(object):
         # cross validation data.
         cv_x, cv_V, cv_force, cv_hessian_index_list, cv_hessian_data = cv_set 
         
-
+        # read fixed internal dofs and rigid internal dofs 
         gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(self.read_gpr_hessian_folder)
+        gpr_rigid_internal_dofs = ipi.utils.nebinstgprtool.read_rigid_internal_dofs(self.read_gpr_hessian_folder)
+
         training_grads = - training_forces 
         
         # choose the first data point with hessian information as the reference point for mean function.
@@ -3649,6 +3653,7 @@ class RP_MAP(object):
                 gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
                 gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
+                gpr_rigid_internal_dofs= gpr_rigid_internal_dofs,
                 ridge_regularization_alpha= self.ridge_regularization_alpha,
                 singular_value_cutoff= self.gpr_covar_inverse_nugget
             )
@@ -3912,6 +3917,11 @@ class RP_MAP(object):
             )
             # store fixed internal dofs in the gpr model
             ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_hessian_model(
+                self.gpr_hessian_model,
+                self.data_destination_folder
+            )
+            # store rigid internal dofs in the gpr model
+            ipi.utils.nebinstgprtool.store_rigid_internal_dofs_gpr_hessian_model(
                 self.gpr_hessian_model,
                 self.data_destination_folder
             )

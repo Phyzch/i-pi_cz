@@ -355,6 +355,19 @@ def store_fixed_internal_dofs_gpr_hessian_model(gpr_hessian_model: GPModelWithHe
             f.write(str(dof) + " ")
         f.write('\n')
     
+def store_rigid_internal_dofs_gpr_hessian_model(gpr_hessian_model: GPModelWithHessiansWrapper,
+                                                prefix):
+    """
+    store rigid internal dofs in gpr hessian model.
+    """
+    rigid_internal_dofs = gpr_hessian_model.output_rigid_internal_dofs()
+
+    file_path = os.path.join(prefix, "rigid_internal_dofs.txt")
+    with open(file_path, "w") as f:
+        for dof in rigid_internal_dofs:
+            f.write(str(dof) + " ")
+        f.write("\n")
+
 
 def store_candidate_hessian_data_coordinate(
     candidate_hessian_point_x, used_hessian_index_in_candidate_list, prefix
@@ -443,7 +456,22 @@ def read_fixed_internal_dofs(prefix):
     
     return fixed_internal_dofs
 
+def read_rigid_internal_dofs(prefix):
+    """
+    read rigid internal dofs from file.
+    If file exists, read the data.
+    else: return None.
+    """
+    file_path = os.path.join(prefix, "rigid_internal_dofs.txt")
 
+    rigid_internal_dofs = None 
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            lines = f.readlines()
+            rigid_internal_dofs = np.array(extract_number_from_line(lines[0])).astype(int)
+
+    return rigid_internal_dofs
+    
 
 def read_candidate_hessian_data_coordinate(prefix):
     """
