@@ -3327,12 +3327,14 @@ class RP_MAP(object):
                 new_train_x= new_train_x_rigid_mode,
                 new_rp_bead = new_rigid_mode_rp_bead,
                 new_rp_force = new_rigid_mode_rp_force,
-                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode
+                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode,
+                ridge_regularization_alpha= self.ridge_regularization_alpha["hessian"]
             )
         else:
             self.selective_hessian_calculator.rigid_modes_hessian_preprocess(
                 prefix= self.read_gpr_hessian_folder,
-                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode
+                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode,
+                ridge_regularization_alpha= self.ridge_regularization_alpha["hessian"]
             )
 
     def construct_new_gpr_hessian_model(self,
@@ -3551,6 +3553,7 @@ class RP_MAP(object):
                 ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
                     self.gpr_hessian_model, self.read_gpr_hessian_folder
                 )
+
         else:
             print("We are going to train the gpr model with hessian data.\
                     This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
@@ -3559,9 +3562,16 @@ class RP_MAP(object):
             ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
                     self.gpr_hessian_model, self.read_gpr_hessian_folder
             )
+            
 
         # store fixed internal dofs.
         ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_hessian_model(
+            self.gpr_hessian_model,
+            self.read_gpr_hessian_folder
+        )
+
+        # store rigid internal dofs in the gpr model
+        ipi.utils.nebinstgprtool.store_rigid_internal_dofs_gpr_hessian_model(
             self.gpr_hessian_model,
             self.read_gpr_hessian_folder
         )

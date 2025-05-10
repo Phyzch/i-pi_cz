@@ -293,6 +293,17 @@ class SelectiveHessianCalculation:
 
         self.rigid_dofs_reg_model = rigid_dofs_reg_model
         self.cross_term_reg_model = cross_term_reg_model
+
+        # compute training data prediction error
+        y_predicted = rigid_dofs_reg_model.predict(x)
+        y_diff = y_predicted - y 
+        rigid_dofs_hess_training_error = np.linalg.norm(y_diff, axis= 1) / np.linalg.norm(y, axis= 1)
+
+        y1_predicted = cross_term_reg_model.predict(x1)
+        y1_diff = y1_predicted - y1 
+        cross_term_hess_training_error = np.linalg.norm(y1_diff, axis= 1) / np.linalg.norm(y1, axis= 1)
+        print(f"@rigid_dofs fast_hess: training error for rigid dofs hessian (block diagonal): {rigid_dofs_hess_training_error}")
+        print(f"@rigid_dofs fast_hess: training error for rigid dofs hessian (cross term): {cross_term_hess_training_error}")
     
     def linear_regression_cross_validation(self,
                                            ridge_regularization_alpha= 0.1):

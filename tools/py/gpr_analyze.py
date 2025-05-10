@@ -14,7 +14,9 @@ from ipi.utils.messages import verbosity, info
 import ipi.utils.nebinstgprtool
 import ipi.utils.gpr_hessian_tools
 from ipi.engine.simulation import Simulation
-from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
+import ipi.utils.internal.CoulombInternal
+import ipi.utils.internal.ZmatrixInternal
+
 from ipi.utils.depend import dstrip
 
 def parse_input():
@@ -54,14 +56,21 @@ def parse_input():
         help= "path to the coordinate file. Coordinate of ab initio hessian."
     )
 
+    parser.add_argument(
+        "-i",
+        "--internal_coordinate",
+        default= "bond",
+        help= "choice of internal coordinate (Coulomb matrix (Coulomb) or Zmatrix (bond))."
+    )
+
     args = parser.parse_args()
     inputt = args.input
     hessian_folder = args.hessian_folder 
     bead_index = int(args.bead_index_at_ts)
     ab_initio_hessian_file = args.file
     ab_initio_hessian_coordinate_file = args.test_coord_file
-
-    return inputt, hessian_folder, ab_initio_hessian_file, ab_initio_hessian_coordinate_file, bead_index 
+    internal_coordinate = args.internal_coordinate
+    return inputt, hessian_folder, ab_initio_hessian_file, ab_initio_hessian_coordinate_file, bead_index, internal_coordinate 
 
 def read_instanton_data(inputt):
     """
@@ -78,7 +87,7 @@ def read_instanton_data(inputt):
 
     return energy_shift, rp_beads_q, motion 
 
-def read_gpr_model(hessian_folder, energy_shift, motion, bead_index):
+def read_gpr_model(hessian_folder, energy_shift, motion, bead_index, internal_coordinate):
     """
     read and construct gaussian process regression model
     """
@@ -102,19 +111,29 @@ def read_gpr_model(hessian_folder, energy_shift, motion, bead_index):
 
     # read parameter from RESTART file.
     natoms = motion.beads.natoms
+    names = dstrip(motion.beads.names).copy().tolist()
     gpr_SE_kernel_number = motion.options["gpr_SE_kernel_number"]
     gpr_kernel_outputscale = motion.optarrays["gpr_kernel_outputscale"]
     gpr_kernel_lengthscale_ratio = motion.optarrays["gpr_kernel_lengthscale_ratio"]
     gpr_noise_std = motion.optarrays["gpr_noise_std"]
     gpr_fix_internal_dofs_bool = motion.options["gpr_fix_internal_dofs_bool"]
     gpr_fix_internal_dofs_cutoff = motion.options["gpr_fix_internal_dofs_cutoff"] 
+    gpr_rigid_internal_dofs_cutoff = motion.options["gpr_rigid_internal_dofs_cutoff"]
+    gpr_covar_inverse_nugget = motion.optarrays["gpr_covar_inverse_nugget"]
+    ridge_regularization_alpha = motion.optarrays["ridge_regularization_alpha"]
+    fix_dofs = motion.optarrays["fix_dofs"]
 
     # generate coordinate transformer
     neb_bead_q = motion.beads.q 
     ref_x = dstrip(neb_bead_q[bead_index]).copy() 
-    coordinate_transformer = non_redundant_coordinate_transformer(
-            natoms, ref_x
-    )
+    if internal_coordinate == "bond":
+        coordinate_transformer = ipi.utils.internal.ZmatrixInternal.non_redundant_coordinate_transformer(
+            natoms, [ref_x], names
+        )
+    else:
+        coordinate_transformer = ipi.utils.internal.CoulombInternal.non_redundant_coordinate_transformer(
+                natoms, ref_x
+        )
 
     # construct the gaussian process regression model.
     gpr_hessian_model = (
@@ -126,6 +145,7 @@ def read_gpr_model(hessian_folder, energy_shift, motion, bead_index):
             hessian_index_list,
             natoms,
             coordinate_transformer,
+            fix_dofs,
             gpr_SE_kernel_number,
             gpr_kernel_outputscale,
             gpr_kernel_lengthscale_ratio,
@@ -137,7 +157,10 @@ def read_gpr_model(hessian_folder, energy_shift, motion, bead_index):
             ref_mean_hessian_x=ref_hessians,
             train_bool= False,
             gpr_fix_internal_dofs_bool= gpr_fix_internal_dofs_bool,
-            gpr_fix_internal_dofs_cutoff= gpr_fix_internal_dofs_cutoff
+            gpr_fix_internal_dofs_cutoff= gpr_fix_internal_dofs_cutoff,
+            gpr_rigid_internal_dofs_cutoff= gpr_rigid_internal_dofs_cutoff,
+            singular_value_cutoff= gpr_covar_inverse_nugget,
+            ridge_regularization_alpha= ridge_regularization_alpha
             )
     )
 
@@ -318,11 +341,12 @@ def analyze_gpr_predicted_hessian():
     """
     compute hessians of ring polymer beads
     """
-    inputt, hessian_folder, ab_initio_hessian_file, ab_initio_hessian_coordinate_file, bead_index  = parse_input()
+    inputt, hessian_folder, ab_initio_hessian_file, ab_initio_hessian_coordinate_file, bead_index, internal_coordinate  = parse_input()
 
     energy_shift, rp_beads_q, motion = read_instanton_data(inputt)
 
-    gpr_hessian_model, training_hessians, ref_x, hessian_index_list = read_gpr_model(hessian_folder, energy_shift, motion, bead_index)
+    gpr_hessian_model, training_hessians, ref_x, hessian_index_list = read_gpr_model(hessian_folder, energy_shift, motion, bead_index,
+                                                                                     internal_coordinate)
     
     # analyze the training error.
     analyze_train_error(
