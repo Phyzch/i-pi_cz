@@ -512,7 +512,7 @@ def read_candidate_grad_data_coordinate(prefix):
     assert os.path.exists(h5_file_path), "candidate grad data point file does not exist"
     
     with h5py.File(h5_file_path, "r") as h5f:
-        candidate_grad_point_x = h5f["candidate_grad_point_x"]
+        candidate_grad_point_x = np.array(h5f["candidate_grad_point_x"])
     
     # read the index of used point in candidate list.
     grad_index_file_name = os.path.join(
