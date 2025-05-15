@@ -46,11 +46,12 @@ def transform_1d_train_targets_into_pots_grads_hessians(
         hessian_triu = hessian_data.reshape([*batch_shape, M_H, hessian_triu_size])
 
         # generate 2d hessian matrix from upper triangle part of hessians.
-        triu_indices = torch.triu_indices(nactive, nactive)
+        triu_indices = torch.triu_indices(nactive, nactive).to(device= train_targets.device)
         triu_1d_indices = triu_indices[0] * nactive + triu_indices[1]
 
         upper_triangular_hessians = torch.zeros(
-            [*batch_shape, M_H, nactive * nactive], dtype=hessian_triu.dtype
+            [*batch_shape, M_H, nactive * nactive], dtype=hessian_triu.dtype,
+            device= train_targets.device
         )
         upper_triangular_hessians[..., triu_1d_indices] = hessian_triu
         upper_triangular_hessians = torch.reshape(
@@ -94,7 +95,7 @@ def take_upper_triangular_part(tensor):
 
     if type(tensor) == torch.Tensor:
         # torch.Tensor
-        triu_indices = torch.triu_indices(size1, size2)
+        triu_indices = torch.triu_indices(size1, size2).to(device= tensor.device)
         triu_1d_indices = triu_indices[0] * size2 + triu_indices[1]
         # take upper triangular part of last two dimensions of Hessian.
         upper_triangle_tensor = torch.index_select(

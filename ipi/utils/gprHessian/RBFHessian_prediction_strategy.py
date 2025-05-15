@@ -252,14 +252,17 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             self.hessian_triu_size
         )  # number of elements for upper triangle component of hessians.
 
-        # the index for potential, gradient and hessian of training data.
-        training_target_pots_index = torch.arange(start=0, end=M1)
+        # the index for potential, gradient and hessian of training data.i
+        device= joint_mean.device
+        training_target_pots_index = torch.arange(start=0, end=M1, device= device)
         training_target_grads_index = torch.arange(
-            start=(M1 + M2), end=(M1 + M2) + M1 * d
+            start=(M1 + M2), end=(M1 + M2) + M1 * d,
+            device= device
         )
         training_target_hessian_index = torch.arange(
             start=(M1 + M2) * (d + 1),
             end=(M1 + M2) * (d + 1) + MH_1 * hessian_triu_size,
+            device= device
         )
         training_target_index = torch.concat(
             (
@@ -271,13 +274,15 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         )
 
         # the index for potential, gradient and hessian of test data.
-        test_target_pots_index = torch.arange(start=M1, end=M1 + M2)
+        test_target_pots_index = torch.arange(start=M1, end=M1 + M2, device= device)
         test_target_grads_index = torch.arange(
-            start=(M1 + M2) + M1 * d, end=(M1 + M2) * (d + 1)
+            start=(M1 + M2) + M1 * d, end=(M1 + M2) * (d + 1),
+            device= device
         )
         test_target_hessian_index = torch.arange(
             start=(M1 + M2) * (d + 1) + MH_1 * hessian_triu_size,
             end=(M1 + M2) * (d + 1) + (MH_1 + MH_2) * hessian_triu_size,
+            device= device 
         )
         test_target_index = torch.concat(
             (

@@ -128,8 +128,8 @@ class MeanWithPotGradHessian(Mean):
         # compute hessian from upper triangle components of hessian.
         ref_hessian_triu = torch.zeros(*batch_shape, grad_size * grad_size).type(
             ref_hessian_upper_triangle.dtype
-        )
-        triu_indices = torch.triu_indices(grad_size, grad_size)
+        ).to(device= ref_hessian_upper_triangle.device)
+        triu_indices = torch.triu_indices(grad_size, grad_size).to(device= ref_coordinate.device)
         triu_1d_indices = triu_indices[0] * grad_size + triu_indices[1]
         ref_hessian_triu[..., triu_1d_indices] = ref_hessian_upper_triangle
         ref_hessian_triu = ref_hessian_triu.reshape(*batch_shape, grad_size, grad_size)

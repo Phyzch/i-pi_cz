@@ -257,7 +257,7 @@ class RBFKernelHessian(RBFKernel):
             )  # index of active dims of hessian.
         else:
             active_dims = np.arange(ndofs)
-        active_dims = torch.from_numpy(active_dims)
+        active_dims = torch.from_numpy(active_dims).to(device= x1.device)
 
         if M_H1 > 0:
             x1WithHessian = x1[

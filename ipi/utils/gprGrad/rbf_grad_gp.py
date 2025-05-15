@@ -44,6 +44,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         """
         self.input_dim = ard_num_dims
         self.output_dim = output_dims
+        self.device = train_inputs.device
         self.singular_value_cutoff = singular_value_cutoff
 
         # set the noise prior information and construct the likelihood class.
@@ -80,8 +81,8 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             likelihood_noise_variance / 10
         )  # we set the std of the prior distribution as 1/10 of the mean value.
 
-        noise_mean_tensor = torch.from_numpy(likelihood_noise_variance_mean)
-        noise_std_tensor = torch.from_numpy(likelihood_noise_variance_std)
+        noise_mean_tensor = torch.from_numpy(likelihood_noise_variance_mean).to(device= self.device)
+        noise_std_tensor = torch.from_numpy(likelihood_noise_variance_std).to(device= self.device)
 
         # set the prior of the noise as a normal distribution.
         task_noise_prior = gpytorch.priors.NormalPrior(
@@ -107,7 +108,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             has_task_noise=True,
             has_global_noise=False,
         )
-
+        likelihood = likelihood.to(device= self.device)
         # set initial value of task noises as the mean value of the prior.
         likelihood.task_noises = noise_mean_tensor
 
@@ -119,7 +120,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         set the initial value of the mean function as the mean of target potential V.
         """
         self.mean_module = (
-            gpytorch.means.ConstantMeanGrad()
+            gpytorch.means.ConstantMeanGrad().to(device= self.device)
         )  # mean function for Gaussian Processes using gradient information
         # set initial value of mean constant
         train_target_func = (
@@ -128,7 +129,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         mean_constant_estimate = np.mean(train_target_func)
         self.mean_module.constant = torch.nn.Parameter(
             torch.ones(1) * mean_constant_estimate
-        )
+        ).to(device= self.device)
 
     def _set_gpr_kernel(
         self,
@@ -194,11 +195,11 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                 ard_num_dims=ard_num_dims,
                 lengthscale_prior=lengthscale_prior,
                 lengthscale_constraint=lengthscale_constraint,
-            )
+            ).to(device= self.device)
 
             covar_module = gpytorch.kernels.ScaleKernel(
                 base_kernel, outputscale_prior=outputscale_prior
-            )
+            ).to(device= self.device)
 
             # Initialize lengthscale and output scale to the mean of priors
             covar_module.base_kernel.lengthscale = lengthscale_prior.mean

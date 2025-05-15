@@ -356,8 +356,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self.likelihood_hessian_noise_rank = likelihood_hessian_noise_rank
 
         # pot noise prior and pot noise constraint
-        pot_noise_mean = torch.from_numpy(likelihood_pot_noise_var)
-        pot_noise_std = torch.from_numpy(likelihood_pot_noise_var / 10)
+        device = train_inputs.device 
+        pot_noise_mean = torch.from_numpy(likelihood_pot_noise_var).to(device= device)
+        pot_noise_std = torch.from_numpy(likelihood_pot_noise_var / 10).to(device= device)
         pot_noise_prior = gpytorch.priors.NormalPrior(pot_noise_mean, pot_noise_std)
 
         pot_noise_lower_bound = pot_noise_mean.div(10)
@@ -367,8 +368,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         )
 
         # force noise prior and force noise constraint:
-        force_noise_mean = torch.from_numpy(likelihood_force_noise_var)
-        force_noise_std = torch.from_numpy(likelihood_force_noise_var / 10)
+        force_noise_mean = torch.from_numpy(likelihood_force_noise_var).to(device= device)
+        force_noise_std = torch.from_numpy(likelihood_force_noise_var / 10).to(device= device)
         force_noise_prior = gpytorch.priors.NormalPrior(
             force_noise_mean, force_noise_std
         )
@@ -380,8 +381,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         )
 
         # hessian noise prior and noise constraint:
-        hessian_noise_mean = torch.from_numpy(likelihood_hessian_noise_var)
-        hessian_noise_std = torch.from_numpy(likelihood_hessian_noise_var / 10)
+        hessian_noise_mean = torch.from_numpy(likelihood_hessian_noise_var).to(device= device)
+        hessian_noise_std = torch.from_numpy(likelihood_hessian_noise_var / 10).to(device= device)
         hessian_noise_prior = gpytorch.priors.NormalPrior(
             hessian_noise_mean, hessian_noise_std
         )
@@ -410,6 +411,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             hessian_covar_factor_rank=likelihood_hessian_noise_rank,
         )
 
+        likelihood.to(device= train_inputs.device)
         # set the initial value of pot noise, force noise and hessian noise
         likelihood.pot_noises = pot_noise_mean
         likelihood.force_noises = force_noise_mean
@@ -782,6 +784,13 @@ def update_model_with_new_data_GPHessian(
     train_data_hessian_data_point_index = (
         model.training_data_hessian_data_point_index.clone()
     )
+
+    device= train_inputs.device 
+    new_train_inputs= new_train_inputs.to(device= device)
+    new_train_targets= new_train_targets.to(device= device)
+    new_train_data_hessian_data_point_index = new_train_data_hessian_data_point_index.to(device= device)
+    new_noise_covar_factor_pot_grad_array = new_noise_covar_factor_pot_grad_array.to(device= device)
+    new_noise_covar_factor_with_hessian_array = new_noise_covar_factor_with_hessian_array.to(device= device)
 
     train_data_num = train_inputs.shape[-2]
     new_train_data_num = new_train_inputs.shape[-2]
