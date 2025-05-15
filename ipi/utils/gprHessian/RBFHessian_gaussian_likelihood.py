@@ -56,7 +56,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         hessian_covar_factor_rank: int = 0,
     ):
         super(Likelihood, self).__init__()
-
+        self.device = noise_covar_factor_pot_grad_array.device
         if pot_noise_constraint is None:
             pot_noise_constraint = GreaterThan(1e-8)
 
@@ -116,7 +116,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         # follwoing the convention in gpytorch, here pot_noises are variances of noise
         self.register_parameter(
             name="raw_pot_noises",
-            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1)),
+            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1, device= self.device)),
         )
         self.register_constraint("raw_pot_noises", pot_noise_constraint)
         if pot_noise_prior is not None:
@@ -128,7 +128,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         # following the convention in gpytorch, here force_noises are variances of noise
         self.register_parameter(
             name="raw_force_noises",
-            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1)),
+            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1, device= self.device)),
         )
         self.register_constraint("raw_force_noises", force_noise_constraint)
         if force_noise_prior is not None:
@@ -140,7 +140,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         # following the convention in gpytorch, here hessian_noises are variances of noise
         self.register_parameter(
             name="raw_hessian_noises",
-            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1)),
+            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1, device= self.device)),
         )
         self.register_constraint("raw_hessian_noises", hessian_noise_constraint)
         if hessian_noise_prior is not None:
@@ -217,7 +217,9 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                 column_size
                 == 1 + self.grad_covar_factor_rank + self.hessian_covar_factor_rank
             ), "the number of columns for covar_factor_with_hessian should fit the rank of gradient & hessian."
-
+        device = self.noise_covar_factor_pot_grad_array.device
+        new_noise_covar_factor_pot_grad_array = new_noise_covar_factor_pot_grad_array.to(device= device)
+        new_noise_covar_factor_with_hessian_array = new_noise_covar_factor_with_hessian_array.to(device= device)
         self.noise_covar_factor_pot_grad_array = torch.concat(
             [
                 self.noise_covar_factor_pot_grad_array,
@@ -267,8 +269,8 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                 (pot_noises_var, force_noises_var, hessian_noises_var), dim=-1
             )
             matrix_size = M + M * self.ndof + M_H * self.hessian_triu_size
-            noise_covar_matrix = torch.zeros([matrix_size, matrix_size])
-            diag_index = np.arange(matrix_size)
+            noise_covar_matrix = torch.zeros([matrix_size, matrix_size], device= self.device)
+            diag_index = torch.from_numpy(np.arange(matrix_size)).to(device= self.device)
             noise_covar_matrix[diag_index, diag_index] = noises_var
         else:
             # Covariance matrix of the noise : covar_factor * Diag(pot_noise_var, force_noise_var, hessian_noise_var) * covar_factor
@@ -296,23 +298,26 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
             )  # the column size of covar_factor
             noise_covar_matrix = torch.zeros(
                 [matrix_size, matrix_size],
-                dtype=self.noise_covar_factor_pot_grad_array.dtype,
+                dtype= self.noise_covar_factor_pot_grad_array.dtype,
+                device= self.device
             )  # the covariance matrix of noise.
             noise_covar_factor_all_data = torch.zeros(
                 [matrix_size, covar_factor_rank_size],
                 dtype=self.noise_covar_factor_pot_grad_array.dtype,
+                device= self.device
             )  # the covariance factor of noise.
 
             # weight of covariance factor of the noise covariance matrix. This is noise in Cartesian coordinate.
             noise_covar_factor_weight = torch.zeros(
                 [self.rank, self.rank],
                 dtype=self.noise_covar_factor_pot_grad_array.dtype,
+                device= self.device
             )  # the standard deviation of potential, gradient & hessian noise in Cartesian coordinate.
             noise_covar_factor_weight_diag = torch.concatenate(
                 [pot_noises_std, force_noises_std, hessian_noises_std]
             )
             noise_covar_factor_weight[
-                torch.arange(self.rank), torch.arange(self.rank)
+                torch.arange(self.rank, device= self.device), torch.arange(self.rank, device= self.device)
             ] = noise_covar_factor_weight_diag
 
             # the noise for potential and gradient in Cartesian coordinate
@@ -358,9 +363,12 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                         [pot_column_index, grad_column_index, hessian_column_index]
                     )
 
-                    two_dimensional_index = np.meshgrid(
-                        row_index, column_index, indexing="ij"
-                    )
+                    two_dimensional_index = torch.from_numpy(
+                        np.meshgrid(
+                            row_index, column_index, indexing="ij"
+                        )
+                    ).to(device= self.device)
+
                     noise_covar_factor = self.noise_covar_factor_with_hessian_array[
                         hessian_data_point_index
                     ]  # covariance factor with hessian info.
@@ -372,9 +380,11 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                     row_index = np.concatenate([pot_row_index, grad_row_index])
                     column_index = np.concatenate([pot_column_index, grad_column_index])
 
-                    two_dimensional_index = np.meshgrid(
-                        row_index, column_index, indexing="ij"
-                    )
+                    two_dimensional_index = torch.from_numpy(
+                        np.meshgrid(
+                            row_index, column_index, indexing="ij"
+                        )
+                    ).to(device= self.device)
 
                     noise_covar_factor_pot_grad = (
                         self.noise_covar_factor_pot_grad_array[data_point_index]
