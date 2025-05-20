@@ -2,7 +2,7 @@
 import socket
 import argparse
 import numpy as np
-
+from pes.dummy import Dummy_driver
 
 try:
     from pes import *
@@ -112,8 +112,8 @@ def run_driver(
             nat = recv_data(sock, np.int32())
             if len(pos) == 0:
                 # shapes up the position array
-                pos.resize((nat, 3))
-                force.resize((nat, 3))
+                pos = np.resize(pos, (nat, 3))
+                force = np.resize(force, (nat, 3))
             else:
                 if len(pos) != nat:
                     raise RuntimeError("Atom number changed during i-PI run")

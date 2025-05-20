@@ -363,12 +363,14 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                         [pot_column_index, grad_column_index, hessian_column_index]
                     )
 
-                    two_dimensional_index = torch.from_numpy(
-                        np.meshgrid(
+                    meshgrid= np.meshgrid(
                             row_index, column_index, indexing="ij"
-                        )
-                    ).to(device= self.device)
-
+                            )
+                
+                    two_dimensional_index = torch.stack(
+                        [torch.from_numpy(arr) for arr in meshgrid]
+                        ).to(device= self.device)
+                    
                     noise_covar_factor = self.noise_covar_factor_with_hessian_array[
                         hessian_data_point_index
                     ]  # covariance factor with hessian info.
@@ -379,12 +381,11 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                     # the row and column index in noise_covar_factor matrix that corresponds to single data point.
                     row_index = np.concatenate([pot_row_index, grad_row_index])
                     column_index = np.concatenate([pot_column_index, grad_column_index])
-
-                    two_dimensional_index = torch.from_numpy(
-                        np.meshgrid(
+                    meshgrid= np.meshgrid(
                             row_index, column_index, indexing="ij"
                         )
-                    ).to(device= self.device)
+                    
+                    two_dimensional_index = torch.stack([torch.from_numpy(arr) for arr in meshgrid]).to(device= self.device)
 
                     noise_covar_factor_pot_grad = (
                         self.noise_covar_factor_pot_grad_array[data_point_index]
