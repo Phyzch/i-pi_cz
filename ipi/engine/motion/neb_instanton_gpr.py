@@ -691,6 +691,21 @@ class MAPNEBGPRMover(Motion):
             self.gpr_model.train_gpr()
         
 
+    def bind_gpr_model(self, gpr_model, coordinate_transformer):
+        """
+        bind the gpr model and coordinate_transformer to the LINEGradientMapper class
+        the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
+        """
+        self.gm.gpr_model = gpr_model
+        self.gm.coordinate_transformer = coordinate_transformer 
+
+        self.rp_map.gpr_model = gpr_model 
+        self.gm.coordinate_transformer = self.coordinate_transformer 
+
+        self.optimizer.gpr_model = gpr_model 
+        self.optimizer.coordinate_transformer = coordinate_transformer
+
+
     def initialialize_gpr_model(self):
         """
         initialize the gaussian process regression model.
@@ -717,14 +732,7 @@ class MAPNEBGPRMover(Motion):
 
         # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
         # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
-        self.gm.gpr_model = self.gpr_model
-        self.gm.coordinate_transformer = self.coordinate_transformer
-
-        self.rp_map.gpr_model = self.gpr_model
-        self.rp_map.coordinate_transformer = self.coordinate_transformer
-
-        self.optimizer.gpr_model = self.gpr_model
-        self.optimizer.coordinate_transformer = self.coordinate_transformer
+        self.bind_gpr_model(self.gpr_model, self.coordinate_transformer)
 
     def check_initial_training_result(self):
         """
