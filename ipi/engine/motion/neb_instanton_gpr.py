@@ -575,12 +575,12 @@ class MAPNEBGPRMover(Motion):
         # create coordinate_transformer, which handles the transformation from the Cartesian coordinate to internal coordinate.
         # This is for Coulomb matrix type internal coordinate.
         if self.options["internal_coord"] == "Coulomb":
-            self.coordinate_transformer = ipi.utils.internal.CoulombInternal.non_redundant_coordinate_transformer(
+            coordinate_transformer = ipi.utils.internal.CoulombInternal.non_redundant_coordinate_transformer(
                 self.beads.natoms, ref_x
             )
         elif self.options["internal_coord"] == "bond":
             # This is for internal coordinate that include bond angles and bond distance
-            self.coordinate_transformer = ipi.utils.internal.ZmatrixInternal.non_redundant_coordinate_transformer(
+            coordinate_transformer = ipi.utils.internal.ZmatrixInternal.non_redundant_coordinate_transformer(
                 self.beads.natoms,
                 ref_x_list,
                 names
@@ -588,6 +588,8 @@ class MAPNEBGPRMover(Motion):
         else:
             raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
 
+        return coordinate_transformer
+    
     def _generate_initial_training_data(self):
         """
         Compute potential and force for initial training data.
@@ -649,7 +651,7 @@ class MAPNEBGPRMover(Motion):
         
         return train_x, train_V, train_grad 
 
-    def _initialize_gpr_model(self, train_x, train_V, train_grad):
+    def _initialize_gpr_model(self, train_x, train_V, train_grad, coordinate_transformer):
         """
         Initialize the GPR model.
         """
@@ -658,12 +660,12 @@ class MAPNEBGPRMover(Motion):
 
         training_data_num = np.shape(train_x)[0]
 
-        self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
+        gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
             train_x,
             train_V,
             train_grad,
             self.beads.natoms,
-            self.coordinate_transformer,
+            coordinate_transformer,
             fix_dofs,
             gpr_SE_kernel_number=self.options["gpr_SE_kernel_number"],
             kernel_outputscale=self.optarrays["gpr_kernel_outputscale"],
@@ -681,14 +683,16 @@ class MAPNEBGPRMover(Motion):
             # see if there is option to read hyper-parameter without training the model
             neb_final_gpr_folder = "neb_final_gpr_training"
             model_hyperparameter_exists = ipi.utils.nebinstgprtool.load_training_hyperparameter_in_gpr_model(
-                self.gpr_model, neb_final_gpr_folder
+                gpr_model, neb_final_gpr_folder
             )
 
             if not model_hyperparameter_exists:
-                self.gpr_model.train_gpr()
+                gpr_model.train_gpr()
 
         else:
-            self.gpr_model.train_gpr()
+            gpr_model.train_gpr()
+        
+        return gpr_model
         
 
     def bind_gpr_model(self, gpr_model, coordinate_transformer):
@@ -696,6 +700,9 @@ class MAPNEBGPRMover(Motion):
         bind the gpr model and coordinate_transformer to the LINEGradientMapper class
         the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
         """
+        self.gpr_model = gpr_model 
+        self.coordinate_transformer = coordinate_transformer
+
         self.gm.gpr_model = gpr_model
         self.gm.coordinate_transformer = coordinate_transformer 
 
@@ -716,7 +723,7 @@ class MAPNEBGPRMover(Motion):
         # choose the point with the highest potential in the initial instanton path as reference point.
         ref_x_list = self._select_reference_points()
 
-        self._initialize_coordinate_transformer(ref_x_list)
+        coordinate_transformer = self._initialize_coordinate_transformer(ref_x_list)
 
         # attach ab_initio potential to self.nebgm.ab_initio_pot and self.nebgm.ab_initio_force.
         # In the LI-NEB algorithm, when there is ab-initio potential & force data available, we will use that potential and force.
@@ -728,11 +735,11 @@ class MAPNEBGPRMover(Motion):
         # this provides the flexibility for choosing the training data for the initial model.
         train_x, train_V, train_grad = self._get_training_data()
 
-        self._initialize_gpr_model(train_x, train_V, train_grad)
+        gpr_model = self._initialize_gpr_model(train_x, train_V, train_grad, coordinate_transformer)
 
         # bind the gpr model and coordinate_transformer to the LINEGradientMapper class
         # the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
-        self.bind_gpr_model(self.gpr_model, self.coordinate_transformer)
+        self.bind_gpr_model(gpr_model, coordinate_transformer)
 
     def check_initial_training_result(self):
         """
