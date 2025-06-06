@@ -380,13 +380,6 @@ class MAPNEBGPRMover(Motion):
         if step == 0:
             self._initial_step(step)
 
-        if self.coordinate_transformer is None:
-            # initialize Gaussian Process Regression(GPR) model and coordiante transformer
-            self.initialialize_gpr_model()
-
-            # check the training result on the test data which is unseen by GPR.
-            self.check_initial_training_result()
-
         # Check if we enter the program directly into "instanton" stage:
         if self.options["stage"] == "instanton" and step == 0:
             self.rp_map.skip_neb_mode_bool = True
@@ -504,7 +497,6 @@ class MAPNEBGPRMover(Motion):
         # update Gaussian Process Regression model with new training data
         self.early_stop_bool = early_stop_bool
         self.outrange_bead_index_list = outrange_bead_index_list
-        self.update_GPR_model(early_stop_bool, outrange_bead_index_list, step)
 
         print("optimization step so far for neb stage: " + str(SharedData.inner_loop_optimization_step))
 

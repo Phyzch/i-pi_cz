@@ -58,4 +58,5 @@ if __name__ == '__main__':
     # initialize simulation object.
     sim = InteractiveSimulation(fn_in)
 
+    main(sim)
     

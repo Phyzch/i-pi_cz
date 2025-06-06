@@ -4,7 +4,7 @@ Code to interface the i-pi module with gpr code.
 import gpr.gprtools 
 import numpy as np 
 
-from ipi.engine.motion.neb_instanton_gpr import MAPNEBGPRMover
+from ipi.engine.motion.neb_instanton_gpr import MAPNEBGPRMover, SharedData
 from ipi.engine.motion import Motion 
 from ipi.utils.depend import dstrip
 from ipi.utils.scripting import (
@@ -21,7 +21,6 @@ class ActiveLearning(object):
         self.sim = sim
         self.motion = motion 
 
-        self.ab_initio_bead_calculation_number = 0
         self.total_steps = sim.tsteps
         # bead and forces for cross validation.
         self.gpr_beads = Beads(motion.beads.natoms, 1)
@@ -281,7 +280,7 @@ class ActiveLearning(object):
         
         # ab initio forces.
         bead_number = new_training_x.shape[0]
-        natoms = self.beads.natoms
+        natoms = self.motion.beads.natoms
         new_ab_initio_forces = np.zeros([bead_number, 3 * natoms])
         new_ab_initio_pots = np.zeros([bead_number])
         for i in range(bead_number):
@@ -290,8 +289,8 @@ class ActiveLearning(object):
             new_ab_initio_pots[i] = dstrip(self.gpr_forces.pots).copy()[0]
         
         # count the number of ab initio calculations we have done.    
-        self.ab_initio_bead_calculation_number = (
-            self.ab_initio_bead_calculation_number + bead_number
+        SharedData.ab_initio_bead_calculation_number = (
+            SharedData.ab_initio_bead_calculation_number + bead_number
         )
 
         # compute the |f|, |f_GPR|, |f - f_GPR|, |f-f_GPR|/|f|
