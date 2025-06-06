@@ -44,7 +44,6 @@ def main(sim: InteractiveSimulation):
     """
     motion = sim.syslist[0].motion 
     
-
     active_motion = gpr_interface.ActiveLearning(sim = sim,
                                                  motion= motion)
     

@@ -21,6 +21,7 @@ class ActiveLearning(object):
         self.sim = sim
         self.motion = motion 
 
+        self.total_steps = sim.tsteps
         # bead and forces for cross validation.
         self.gpr_beads = Beads(motion.beads.natoms, 1)
         self.gpr_forces = motion.forces.copy(self.gpr_beads, motion.cell)
@@ -32,6 +33,23 @@ class ActiveLearning(object):
             # check the training error and cross-validation error of the gpr model.
             self.check_training_result()
     
+    def run_one_step(self, write_outputs= True):
+        """
+        run the simulation for steps.
+        """
+        self.sim.run(steps= 1, write_outputs= write_outputs)
+
+        # update the gpr model.
+        if self.motion.options["stage"] == 'neb':
+            self.update_gpr_model()
+
+    def run(self, write_outputs= True):
+        """
+        run for total number of steps.
+        """
+        for step in range(self.sim.step, self.total_steps):
+            self.run_one_step(write_outputs= write_outputs)
+
     def initialize_internal_coord(self):
         """
         initialize the coordinate transformer between the internal coordinate and the Cartesian coordinate.
@@ -198,3 +216,15 @@ class ActiveLearning(object):
                 energy_shift,
                 test_x
             )
+    
+    def update_gpr_model(self):
+        """
+        update the Gaussian Process Regression model at the end of each simulation step.
+        """
+        step = self.sim.step 
+        early_stop_bool = self.motion.early_stop_bool
+        outrange_bead_index_list = self.motion.outrange_bead_index_list
+
+        gpr_trust_region = self.motion.optarrays["gpr_trust_region"]
+        print("The trust region for the gpr model now: " + str(gpr_trust_region))
+        
