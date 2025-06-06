@@ -21,6 +21,7 @@ class ActiveLearning(object):
         self.sim = sim
         self.motion = motion 
 
+        self.ab_initio_bead_calculation_number = 0
         self.total_steps = sim.tsteps
         # bead and forces for cross validation.
         self.gpr_beads = Beads(motion.beads.natoms, 1)
@@ -32,6 +33,8 @@ class ActiveLearning(object):
             self.initialize_gpr_model()
             # check the training error and cross-validation error of the gpr model.
             self.check_training_result()
+
+        
     
     def run_one_step(self, write_outputs= True):
         """
@@ -227,4 +230,164 @@ class ActiveLearning(object):
 
         gpr_trust_region = self.motion.optarrays["gpr_trust_region"]
         print("The trust region for the gpr model now: " + str(gpr_trust_region))
+
+        new_training_x = self.select_new_GPR_data_point(early_stop_bool, outrange_bead_index_list)
+        if(len(new_training_x) == 0):
+            # surrogate potential energy surface is accurate. exit the neb stage.
+            self.motion.neb_stage_exit_step(step)
+        else:
+            # compute ab initio force & force error before update gpr model.
+            new_ab_initio_pots, new_ab_initio_forces = self.before_gpr_update_force_error(new_training_x)
+            # update the gpr model.
+            self._update_gpr_model(new_training_x, new_ab_initio_pots, new_ab_initio_forces)
+            # check force error after update the gpr model.
+            self.after_gpr_update_force_error(new_training_x, new_ab_initio_forces)
+            # output info about gpr force error.
+            self.output_force_error_info(step)
+
+    def select_new_GPR_data_point(self, early_stop_bool, outrange_bead_index_list):
+        """
+        select the new data point to add to the GPR model.
+        """
+        motion = self.motion
+        beads_q = motion.beads.q 
+        nbeads = motion.beads.nbeads 
+        if early_stop_bool:
+            # in this case, select the bead that moves out of trust region with the largest force uncertainty.
+            outrange_bead_x =  np.copy(beads_q[outrange_bead_index_list])
+            _, _, _, var_grad_x_trace_list = self.gpr_model.predict_latent_function(outrange_bead_x)
+            bead_index_for_update = outrange_bead_index_list[np.argmax(var_grad_x_trace_list)]
+            new_training_x = np.array([beads_q[bead_index_for_update]])
+        else:
+            # select the data point with the force uncertainty estimate larger than the cutoff value 
+            # to add to the training data set.
+            force_uncertainty_cutoff = motion.optarrays["gpr_force_uncertainty_criterion"] + 1e-5 
+            # compute gpr predicted force uncertainty 
+            _, _, _, var_grad_x_trace_list = self.gpr_model.predict_latent_function(beads_q)
+
+            force_uncertainty = np.sqrt(var_grad_x_trace_list)
+
+            large_uncertainty_bool = (force_uncertainty > force_uncertainty_cutoff)
+            large_uncertainty_bead_index = np.arange(nbeads)[large_uncertainty_bool]
+
+            new_training_x = beads_q[large_uncertainty_bead_index]
         
+        return new_training_x
+
+    def before_gpr_update_force_error(self, new_training_x):
+        """
+        compute the force error before update the gpr model.
+        Also compute the ab initio forces for the new data.
+        """
+        # ML learned forces.
+        _, beads_grads, _, _ = self.gpr_model.predict_latent_function(new_training_x)
+        gpr_beads_forces = - beads_grads
+        
+        # ab initio forces.
+        bead_number = new_training_x.shape[0]
+        natoms = self.beads.natoms
+        new_ab_initio_forces = np.zeros([bead_number, 3 * natoms])
+        new_ab_initio_pots = np.zeros([bead_number])
+        for i in range(bead_number):
+            self.gpr_beads.q[0] = new_training_x[i]
+            new_ab_initio_forces[i] = dstrip(self.gpr_forces.f).copy()[0]
+            new_ab_initio_pots[i] = dstrip(self.gpr_forces.pots).copy()[0]
+        
+        # count the number of ab initio calculations we have done.    
+        self.ab_initio_bead_calculation_number = (
+            self.ab_initio_bead_calculation_number + bead_number
+        )
+
+        # compute the |f|, |f_GPR|, |f - f_GPR|, |f-f_GPR|/|f|
+        self.gpr_force_amplitude_list = np.linalg.norm(gpr_beads_forces, axis= 1)
+        self.ab_initio_force_amplitude_list = np.linalg.norm(new_ab_initio_forces, axis= 1)
+        force_diff_list = gpr_beads_forces - new_ab_initio_forces
+        self.force_diff_amplitude_list = np.linalg.norm(force_diff_list, axis= 1)
+        self.force_diff_ratio_list = (
+            self.force_diff_amplitude_list / self.ab_initio_force_amplitude_list
+        )
+
+        return new_ab_initio_pots, new_ab_initio_forces
+    
+    def _update_gpr_model(self, new_training_x, new_ab_initio_pots, new_ab_initio_forces):
+        """
+        update the gpr model with new pot and force data.
+        """
+        energy_shift = self.motion.optarrays["energy_shift"]
+        distance_cutoff = self.motion.options["distance_cutoff_for_training_data"]
+        train_grad_model_bool = self.motion.options["train_grad_model_bool"]
+
+        new_shifted_pots = new_ab_initio_pots - energy_shift
+        new_ab_initio_grads = - new_ab_initio_forces
+
+        self.gpr_model.update_model_with_new_data(
+            new_training_x,
+            new_shifted_pots,
+            new_ab_initio_grads,
+            distance_cutoff,
+            train_grad_model_bool
+        )
+    
+    def after_gpr_update_force_error(self, new_training_x, new_ab_initio_forces):
+        """
+        compute the force error after update the gpr model.
+        """
+         # ML learned forces.
+        _, beads_grads, _, _ = self.gpr_model.predict_latent_function(new_training_x)
+        gpr_beads_forces = - beads_grads
+
+        force_diff = gpr_beads_forces - new_ab_initio_forces
+        self.force_diff_amplitude_after_update_list = np.linalg.norm(force_diff, axis= 1)
+        self.force_diff_ratio_after_update_list = (
+            self.force_diff_amplitude_after_update_list / self.ab_initio_force_amplitude_list
+        )
+
+        # check the uncertainty of force for updated potential.
+        # increase the gpr_force_uncertainty criterion if it is not met after we have updated the pot.
+        _, _, _, var_grad_x_uncertainty = self.gpr_model.predict_latent_function(new_training_x)
+        max_std_grad_x_uncertainty = np.max(np.sqrt(var_grad_x_uncertainty))
+        if max_std_grad_x_uncertainty > self.motion.optarrays["gpr_force_uncertainty_criterion"]:
+            print("@Warning: The uncertainty of gpr prediction is still higher than cutoff criterion after update the model.")
+            print(f"max std force uncertainty: {max_std_grad_x_uncertainty}")
+            print(f"The force uncertainty criterion will be increased to {max_std_grad_x_uncertainty}")
+            self.motion.optarrays["gpr_force_uncertainty_criterion"] = max_std_grad_x_uncertainty
+
+    def output_force_error_info(self, step):
+        """
+        output info about |f - f_GPR|.
+        """
+        new_data_num = len(self.ab_initio_force_amplitude_list)
+        if new_data_num != 0:
+            print(
+                "@Outerloop Exit info: ab initio |f|: "
+                + str(self.ab_initio_force_amplitude_list)
+            )
+            print(
+                "@Outloop Exit info: GPR predicted |f_GPR|: "
+                + str(self.gpr_force_amplitude_list)
+            )
+            print("@Outerloop Exit info: |f_GPR -f|/|f|:" + str(self.force_diff_ratio_list))
+            print(
+                "@Outerloop Exit info: max(|f_GPR - f|/|f|): "
+                + str(np.max(self.force_diff_ratio_list))
+            )
+            print(
+                "@Outerloop Exit info: |f_GPR -f| :" + str(self.force_diff_amplitude_list)
+            )
+
+            print("After update:")
+            print("@Outerloop Exit info: |f_GPR -f|/|f|:" + str(self.force_diff_ratio_after_update_list))
+            print(
+                "@Outerloop Exit info: |f_GPR -f| :" + str(self.force_diff_amplitude_after_update_list)
+            )
+
+            print("Finish Outerloop: " + str(step))
+            print("\n")
+            print("\n")
+        
+        self.force_diff_ratio_list = []
+        self.ab_initio_force_amplitude_list = []
+        self.gpr_force_amplitude_list = []
+
+        self.force_diff_ratio_after_update_list = []
+        self.force_diff_amplitude_after_update_list = [] 
