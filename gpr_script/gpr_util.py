@@ -13,6 +13,20 @@ def extract_number_from_line(line):
 
     return line
 
+def store_fixed_internal_dofs_gpr_model(gpr_model: GPModelWithDerivativesWrapper,
+                              prefix):
+    """
+    store fixed internal dofs in gpr_hessian_model
+    """
+    fixed_internal_dofs = gpr_model.output_fixed_internal_dofs()
+    
+    file_path = os.path.join(prefix, "fixed_internal_dofs.txt")
+    with open(file_path, "w") as f:
+        for dof in fixed_internal_dofs:
+            f.write(str(dof) + " ")
+        f.write('\n')
+
+
 def read_fixed_internal_dofs(prefix):
     """
     read fixed internal dofs from file.
@@ -29,6 +43,18 @@ def read_fixed_internal_dofs(prefix):
             fixed_internal_dofs = np.array(list(map(int, fixed_internal_dofs)))
     
     return fixed_internal_dofs
+
+def store_training_hyperparameter_in_gpr_model(
+        gpr_model: GPModelWithDerivativesWrapper,
+        folder_path
+):
+    """
+    store the hyper-parameter of the trained gpr model
+    """
+    file_name = "gpr.pth"
+    file_path = os.path.join(folder_path, file_name)
+
+    gpr_model.save_model(file_path)
 
 def load_training_hyperparameter_in_gpr_model(
         gpr_model: GPModelWithDerivativesWrapper,

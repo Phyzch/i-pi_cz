@@ -382,10 +382,7 @@ class MAPNEBGPRMover(Motion):
 
         # Check if we enter the program directly into "instanton" stage:
         if self.options["stage"] == "instanton" and step == 0:
-            self.rp_map.skip_neb_mode_bool = True
             print("Skip neb stage. Go directly into instanton stage. \n")
-        else:
-            self.rp_map.skip_neb_mode_bool = False
 
         if self.options["stage"] == "neb" and step == 0:
             self._open_neb_output_file()
@@ -620,7 +617,7 @@ class MAPNEBGPRMover(Motion):
         """
         Loads or generate initial training data."""
         read_gpr_training_data_bool = self.options["read_initial_gpr_training_data"]
-        if not read_gpr_training_data_bool:
+        if ((not read_gpr_training_data_bool) and (self.options["stage"] == "neb")):
             train_x, train_V, train_grad = self._generate_initial_training_data()
         else:
             # read stored training data from folder.
@@ -2674,8 +2671,6 @@ class RP_MAP(object):
         self.imag_time_period = 0
         self.instanton_temp = 0
 
-        self.skip_neb_mode_bool = False
-
     def bind(self, nebmover: MAPNEBGPRMover):
         """
         bind function for RP_MAP
@@ -2793,17 +2788,6 @@ class RP_MAP(object):
         print("use cubic interpolation to generate MAP path")
 
         self.final_step = neb_final_step
-
-        if self.skip_neb_mode_bool:
-            start_time = timer()
-            
-            self.construct_gpr_model_use_training_data_end_of_neb_stage()
-            
-            end_time = timer() 
-            time_elapsed = (end_time - start_time) / 60
-            print(f"the time used for construct \
-                  gpr model to predict force along instanton path is: {time_elapsed} min")
-            pass
 
     def classical_dynamics_along_MAP(self):
         """

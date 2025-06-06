@@ -13,6 +13,7 @@ from ipi.utils.scripting import (
 import internal_util
 import gpr_util 
 from ipi.engine.beads import Beads
+from timeit import default_timer as timer
 
 class ActiveLearning(object):
     def __init__(self,
@@ -61,6 +62,7 @@ class ActiveLearning(object):
         """
         # load parameters for the gpr model initialization. 
         # TODO: need a cleaner interface for gpr input parameter.
+        neb_final_gpr_folder = "neb_final_gpr_training"
         fix_dofs = self.motion.optarrays["fix_dofs"]
         natoms = self.motion.beads.natoms 
         gpr_SE_kernel_number = self.motion.options["gpr_SE_kernel_number"]
@@ -92,7 +94,7 @@ class ActiveLearning(object):
 
         # option to load trained hyper-parameters for gpr model.
         read_gpr_training_data_bool = self.motion.options["read_initial_gpr_training_data"]
-        if read_gpr_training_data_bool:
+        if (read_gpr_training_data_bool or self.motion.options["stage"] == "instanton"):
             # see if there is option to read hyper-parameter without training the model
             neb_final_gpr_folder = "neb_final_gpr_training"
             model_hyperparameter_exists = gpr_util.load_training_hyperparameter_in_gpr_model(
@@ -104,7 +106,19 @@ class ActiveLearning(object):
 
         else:
             gpr_model.train_gpr()
-        
+
+        # store internal dofs in the gpr model        
+        gpr_util.store_fixed_internal_dofs_gpr_model(
+            self.gpr_model,
+            prefix= neb_final_gpr_folder
+        )
+
+        # store training hyperparameters in the gpr model.
+        gpr_util.store_training_hyperparameter_in_gpr_model(
+            self.gpr_model,
+            neb_final_gpr_folder
+        )
+
         return gpr_model
 
     def initialize_gpr_model(self):
@@ -121,9 +135,16 @@ class ActiveLearning(object):
             # this provides the flexibility for choosing the training data for the initial model.
             train_x, train_V, train_grad = self.motion._get_training_data()
 
+            # time this function.
+            start_time = timer()
             # initialize the gpr model use training data and internal coordinate transformer.
             gpr_model = self._initialize_gpr_model(train_x, train_V, train_grad, coordinate_transformer)
             
+            end_time = timer() 
+            time_elapsed = (end_time - start_time) / 60
+            print(f"the time used for construct \
+                  gpr model to predict force along instanton path is: {time_elapsed} min")
+
             # bind the coordinate transformer and gpr model to the motion object.
             # this will enable the motion object to use gpr model to predict potential and force.
             self.coordinate_transformer = coordinate_transformer
