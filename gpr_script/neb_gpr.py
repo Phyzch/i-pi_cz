@@ -46,8 +46,11 @@ def main(sim: InteractiveSimulation):
     
     active_motion = gpr_interface.ActiveLearning(sim = sim,
                                                  motion= motion)
-    
+    # initialize gpr model.
+    active_motion.initialize_gpr_model()
 
+    # run the i-pi simulation and update the gpr model.
+    active_motion.run()
 
 if __name__ == '__main__':
     # parse input 
