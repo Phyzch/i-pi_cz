@@ -127,33 +127,31 @@ class ActiveLearning(object):
         1. Initialize coordinate transformer to transform between internal coordinate and cartesian coordinate.
         2. initialize GPR_Wrapper, which combines coordinate transformer and GPR model.
         """
-        stage = self.motion.options["stage"]
-        if stage == "neb":
-            coordinate_transformer = self.initialize_internal_coord()
+        coordinate_transformer = self.initialize_internal_coord()
 
-            # for the training data, we have the option to read it from .txt file or generate it using the current geometry.
-            # this provides the flexibility for choosing the training data for the initial model.
-            train_x, train_V, train_grad = self.motion._get_training_data()
+        # for the training data, we have the option to read it from .txt file or generate it using the current geometry.
+        # this provides the flexibility for choosing the training data for the initial model.
+        train_x, train_V, train_grad = self.motion._get_training_data()
 
-            # time this function.
-            start_time = timer()
-            # initialize the gpr model use training data and internal coordinate transformer.
-            gpr_model = self._initialize_gpr_model(train_x, train_V, train_grad, coordinate_transformer)
-            
-            end_time = timer() 
-            time_elapsed = (end_time - start_time) / 60
-            print(f"the time used for construct \
-                  gpr model to predict force along instanton path is: {time_elapsed} min")
+        # time this function.
+        start_time = timer()
+        # initialize the gpr model use training data and internal coordinate transformer.
+        gpr_model = self._initialize_gpr_model(train_x, train_V, train_grad, coordinate_transformer)
+        
+        end_time = timer() 
+        time_elapsed = (end_time - start_time) / 60
+        print(f"the time used for construct \
+                gpr model to predict force along instanton path is: {time_elapsed} min")
 
-            # bind the coordinate transformer and gpr model to the motion object.
-            # this will enable the motion object to use gpr model to predict potential and force.
-            self.coordinate_transformer = coordinate_transformer
-            self.gpr_model = gpr_model 
+        # bind the coordinate transformer and gpr model to the motion object.
+        # this will enable the motion object to use gpr model to predict potential and force.
+        self.coordinate_transformer = coordinate_transformer
+        self.gpr_model = gpr_model 
 
-            self.motion.bind_gpr_model(gpr_model, coordinate_transformer)
+        self.motion.bind_gpr_model(gpr_model, coordinate_transformer)
 
-            # check the training error and cross-validation error of the gpr model.
-            self.check_training_result()
+        # check the training error and cross-validation error of the gpr model.
+        self.check_training_result()
 
     def check_training_result(self):
         """
