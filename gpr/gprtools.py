@@ -1024,9 +1024,9 @@ class GPModelWithDerivativesWrapper:
         """
         output the training data set X (in cartesian coordinate) used to train the GPR model.
         """
-        train_cartesian_x = np.copy(self.train_cartesian_inputs)
+        train_cartesian_X = np.copy(self.train_cartesian_inputs)
 
-        return train_cartesian_x
+        return train_cartesian_X
 
     def output_free_moving_training_internal_inputs(self):
         """

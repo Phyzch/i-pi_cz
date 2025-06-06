@@ -18,6 +18,7 @@ from ipi.utils import units
 from ipi.engine.normalmodes import NormalModes
 from ipi.engine.motion import Motion
 from ipi.utils.depend import dstrip
+import ipi.utils.internal.internalcoord
 from ipi.utils.softexit import softexit
 from ipi.utils.messages import verbosity, info, warning
 from ipi.engine.beads import Beads
@@ -601,7 +602,6 @@ class MAPNEBGPRMover(Motion):
         nbeads = self.beads.nbeads
         # compute forces one by one in case we use the 'centroid' trick to avoid 
         # computing forces for all beads to converge the path.
-        self.initial_data_bead = Beads(self.beads.natoms, initial_bead_number)
         
         train_x = np.zeros([initial_bead_number, np.shape(self.beads.q)[1]])
         train_V = np.zeros([initial_bead_number])
@@ -609,7 +609,6 @@ class MAPNEBGPRMover(Motion):
         bead_index = np.linspace(0, nbeads - 1, initial_bead_number).astype(int)
         for i in range(initial_bead_number):
             train_x[i] = self.beads.q[bead_index[i]]
-            self.initial_data_bead.q[i] = train_x[i]
             self.gpr_beads.q[0] = train_x[i]
             train_V[i] = np.copy(self.gpr_forces.pots)[0] - self.optarrays["energy_shift"]
             train_grad[i] = - np.copy(dstrip(self.gpr_forces.f))[0]
@@ -641,13 +640,6 @@ class MAPNEBGPRMover(Motion):
             SharedData.ab_initio_bead_calculation_number = (
                 SharedData.ab_initio_bead_calculation_number + np.shape(train_x)[0]
             )
-
-            # used to test the overfitting/ underfitting of the GPR model.
-            bead_number_to_test = 3
-            self.initial_data_bead = Beads(self.beads.natoms, bead_number_to_test)
-
-            for i in range(bead_number_to_test):
-                self.initial_data_bead.q[i] = train_x[i]
         
         return train_x, train_V, train_grad 
 
@@ -657,8 +649,6 @@ class MAPNEBGPRMover(Motion):
         """
         gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(prefix= "neb_final_gpr_training")
         fix_dofs = self.optarrays["fix_dofs"]
-
-        training_data_num = np.shape(train_x)[0]
 
         gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
             train_x,
@@ -695,7 +685,7 @@ class MAPNEBGPRMover(Motion):
         return gpr_model
         
 
-    def bind_gpr_model(self, gpr_model, coordinate_transformer):
+    def bind_gpr_model(self, gpr_model:ipi.utils.gprtools.GPModelWithDerivativesWrapper, coordinate_transformer: ipi.utils.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
         """
         bind the gpr model and coordinate_transformer to the LINEGradientMapper class
         the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
@@ -745,18 +735,18 @@ class MAPNEBGPRMover(Motion):
         """
         check whether the training of GPR model is successful. If not, stop the simulation and report error
         """
+        train_x = self.gpr_model.output_training_cartesian_inputs()
         # first check the prediction of the training data. See if there is under-fitting.
         predicted_V_shift, predicted_grad, _, var_grad_x_trace = (
-            self.gpr_model.predict_latent_function(self.initial_data_bead.q)
+            self.gpr_model.predict_latent_function(train_x)
         )
 
-        predicted_forces = -predicted_grad
-
-        initial_bead_number = self.initial_data_bead.nbeads
+        predicted_forces = - predicted_grad
         
+        initial_data_number = train_x.shape[0]
         # check the training error.  
-        ab_initio_V_shift = np.copy(self.gpr_model.train_cartesian_targets[:initial_bead_number,0])
-        ab_initio_forces = np.copy(-self.gpr_model.train_cartesian_targets[:initial_bead_number,1:])
+        ab_initio_V_shift = np.copy(self.gpr_model.train_cartesian_targets[:,0])
+        ab_initio_forces = np.copy(-self.gpr_model.train_cartesian_targets[:,1:])
 
         print("\n")
         print(
@@ -784,9 +774,9 @@ class MAPNEBGPRMover(Motion):
         print("The error in test set can be large if we start the model with a small number of data.")
         print("In this case, the test data is out of trust region of the model.")
 
-        if initial_bead_number >= 2:
-            test_q = self.initial_data_bead.q[0] * 1 / 4 + self.initial_data_bead.q[1] * 3 / 4
-            print("q[0] * 1/4 + q[1] * 3/4")
+        if initial_data_number >= 2:
+            test_x = train_x[0] * 1 / 4 + train_x[1] * 3 / 4
+            print("x[0] * 1/4 + x[1] * 3/4")
             (
                 predicted_test_V_shift,
                 predicted_test_force,
@@ -797,16 +787,16 @@ class MAPNEBGPRMover(Motion):
                 self.gpr_forces,
                 self.gpr_model,
                 self.optarrays["energy_shift"],
-                test_q,
+                test_x,
             )
 
             SharedData.ab_initio_bead_calculation_number = (
                 SharedData.ab_initio_bead_calculation_number + 1
             )   
 
-        if initial_bead_number >= 4:
-            test_q = self.beads.q[3] * 1 / 4 + self.beads.q[2] * 3 / 4
-            print("q[3] * 1/4 + q[2] * 3/4")
+        if initial_data_number >= 4:
+            test_x = train_x[3] * 1 / 4 + train_x[2] * 3 / 4
+            print("x[3] * 1/4 + x[2] * 3/4")
             (
                 predicted_test_V_shift,
                 predicted_test_force,
@@ -817,7 +807,7 @@ class MAPNEBGPRMover(Motion):
                 self.gpr_forces,
                 self.gpr_model,
                 self.optarrays["energy_shift"],
-                test_q,
+                test_x,
             )
 
             SharedData.ab_initio_bead_calculation_number = (
