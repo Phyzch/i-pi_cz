@@ -23,11 +23,12 @@ class ConstantMeanHessian(Mean):
         batch_shape=torch.Size(),
         **kwargs
     ):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         super(ConstantMeanHessian, self).__init__()
         self.batch_shape = batch_shape
         self.register_parameter(
             name="raw_constant",
-            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1)),
+            parameter=torch.nn.Parameter(torch.zeros(*batch_shape, 1, device= self.device)),
         )
         # register prior and constraint for constant.
         if constant_prior is not None:
@@ -112,6 +113,7 @@ class MeanWithPotGradHessian(Mean):
         hessian_triu_size: int = 0,
         **kwargs
     ):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         super(MeanWithPotGradHessian, self).__init__()
         self.batch_shape = batch_shape
         self.grad_size = grad_size

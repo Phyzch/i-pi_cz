@@ -124,7 +124,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         )  # mean function for Gaussian Processes using gradient information
         # set initial value of mean constant
         train_target_func = (
-            train_targets[:, 0].detach().numpy()
+            train_targets[:, 0].cpu().detach().numpy()
         )  # function f in training data (other data are gradient df/dx)
         mean_constant_estimate = np.mean(train_target_func)
         self.mean_module.constant = torch.nn.Parameter(
@@ -236,7 +236,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         lengthscale_list = []
         for i in range(self.gpr_SE_kernel_number):
             length_scale = np.copy(
-                self.base_kernel_component_list[i].lengthscale[0].detach().numpy()
+                self.base_kernel_component_list[i].lengthscale[0].cpu().detach().numpy()
             )
             lengthscale_list.append(length_scale)
         lengthscale_list = np.array(lengthscale_list)
@@ -252,7 +252,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         outputscale_list = []
         for i in range(self.gpr_SE_kernel_number):
             output_scale = np.copy(
-                self.covar_module_component_list[i].outputscale.detach().numpy()
+                self.covar_module_component_list[i].outputscale.cpu().detach().numpy()
             )
             outputscale_list.append(output_scale)
         outputscale_list = np.array(outputscale_list)
@@ -265,7 +265,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         """
         task_noises_var = self.likelihood.task_noises
 
-        task_noises_var = task_noises_var.detach().numpy()
+        task_noises_var = task_noises_var.cpu().detach().numpy()
         task_noises_std = np.sqrt(task_noises_var)
 
         V_noises = task_noises_std[0]

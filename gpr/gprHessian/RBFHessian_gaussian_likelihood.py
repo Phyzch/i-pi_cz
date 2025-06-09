@@ -55,8 +55,8 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         grad_covar_factor_rank: int = 0,
         hessian_covar_factor_rank: int = 0,
     ):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         super(Likelihood, self).__init__()
-        self.device = noise_covar_factor_pot_grad_array.device
         if pot_noise_constraint is None:
             pot_noise_constraint = GreaterThan(1e-8)
 

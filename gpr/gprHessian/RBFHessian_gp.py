@@ -116,7 +116,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             training_data_hessian_data_point_index
         )
         assert len(train_targets) == target_len, "the length of target data is wrong."
-
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # set the likelihood function for Gaussian Process Regression model. Likelihood function describe the noise in data.
         likelihood = self._set_likelihood_noise_prior(
             train_inputs,
@@ -250,14 +250,14 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             # set Squared exponential kernel function which also includes hessian data.
             # This kernel assume data is 1d data, where we compress potential V, gradient g and hessian h into 1d.
             base_kernel = RBFKernelHessian(
-                ard_num_dims=ard_num_dims,
-                lengthscale_prior=lengthscale_prior,
-                lengthscale_constraint=lengthscale_constraint,
-                hessian_fixdofs=self.hessian_fixdofs,
+                ard_num_dims= ard_num_dims,
+                lengthscale_prior= lengthscale_prior,
+                lengthscale_constraint= lengthscale_constraint,
+                hessian_fixdofs= self.hessian_fixdofs,
             )
 
             covar_module = gpytorch.kernels.ScaleKernel(
-                base_kernel, outputscale_prior=outputscale_prior
+                base_kernel, outputscale_prior= outputscale_prior
             )
 
             # Initialize lengthscale and outputscale to the mean of priors. Or use the value specified by users.
@@ -269,7 +269,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 ):
                     # the size of initio value chosen by users match the size of kernel in the model, we set the value
                     covar_module.base_kernel.lengthscale[0] = torch.tensor(
-                        kernel_lengthscale_initio_value[i]
+                        kernel_lengthscale_initio_value[i],
+                        device= self.device
                     )
                 else:
                     print(
@@ -282,7 +283,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 covar_module.outputscale = outputscale_prior.mean
             else:
                 covar_module.outputscale = torch.tensor(
-                    kernel_outputscale_initio_value[i]
+                    kernel_outputscale_initio_value[i],
+                    device= self.device
                 )
 
             base_kernel_component_list.append(base_kernel)
@@ -664,7 +666,7 @@ def train_gpr_model(
         )
         loss_value = loss.item()
 
-        loss_prior = torch.tensor(0.0)
+        loss_prior = torch.tensor(0.0, device= model.device)
         loss_prior = -mll._add_other_terms(loss_prior, []) / M
         loss_prior_list.append(loss_prior.item())
 
@@ -698,7 +700,7 @@ def train_gpr_model(
 def predict_latent_function_GPHessian(
     model: GPModelWithHessians,
     test_inputs: torch.Tensor,
-    test_data_hessian_data_point_index: np.ndarray,
+    test_data_hessian_data_point_index_tensor: torch.Tensor,
 ):
     """
     predict the latent function (Gaussian distribution) for test data.
@@ -717,12 +719,10 @@ def predict_latent_function_GPHessian(
               grads_var: [test_data_num, ndofs]. variance of posterior predictions for gradients.
               hessians_var: [test_data_with_hessian_number, ndofs, ndofs]: variance of posterior predictions for hessians.
     """
-    test_data_hessian_data_point_index_tensor = torch.from_numpy(
-        test_data_hessian_data_point_index
-    )
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     test_data_num = test_inputs.shape[0]
-    test_data_with_hessian_number = len(test_data_hessian_data_point_index)
+    test_data_with_hessian_number = len(test_data_hessian_data_point_index_tensor)
     ndofs = test_inputs.shape[1]
     fixdofs = np.array([])
 

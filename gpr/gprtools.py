@@ -59,10 +59,10 @@ def predict_latent_function_gp_with_derivative(
 
         # return covariance matrix for each data set.
         # shape: [data_num, model.output_dim, model.output_dim]
-        test_covariance_list = torch.zeros([data_num, model.output_dim, model.output_dim])
+        test_covariance_list = torch.zeros([data_num, model.output_dim, model.output_dim], device= model.device)
         for i in range(data_num):
-            index = np.arange(i, model.output_dim * data_num, data_num)
-            index_2d = np.meshgrid(index, index, indexing= 'ij')
+            index = torch.arange(i, model.output_dim * data_num, data_num, device= model.device)
+            index_2d = torch.meshgrid(index, index, indexing= 'ij')
             test_data_point_covariance = test_covariance[index_2d[0], index_2d[1]]
             test_covariance_list[i] = test_data_point_covariance
         
@@ -157,12 +157,12 @@ def update_model_with_new_data(
 
     # check the data type of input training data. If it's not torch.Tensor, convert it to torch.Tensor.
     if not isinstance(new_train_inputs, torch.Tensor):
-        new_train_inputs_tensor = torch.from_numpy(np.array(new_train_inputs))
+        new_train_inputs_tensor = torch.from_numpy(np.array(new_train_inputs)).to(device= model.device)
     else:
         new_train_inputs_tensor = torch.clone(new_train_inputs)
 
     if not isinstance(new_train_targets, torch.Tensor):
-        new_train_targets_tensor = torch.from_numpy(np.array(new_train_targets))
+        new_train_targets_tensor = torch.from_numpy(np.array(new_train_targets)).to(device= model.device)
     else:
         new_train_targets_tensor = torch.clone(new_train_targets)
 
@@ -180,8 +180,8 @@ def update_model_with_new_data(
     )
 
     # filter the new inputs which is too close to the existing data point.
-    new_train_inputs_numpy = new_train_inputs_tensor.numpy()
-    train_inputs_numpy = train_inputs.numpy()
+    new_train_inputs_numpy = new_train_inputs_tensor.cpu().numpy()
+    train_inputs_numpy = train_inputs.cpu().numpy()
 
     # filter the training input data to delete the one which is too close to the existing data.
     filtered_new_train_inputs_index = filter_new_training_data(
@@ -578,6 +578,9 @@ class GPModelWithDerivativesWrapper:
         )
         self.train_cartesian_targets = train_cartesian_targets  # training targets in cartesian coordinate (V, dV/dx)
 
+        # put tensor on gpu if cuda is available
+        cuda_available = torch.cuda.is_available()
+        self.device = torch.device('cuda' if cuda_available else 'cpu')
 
         # --------- Transform coordinate and gradient from Cartesian coordinate into the internal coordinate.
         train_inputs, train_targets, likelihood_noise_variance = self.transform_data_to_internal_coordinate(
@@ -638,7 +641,7 @@ class GPModelWithDerivativesWrapper:
 
         # ------- transform input from numpy array to torch.tensor -----------
         (moving_train_inputs, moving_train_targets) = map(
-            torch.from_numpy, (moving_train_inputs, moving_train_targets)
+            lambda x: torch.from_numpy(x).to(device= self.device), (moving_train_inputs, moving_train_targets)
         )
 
         # -------- fixing certain dofs. -----------------
@@ -785,7 +788,7 @@ class GPModelWithDerivativesWrapper:
 
         # transform to internal coordinate q. normalization + filter fixed dofs.
         moving_test_q = self.get_free_moving_internal_coordinate(test_x_array)
-        moving_test_q = torch.from_numpy(moving_test_q)
+        moving_test_q = torch.from_numpy(moving_test_q).to(device= self.device)
 
         # use Gaussian process regression model to make prediction
         moving_normalized_test_mean, moving_normalized_test_covar_matrix = (
@@ -858,9 +861,9 @@ class GPModelWithDerivativesWrapper:
 
     def update_model_with_new_data(
         self, 
-        new_train_x, 
-        new_train_V, 
-        new_train_grad_x, 
+        new_train_x: np.ndarray, 
+        new_train_V: np.ndarray, 
+        new_train_grad_x: np.ndarray, 
         distance_cutoff,
         train_bool= True
     ):
@@ -913,7 +916,7 @@ class GPModelWithDerivativesWrapper:
 
         # transform numpy array into tensor.
         (moving_new_train_inputs, moving_new_train_targets) = map(
-            torch.from_numpy, (moving_new_train_inputs, moving_new_train_targets)
+            lambda x: torch.from_numpy(x).to(device= self.device), (moving_new_train_inputs, moving_new_train_targets)
         )
 
         # we only add new training data if they are not too close to each other.
@@ -1058,9 +1061,14 @@ class GPModelWithDerivativesWrapper:
             )
         )
         free_moving_normalized_force = free_moving_normalized_targets[:, 1:]
-        free_moving_normalized_force_range = np.max(
-            free_moving_normalized_force, axis=0
-        ) - np.min(free_moving_normalized_force, axis=0)
+        free_moving_normalized_force_range = (np.max(
+            free_moving_normalized_force, 
+            axis=0
+        ) - 
+        np.min(free_moving_normalized_force, 
+                axis=0
+              )
+        )
 
         return free_moving_normalized_force_range
 

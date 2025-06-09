@@ -166,8 +166,8 @@ class NormalizeTrainingData(object):
     def inverse_normalization_transform(
         self, 
         V_normalized, 
-        grad_V_normalized, 
-        hessian_V_normalized
+        grad_V_normalized: np.ndarray, 
+        hessian_V_normalized: np.ndarray
     ):
         """
         inverse the normalization procedure for potential V, gradients and hessians.
@@ -201,8 +201,8 @@ class NormalizeTrainingData(object):
 
     def normalize_noise_var(self, 
                             pot_noise_var, 
-                            force_noise_var, 
-                            hessian_noise_var):
+                            force_noise_var: np.ndarray, 
+                            hessian_noise_var: np.ndarray):
         """
         normalize the variance of noise by scaling it by self.V_range.
         Note the re-scaling due to the input rescaling is performed in noise_covar_factor matrix. 
@@ -221,8 +221,8 @@ class NormalizeTrainingData(object):
     def inverse_normalize_noise_var(
         self,
         normalized_pot_noise_var,
-        normalized_force_noise_var,
-        normalized_hessian_noise_var,
+        normalized_force_noise_var: np.ndarray,
+        normalized_hessian_noise_var: np.ndarray,
     ):
         """
         inverse the normalization procedure for the variance of the noise
@@ -900,6 +900,7 @@ class GPModelWithHessiansWrapper:
         (4) fix certain dofs that is not moving. only put free moving dofs into GPR modeling.
         (5) transform potential, gradient and hessian into 1d data array.
         """
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         M_H = len(training_data_hessian_data_point_index_array)
         hessian_fixdofs = np.array([])
         assert (
@@ -1038,11 +1039,11 @@ class GPModelWithHessiansWrapper:
         )
 
         # Transform the numpy array to torch.Tensor. The Gpytorch need to deal with troch.Tensor instead of numpy.ndarray.
-        hessian_fixdofs_tensor = torch.tensor([])
+        hessian_fixdofs_tensor = torch.tensor([], device= self.device)
 
         (moving_normalized_train_inputs_tensor, train_targets_tensor, hessian_data_point_index_tensor,
          noise_covar_factor_pot_grad_array, noise_covar_factor_with_hessian_array) = map(
-             torch.from_numpy, 
+             lambda x: torch.from_numpy(x).to(device= self.device), 
              (
                  moving_normalized_train_inputs,
                  train_targets,
@@ -1460,18 +1461,18 @@ class GPModelWithHessiansWrapper:
             # take upper triangle part of hessian (this is what we put in GPR model)
             ref_mean_hessian_q_upper_triag = take_upper_triangular_part(ref_mean_hessian_q)
 
-            ref_mean_q_tensor = torch.tensor(ref_mean_q)
-            ref_mean_V_tensor = torch.tensor(ref_mean_V)
-            ref_mean_grad_q_tensor = torch.tensor(ref_mean_grad_q)
-            ref_mean_hessian_q_tensor = torch.tensor(ref_mean_hessian_q)
-            ref_mean_hessian_q_upper_triag_tensor = torch.tensor(ref_mean_hessian_q_upper_triag)
+            ref_mean_q_tensor = torch.tensor(ref_mean_q, device= self.device)
+            ref_mean_V_tensor = torch.tensor(ref_mean_V, device= self.device)
+            ref_mean_grad_q_tensor = torch.tensor(ref_mean_grad_q, device= self.device)
+            ref_mean_hessian_q_tensor = torch.tensor(ref_mean_hessian_q, device= self.device)
+            ref_mean_hessian_q_upper_triag_tensor = torch.tensor(ref_mean_hessian_q_upper_triag, device= self.device)
 
         else:
-            ref_mean_q_tensor = torch.tensor([])
-            ref_mean_V_tensor = torch.tensor([])
-            ref_mean_grad_q_tensor = torch.tensor([])
-            ref_mean_hessian_q_tensor = torch.tensor([])
-            ref_mean_hessian_q_upper_triag_tensor = torch.tensor([])
+            ref_mean_q_tensor = torch.tensor([], device= self.device)
+            ref_mean_V_tensor = torch.tensor([], device= self.device)
+            ref_mean_grad_q_tensor = torch.tensor([], device= self.device)
+            ref_mean_hessian_q_tensor = torch.tensor([], device= self.device)
+            ref_mean_hessian_q_upper_triag_tensor = torch.tensor([], device= self.device)
 
         return (
             ref_mean_q_tensor,
@@ -1480,12 +1481,6 @@ class GPModelWithHessiansWrapper:
             ref_mean_hessian_q_tensor,
             ref_mean_hessian_q_upper_triag_tensor,
         )
-
-    def rescale_likelihood_noise(self):
-        """
-        Re-scale the likelihood noise covariance matrix if the noise itself is too large.
-        """
-
 
     def predict_latent_function(
         self,
@@ -1518,8 +1513,12 @@ class GPModelWithHessiansWrapper:
             self.get_free_moving_internal_coordinate(
                 test_x
                 )
-        )
-
+        ).to(device= self.device)
+        
+        test_hessian_data_point_index_tensor = torch.from_numpy(
+            test_hessian_data_point_index
+            ).to(device= self.device)
+        
         # use Gaussian process regression model to make prediction
         (
             pots,
@@ -1529,7 +1528,7 @@ class GPModelWithHessiansWrapper:
             moving_grads_q_var,
             moving_hessians_q_var,
         ) = gpr.gprHessian.RBFHessian_gp.predict_latent_function_GPHessian(
-            self.gpr_model, moving_normalized_test_q_tensor, test_hessian_data_point_index
+            self.gpr_model, moving_normalized_test_q_tensor, test_hessian_data_point_index_tensor
         )
 
         # inverse the normalization procedure for mean value and variance.
@@ -1798,7 +1797,7 @@ class GPModelWithHessiansWrapper:
          new_hessian_data_point_index_tensor, \
          new_noise_covar_factor_pot_grad_array, \
          new_noise_covar_factor_with_hessian_array) = map(
-             torch.from_numpy,
+             lambda x: torch.from_numpy(x).to(device= self.device),
              (
                  new_train_inputs,
                  new_train_targets,
@@ -1852,7 +1851,7 @@ class GPModelWithHessiansWrapper:
         check the length scale for Gaussian Process Regression model.
         """
         # the range of data in internal coordinate.
-        moving_inputs = self.gpr_model.train_inputs[0].detach().numpy() 
+        moving_inputs = self.gpr_model.train_inputs[0].detach().cpu().numpy() 
         input_range = np.max(moving_inputs, axis= 0) - np.min(moving_inputs, axis= 0)
 
         gpr_kernel_number = self.gpr_SE_kernel_number
@@ -1862,8 +1861,7 @@ class GPModelWithHessiansWrapper:
         for i in range(gpr_kernel_number):
             output_scale = np.copy(
                 self.gpr_model.covar_module_component_list[i]
-                .outputscale.detach()
-                .numpy()
+                .outputscale.detach().cpu().numpy()
             )
             gpr_hessian_kernel_outputscale.append(output_scale)
         gpr_hessian_kernel_outputscale = np.array(gpr_hessian_kernel_outputscale)
@@ -1875,7 +1873,7 @@ class GPModelWithHessiansWrapper:
             fitted_lengthscale = self.gpr_model.base_kernel_component_list[
                 i
             ].lengthscale
-            fitted_lengthscale = fitted_lengthscale.detach().numpy()[0]
+            fitted_lengthscale = fitted_lengthscale.detach().cpu().numpy()[0]
             gpr_hessian_lengthscale_ratio = fitted_lengthscale / input_range
             gpr_hessian_lengthscale_ratio_list.append(gpr_hessian_lengthscale_ratio)
             gpr_hessian_lengthscale_list.append(fitted_lengthscale)

@@ -194,7 +194,7 @@ class RBFKernelHessian(RBFKernel):
                 "Must provide hessian_data_point_index1 (index of hessian data points that contain hessian information) when using RBFKernelHessian"
             )
         elif type(hessian_data_point_index_1) == np.ndarray:
-            hessian_data_point_index_1 = torch.from_numpy(hessian_data_point_index_1)
+            hessian_data_point_index_1 = torch.from_numpy(hessian_data_point_index_1).device(x1.device)
         elif type(hessian_data_point_index_1) != torch.Tensor:
             raise RuntimeError(
                 "the data type of hessian_data_point_index_1 must be torch.Tensor. The data type now is: "
@@ -206,7 +206,7 @@ class RBFKernelHessian(RBFKernel):
                 "Must provide hessian_data_point_index2 (index of hessian data points that contain hessian information) when using RBFKernelHessian"
             )
         elif type(hessian_data_point_index_2) == np.ndarray:
-            hessian_data_point_index_2 = torch.from_numpy(hessian_data_point_index_2)
+            hessian_data_point_index_2 = torch.from_numpy(hessian_data_point_index_2).device(x2.device)
         elif type(hessian_data_point_index_2) != torch.Tensor:
             raise RuntimeError(
                 "the data type of hessian_data_point_index_2 must be torch.Tensor. The data type now is: "
