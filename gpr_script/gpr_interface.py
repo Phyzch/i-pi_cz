@@ -109,13 +109,13 @@ class ActiveLearning(object):
 
         # store internal dofs in the gpr model        
         gpr_util.store_fixed_internal_dofs_gpr_model(
-            self.gpr_model,
+            gpr_model,
             prefix= neb_final_gpr_folder
         )
 
         # store training hyperparameters in the gpr model.
         gpr_util.store_training_hyperparameter_in_gpr_model(
-            self.gpr_model,
+            gpr_model,
             neb_final_gpr_folder
         )
 
@@ -147,7 +147,6 @@ class ActiveLearning(object):
         # this will enable the motion object to use gpr model to predict potential and force.
         self.coordinate_transformer = coordinate_transformer
         self.gpr_model = gpr_model 
-
         self.motion.bind_gpr_model(gpr_model, coordinate_transformer)
 
         # check the training error and cross-validation error of the gpr model.
