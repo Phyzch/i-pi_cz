@@ -180,10 +180,10 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": str,
                 "default": "neb",
-                "options": ["neb", "string", "improved_string"],
+                "options": ["neb", "string"],
                 "help": """ optimization method for instanton path searching.
-                We provide 3 different methods: LINEB (J. Chem. Phys. 148, 102334 (2018)), 
-                string (Phys. Rev. B 66, 052301) and improved string method (J. Chem. Phys. 126, 164103 (2007))
+                We provide 2 different methods: LINEB (J. Chem. Phys. 148, 102334 (2018)) and
+                string method (Phys. Rev. B 66, 052301) 
                 """
             }
         ),
