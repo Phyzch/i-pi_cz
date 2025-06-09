@@ -18,18 +18,16 @@ from ipi.utils import units
 from ipi.engine.normalmodes import NormalModes
 from ipi.engine.motion import Motion
 from ipi.utils.depend import dstrip
-import ipi.utils.internal.internalcoord
 from ipi.utils.softexit import softexit
 from ipi.utils.messages import verbosity, info, warning
 from ipi.engine.beads import Beads
 import ipi.utils.nebinstool
-from ipi.utils.nebinstool import RK4
-import ipi.utils.internal.CoulombInternal  # 1/|ri-rj| : Coloumb matrix.
-import ipi.utils.internal.ZmatrixInternal  # primitive internal coordinate.
-import ipi.utils.gprtools
 import ipi.utils.nebinstgprtool
-import ipi.utils.nebinstool
-import ipi.utils.gpr_hessian_tools
+from ipi.utils.nebinstool import RK4
+import gpr.internal.CoulombInternal # 1/|ri-rj| : Coloumb matrix.
+import gpr.internal.ZmatrixInternal # primitive internal coordinate.
+import gpr.gprtools 
+import gpr.gpr_hessian_tools
 import ipi.utils.mintools
 import os
 from timeit import default_timer as timer
@@ -592,7 +590,7 @@ class MAPNEBGPRMover(Motion):
 
         
 
-    def bind_gpr_model(self, gpr_model:ipi.utils.gprtools.GPModelWithDerivativesWrapper, coordinate_transformer: ipi.utils.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
+    def bind_gpr_model(self, gpr_model:gpr.gprtools.GPModelWithDerivativesWrapper, coordinate_transformer: gpr.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
         """
         bind the gpr model and coordinate_transformer to the LINEGradientMapper class
         the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
@@ -2409,72 +2407,6 @@ class RP_MAP(object):
             f.write("temperature for instanton path : (K) \n")
             f.write(str(temp_kelvin) + "\n")
 
-    def construct_gpr_model_use_training_data_end_of_neb_stage(self):
-        """
-        construct gpr model by reading training data from file that stored at the end of 'neb' stage.
-        """
-        neb_final_gpr_folder = "neb_final_gpr_training"
-        cartesian_coordinate_x, training_V, training_forces = (
-            ipi.utils.nebinstgprtool.read_training_data(prefix= neb_final_gpr_folder)
-        )
-        training_V_shifted = training_V - self.energy_shift
-        training_grad = -training_forces
-
-        gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(
-            neb_final_gpr_folder
-        )
-
-        # initialize GPR model with training data read from the end of 'neb' stage run.
-        self.gpr_model = ipi.utils.gprtools.GPModelWithDerivativesWrapper(
-            cartesian_coordinate_x,
-            training_V_shifted,
-            training_grad,
-            self.rp_beads.natoms,
-            self.coordinate_transformer,
-            self.fix_dofs,
-            gpr_SE_kernel_number=self.gpr_SE_kernel_number,
-            kernel_outputscale=self.gpr_kernel_outputscale,
-            kernel_lengthscale_ratio=self.gpr_kernel_lengthscale_ratio,
-            noise_std=self.gpr_noise_std,
-            train_bool= False,
-            gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-            gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
-            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
-            singular_value_cutoff=  self.gpr_covar_inverse_nugget
-        )
-
-        model_hyperparameter_exists = ipi.utils.nebinstgprtool.load_training_hyperparameter_in_gpr_model(
-            self.gpr_model, neb_final_gpr_folder
-        )
-
-        if not model_hyperparameter_exists:
-            # train the model and store the hyper-parameter
-            self.gpr_model.train_gpr()
-            ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_model(
-                self.gpr_model, neb_final_gpr_folder
-            )
-        
-        # store fixed internal dofs.
-        ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_model(
-            self.gpr_model,
-            prefix= neb_final_gpr_folder
-        )
-
-        # test training results.
-        _, predicted_grad, _, _ = (
-            self.gpr_model.predict_latent_function(
-                cartesian_coordinate_x
-            )
-        )
-        predicted_forces = - predicted_grad 
-        df = np.linalg.norm(
-            training_forces - predicted_forces, 
-            axis= 1
-        )
-        ab_initio_force_amplitude = np.linalg.norm(training_forces, axis= 1)
-        df_error = df / ab_initio_force_amplitude
-        print(f"@gpr_model: relative training error for force: {df_error}")
-
     def interpolate_ring_polymer_beads(self, t_list, v_list, x_list):
         """
         interpolate ring polymer beads from the imaginary time trajectory along Minimum Action Path (MAP).
@@ -2786,7 +2718,7 @@ class RP_MAP(object):
         # construct gpr hessian model. 
         # We have to train it here. First train with only potential and gradient data.
         self.gpr_hessian_model = (
-            ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
+            gpr.gpr_hessian_tools.GPModelWithHessiansWrapper(
                 cartesian_coordinate_x,
                 training_V_shifted,
                 training_grads,
@@ -2890,7 +2822,7 @@ class RP_MAP(object):
         )
 
         self.gpr_hessian_model = (
-            ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
+            gpr.gpr_hessian_tools.GPModelWithHessiansWrapper(
                 cartesian_coordinate_x,
                 training_V_shifted,
                 training_grads,
@@ -3023,7 +2955,7 @@ class RP_MAP(object):
 
         # use training data to create gpr_hessian_model
         self.gpr_hessian_model = (
-            ipi.utils.gpr_hessian_tools.GPModelWithHessiansWrapper(
+            gpr.gpr_hessian_tools.GPModelWithHessiansWrapper(
                 train_x,
                 training_V_shifted,
                 training_grads,

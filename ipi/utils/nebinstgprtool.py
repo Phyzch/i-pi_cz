@@ -4,16 +4,15 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 """
 
 import numpy as np
-from ipi.utils.gprtools import GPModelWithDerivativesWrapper
+from gpr.gprtools import GPModelWithDerivativesWrapper
 import re
 import os
-import ipi.utils.nebinstgprtool
 from ipi.utils.nebinstool import RK4
 import ipi.utils.nebinstool
 from ipi.utils.depend import dstrip
-from ipi.utils.gpr_hessian_tools import GPModelWithHessiansWrapper
+from gpr.gpr_hessian_tools import GPModelWithHessiansWrapper
 # import ipi.utils.internalcoordtools
-import ipi.utils.internal.ZmatrixInternal
+import gpr.internal.ZmatrixInternal
 import shutil
 from collections import namedtuple
 import h5py
@@ -1270,7 +1269,7 @@ def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper
 def analyze_transformation_between_cartesian_coord_and_internal_coord(coord_x,
                                                                       grad_x,
                                                                       hessian_x,
-                                                                      coordinate_transformer: ipi.utils.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
+                                                                      coordinate_transformer: gpr.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
     """
     analyze the transformation of gradient and hessian between the Cartesian coordinate
     and the internal coordinate. 

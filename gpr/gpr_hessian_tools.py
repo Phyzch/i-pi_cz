@@ -6,14 +6,14 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 
 import torch
 import numpy as np
-# from ipi.utils.internalcoordtools import non_redundant_coordinate_transformer
-from ipi.utils.internal.ZmatrixInternal import non_redundant_coordinate_transformer # type: ignore
+# from gpr.internalcoordtools import non_redundant_coordinate_transformer
+from gpr.internal.ZmatrixInternal import non_redundant_coordinate_transformer # type: ignore
 from .gprHessian.RBFHessian_gp import GPModelWithHessians, train_gpr_model
 from .gprHessian.RBFHessian_utils import (
     take_upper_triangular_part,
     transform_1d_train_targets_into_pots_grads_hessians,
 )
-import ipi.utils.gprHessian.RBFHessian_gp
+import gpr.gprHessian.RBFHessian_gp
 import os 
 import shutil
 from ipi.utils.messages import  warning
@@ -1094,7 +1094,7 @@ class GPModelWithHessiansWrapper:
 
         if train_bool:
             # train the gaussian process regression model.
-            ipi.utils.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
+            gpr.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
 
     def transform_data_into_internal_coordinate(self, 
                                                 train_x, 
@@ -1528,7 +1528,7 @@ class GPModelWithHessiansWrapper:
             pots_var,
             moving_grads_q_var,
             moving_hessians_q_var,
-        ) = ipi.utils.gprHessian.RBFHessian_gp.predict_latent_function_GPHessian(
+        ) = gpr.gprHessian.RBFHessian_gp.predict_latent_function_GPHessian(
             self.gpr_model, moving_normalized_test_q_tensor, test_hessian_data_point_index
         )
 
@@ -1809,7 +1809,7 @@ class GPModelWithHessiansWrapper:
          )
 
         # update the Gaussian Process Regression model with new data.
-        ipi.utils.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(
+        gpr.gprHessian.RBFHessian_gp.update_model_with_new_data_GPHessian(
             self.gpr_model,
             new_train_inputs_tensor,
             new_train_targets_tensor,
