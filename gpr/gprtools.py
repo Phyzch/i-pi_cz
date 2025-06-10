@@ -581,6 +581,11 @@ class GPModelWithDerivativesWrapper:
         # put tensor on gpu if cuda is available
         cuda_available = torch.cuda.is_available()
         self.device = torch.device('cuda' if cuda_available else 'cpu')
+        print("GPytorch for force prediction:")
+        if cuda_available:
+            print("CUDA is available. GPU is enabled.")
+        else:
+            print("CUDA is not available. Running Gpytorch on CPU.")
 
         # --------- Transform coordinate and gradient from Cartesian coordinate into the internal coordinate.
         train_inputs, train_targets, likelihood_noise_variance = self.transform_data_to_internal_coordinate(

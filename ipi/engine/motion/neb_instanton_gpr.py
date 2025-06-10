@@ -1270,12 +1270,6 @@ class LINEBMethod(DummyMethod):
         self.spring_k = average_action_force / (path_distance / (10 * bead_number))
         self.gm.spring_k = self.spring_k
 
-        # check spring_k * (dt)^2. We use stability criterion by setting spring_k * dt^2 = 0.25.
-        # val1 = spring_k * np.power(dt, 2)
-        # spring_k_ratio = self.optarrays["dynamical_adjust_ratio"]["spring_k"]
-        # spring_k_scale = spring_k_ratio / val1
-        # self.spring_k = self.spring_k * spring_k_scale
-        # self.gm.spring_k = self.gm.spring_k * spring_k_scale
 
 class StringMethod(DummyMethod):
     """
@@ -2659,6 +2653,7 @@ class RP_MAP(object):
         print(
             "read_gpr_hessian_folder not provided. Will create gpr_hessian model from training data in gpr model."
         )
+        # the initial data for gpr_hessian model is the same as gpr_model.
         cartesian_coordinate_x = np.copy(self.gpr_model.train_cartesian_inputs)
         training_V_shifted = np.copy(self.gpr_model.train_cartesian_targets[:, 0])
         training_grads = np.copy(self.gpr_model.train_cartesian_targets[:, 1:])
@@ -2711,9 +2706,13 @@ class RP_MAP(object):
             np.array([first_hessian_data_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
         )
 
-        # initially no hessian training data.
-        hessian_data_list = np.array([])
-        hessian_index_list = np.array([])
+        # include the reference hessian data point into the training data.
+        cartesian_coordinate_x = np.concatenate([cartesian_coordinate_x, [first_hessian_data_x]], axis= 0)
+        training_V_shifted = np.concatenate([training_V_shifted, ref_V_shifted], axis= 0)
+        training_grads = np.concatenate([training_grads, [ref_grads]], axis= 0)
+        hessian_data_list = np.array([ref_hessians])
+        hessian_index = (cartesian_coordinate_x.shape[0] - 1)
+        hessian_index_list = np.array([hessian_index])
 
         # construct gpr hessian model. 
         # We have to train it here. First train with only potential and gradient data.
@@ -2748,28 +2747,6 @@ class RP_MAP(object):
         # test the training error of GPR model.
         ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
 
-        # After train the model with only potential and gradient,
-        # the hyper-parameter should be close to the minimum point after adding hessian data.
-        # Now add hessian data & re-train the model.
-        new_pots = dstrip(new_forces.pots).copy()
-        new_grads = np.array([ref_grads])
-        new_hessians = np.array([ref_hessians])
-        new_hessian_point_x = np.array([first_hessian_data_x])
-        print("We are going to train the gpr model with hessian data.\
-                This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
-        ipi.utils.nebinstgprtool.add_hessian_data_to_model(
-            self.gpr_hessian_model,
-            new_hessian_point_x,
-            new_pots,
-            new_grads,
-            new_hessians,
-            self.energy_shift,
-            retrain_bool= self.train_hessian_model_bool
-        )
-
-        # test the training error of GPR model.
-        ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
-        pass
     
     
 

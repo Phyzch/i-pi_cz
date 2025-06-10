@@ -900,7 +900,14 @@ class GPModelWithHessiansWrapper:
         (4) fix certain dofs that is not moving. only put free moving dofs into GPR modeling.
         (5) transform potential, gradient and hessian into 1d data array.
         """
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        cuda_available = torch.cuda.is_available()
+        self.device = torch.device('cuda' if cuda_available else 'cpu')
+        print("GPytorch for force & hessian prediction.")
+        if cuda_available:
+            print("CUDA is available. GPU is enabled.")
+        else:
+            print("CUDA is not available. Running Gpytorch on CPU.")
+
         M_H = len(training_data_hessian_data_point_index_array)
         hessian_fixdofs = np.array([])
         assert (
