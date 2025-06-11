@@ -6,6 +6,8 @@ import ipi.utils.nebinstool
 import re
 import os 
 from gpr.gprtools import GPModelWithDerivativesWrapper
+import shutil 
+import h5py 
 
 def extract_number_from_line(line):
     line = re.split(" ", line.strip())
@@ -122,3 +124,35 @@ def check_gpr_fitting_error(
     )
     print("\n")
     return predicted_V_shift, predicted_gpr_bead_force, ab_initio_pot, ab_initio_force
+
+def store_training_data(cartesian_coordinate_x, V, forces, prefix):
+    """
+    store the initial training data for training of GPR model.
+    In this way, when we do fine-tuning of hyper-parameter for GPR model, we do not to compute ab-initio potential and force again.
+
+    :param: cartesian_coordinate_x: cartesian coordinate of training data. in atomic unit
+    :param:  V: potential V (without shifted by energy shift). in Hatree unit
+    :param: forces: forces at data point. in Hatree / atomic unit.
+    :param: output_maker: output_maker provided by i-pi program. For output streaming.
+    """
+    training_bead_number, ndofs = cartesian_coordinate_x.shape 
+    # create folder with prefix
+    backup_prefix = "#" + prefix 
+    if os.path.exists(backup_prefix):
+        shutil.rmtree(backup_prefix)
+    if os.path.exists(prefix):
+        shutil.move(prefix, backup_prefix)
+    os.mkdir(prefix)
+
+    # use HDF5 file store data
+    h5_file_path = os.path.join(prefix, "training_data.h5")
+
+    # write data to hdf5 file 
+    with h5py.File(h5_file_path, "w") as h5f:
+        h5f.create_dataset("cartesian_coordinate_x", data= cartesian_coordinate_x, compression= 'gzip')
+        h5f.create_dataset("V", data= V, compression= "gzip")
+        h5f.create_dataset("forces", data= forces, compression= "gzip")
+        h5f.attrs["training_bead_number"] = training_bead_number
+        h5f.attrs["ndofs"] = ndofs
+    
+    print(f"Training data successfully stored in {h5_file_path}")

@@ -2264,7 +2264,7 @@ class RP_MAP(object):
         """
         self.neb_beads.q[:] = neb_beads.q[:]  # initialize neb beads position.
 
-        # Cubic interpolation of neb beads to enable accurate dynamics evolution.
+        # Cubic interpolation of neb beads to form the path.
         self.cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(
             np.copy(self.neb_beads.q),
             np.copy(self.neb_beads.q)
@@ -2461,162 +2461,6 @@ class RP_MAP(object):
 
             self.rp_beads.q = rp_beads_q
 
-    def optimize_GPR_model_for_dynamics_evolution(self):
-        """
-        Add training data to GPR model and optimize hyper-parameters to make sure the GPR model generate accurate force along LI-NEB path to have correct temperature
-        This is achieved by cross-validation technique:
-        (1) Generate 50 data points along the LI-NEB path using cubic interpolation
-        (2) Randomly choose 10 data points from them as test data
-        (3) Use GPR model to predict the force, compute the force error
-        (4) Add more training data into the training set until the force error is small on testing data:
-            either relative force error is small or absolute force error is small.
-            The selection of the training data is based on the force uncertainty.
-        """
-        total_data_set_number = 50
-        testing_data_number = 5
-        # we interpolate the converged LI-NEB path with N + 2 data point, where 2 end data point is already in the training set of GPR model (as they are end points for LI-NEB path)
-        LINEB_path_x, _ = ipi.utils.nebinstool.path_cubic_interpolation(
-            self.neb_beads.q, total_data_set_number + 2
-        )
-        LINEB_path_x = LINEB_path_x[1:-1]
-
-        index_list = np.arange(total_data_set_number)
-        np.random.shuffle(
-            index_list
-        )  # shuffle the index to get test data and training data.
-
-        test_x = LINEB_path_x[index_list[:testing_data_number]]
-        unused_train_x = LINEB_path_x[index_list[testing_data_number:]]
-
-        # create beads and forces object for testing and training data set
-        test_beads = Beads(
-            self.neb_beads.natoms, 1
-        )  # bead object for instanton ring polymer
-        test_forces = self.rp_forces.copy(test_beads, self.dcell)
-
-        train_beads = Beads(self.neb_beads.natoms, 1)
-        train_forces = self.rp_forces.copy(train_beads, self.dcell)
-
-        # compute the ab-initio forces at the test location:
-        ab_initio_test_data_f = np.zeros([testing_data_number, 3 * self.rp_beads.natoms])
-        for i in range(testing_data_number):
-            test_beads.q[0] = test_x[i]
-            ab_initio_test_data_f[i] = dstrip(test_forces.f).copy()[0]
-
-        ab_initio_test_data_f_magnitude = np.linalg.norm(
-            ab_initio_test_data_f, axis=1
-        )  # magnitude of the ab initio force
-
-        # make predictions of forces using GPR model.
-        _, gpr_test_grad, _, _ = self.gpr_model.predict_latent_function(test_x)
-        gpr_test_f = -gpr_test_grad
-
-        test_f_diff = gpr_test_f - ab_initio_test_data_f
-        test_f_diff_magnitude = np.linalg.norm(
-            test_f_diff, axis=1
-        )  # absolute error on the test force
-        test_f_diff_magnitude_ratio = (
-            test_f_diff_magnitude / ab_initio_test_data_f_magnitude
-        )  # relative error on the test force.
-
-        pass_test_bool = False
-
-        while not pass_test_bool:
-            # see if the prediction on the test data is satisfactory:
-            pass_test_bool = True
-            for i in range(testing_data_number):
-                if (
-                    test_f_diff_magnitude_ratio[i]
-                    > self.gpr_relative_force_error_criterion
-                    and test_f_diff_magnitude[i]
-                    > self.gpr_absolute_force_error_criterion
-                ):
-                    pass_test_bool = False
-                    break
-
-            if pass_test_bool:
-                break
-
-            # select the point with the largest force variance
-            _, _, _, var_grad_x_trace = self.gpr_model.predict_latent_function(
-                unused_train_x
-            )
-            new_data_index = np.argmax(var_grad_x_trace)
-            new_train_x = unused_train_x[new_data_index]
-            new_train_x = np.array([new_train_x])
-            unused_train_x = np.delete(
-                unused_train_x, new_data_index, axis=0
-            )  # delete new data point from the unused training set
-
-            if len(unused_train_x) == 0:
-                # all training data set has been used but no satisfactory result achieved on test data.
-                print("\n")
-                print(
-                    "@WARNING: After adding all training data into the gpr model, the prediction of force on unseen test data is still unsatisfactory"
-                )
-                print("\n")
-                break
-
-            # compute ab initio potential and forces for the new training data set and add to the GPR model.
-            train_beads.q = new_train_x
-            new_train_V = dstrip(train_forces.pots).copy()
-            new_train_f = dstrip(train_forces.f).copy()
-            new_train_shifted_V = new_train_V - self.energy_shift
-            new_train_grad_x = -new_train_f
-            self.gpr_model.update_model_with_new_data(
-                new_train_x,
-                new_train_shifted_V,
-                new_train_grad_x,
-                self.distance_cutoff_for_training_data,
-                self.train_grad_model_bool
-            )
-
-            # update the test error on the unseen test data set
-            _, gpr_test_grad, _, _ = self.gpr_model.predict_latent_function(test_x)
-            gpr_test_f = -gpr_test_grad
-
-            test_f_diff = gpr_test_f - ab_initio_test_data_f
-            test_f_diff_magnitude = np.linalg.norm(
-                test_f_diff, axis=1
-            )  # absolute error on the test force
-            test_f_diff_magnitude_ratio = (
-                test_f_diff_magnitude / ab_initio_test_data_f_magnitude
-            )  # relative error on the test force.
-
-        print("\n")
-        print("@Update GPR model with more training data for dynamics along LINEB path")
-        print(
-            "absolute error for the force of the test data: "
-            + str(test_f_diff_magnitude)
-        )
-        print(
-            "relative error for the force of the test data: "
-            + str(test_f_diff_magnitude_ratio)
-        )
-        print("The force error along LI-NEB path is small. Pass the test.")
-        print("\n")
-
-        # update the data in the gpr training data folder.
-        train_x = self.gpr_model.train_cartesian_inputs
-        train_V = self.gpr_model.train_cartesian_targets[:, 0]
-        train_V_to_store = train_V + self.energy_shift
-        train_grad = self.gpr_model.train_cartesian_targets[:, 1:]
-        train_f_to_store = -train_grad
-
-        ipi.utils.nebinstgprtool.store_training_data(
-            train_x, train_V_to_store, train_f_to_store, prefix="neb_final_gpr_training"
-        )
-
-        neb_gpr_folder_path = "neb_final_gpr_training"
-        ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_model(self.gpr_model,
-                                                                            neb_gpr_folder_path)
-        
-        # store fixed dofs.
-        ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_model(
-            self.gpr_model,
-            prefix = neb_gpr_folder_path
-        )
-    
     def construct_selective_hessian_calculator(self, candidate_hessian_point_x):
         """
         initialize SelectiveHessianCalculation class.
@@ -3277,11 +3121,6 @@ class RP_MAP(object):
         Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
         """
         self.initialize(neb_beads)
-
-        # optimize GPR model to make sure it will give accurate force for dynamics.
-        # Separate point as test set and training set, add training set until the generalization error is small.
-        if self.test_gpr_model_along_instanton_path:
-            self.optimize_GPR_model_for_dynamics_evolution()
 
         # start classical dynamics along minimum action path (MAP) on the inverted potential.
         t_list, v_list, x_list = self.classical_dynamics_along_MAP()
