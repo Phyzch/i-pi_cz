@@ -10,6 +10,7 @@ from ipi.utils.depend import dstrip
 from ipi.utils.scripting import (
     InteractiveSimulation
 )
+import gpr.internal.ZmatrixInternal
 import ipi.utils.nebinstool
 import internal_util
 import gpr_util 
@@ -22,12 +23,10 @@ class ActiveLearning(object):
                  motion: MAPNEBGPRMover):
         self.sim = sim
         self.motion = motion 
+        self.gprForceMapper = GPRForceMapper(sim, motion)
 
         self.total_steps = sim.tsteps
-        # bead and forces for cross validation.
-        self.gpr_beads = Beads(motion.beads.natoms, 1)
-        self.gpr_forces = motion.forces.copy(self.gpr_beads, motion.cell)
-        self.energy_shift = self.motion.optarrays["energy_shift"]
+
 
     def run_one_step(self, write_outputs= True):
         """
@@ -60,6 +59,46 @@ class ActiveLearning(object):
         for step in range(self.sim.step, self.total_steps):
             self.run_one_step(write_outputs= write_outputs)
 
+    def initialize_gpr_model(self):
+        """
+        initialize the coordinate transformer and gpr model.
+        1. Initialize coordinate transformer to transform between internal coordinate and cartesian coordinate.
+        2. initialize GPR_Wrapper, which combines coordinate transformer and GPR model.
+        """
+        self.gprForceMapper.initialize_gpr_model()
+    
+    def update_gpr_model(self):
+        """
+        update the Gaussian Process Regression model at the end of each simulation step.
+        """
+        self.gprForceMapper.update_gpr_model()
+
+    def optimize_GPR_model_for_dynamics_evolution(self):
+        """
+        further optimize the GPR model to make sure GPR predicted force is accurate along the instanton path.
+        This is to ensure the temperature we get from the dynamical evolution is accurate.
+        """
+        self.gprForceMapper.optimize_GPR_model_for_dynamics_evolution()
+
+class GPRForceMapper(object):
+    """
+    Gaussian Process Regression (GPR) model to predict potential and force.
+    """
+    def __init__(self, 
+                 sim: InteractiveSimulation,
+                 motion: MAPNEBGPRMover):
+        """
+        bind the gpr model and coordinate_transformer.
+        All gpr model operation will be performed in this class.
+        """
+        self.sim = sim 
+        self.motion = motion 
+
+        # bead and forces for cross validation.
+        self.gpr_beads = Beads(motion.beads.natoms, 1)
+        self.gpr_forces = motion.forces.copy(self.gpr_beads, motion.cell)
+        self.energy_shift = self.motion.optarrays["energy_shift"]
+
     def initialize_internal_coord(self):
         """
         initialize the coordinate transformer between the internal coordinate and the Cartesian coordinate.
@@ -71,7 +110,7 @@ class ActiveLearning(object):
         coordinate_transformer = internal_util.create_coordinate_transformer(self.motion,
                                                                ref_x_list)
         return coordinate_transformer
-
+    
     def _initialize_gpr_model(self, train_x, train_V, train_grad, coordinate_transformer):
         """
         Initialize the GPR model.
@@ -136,37 +175,6 @@ class ActiveLearning(object):
         )
 
         return gpr_model
-
-    def initialize_gpr_model(self):
-        """
-        initialize the coordinate transformer and gpr model.
-        1. Initialize coordinate transformer to transform between internal coordinate and cartesian coordinate.
-        2. initialize GPR_Wrapper, which combines coordinate transformer and GPR model.
-        """
-        coordinate_transformer = self.initialize_internal_coord()
-
-        # for the training data, we have the option to read it from .txt file or generate it using the current geometry.
-        # this provides the flexibility for choosing the training data for the initial model.
-        train_x, train_V, train_grad = self.motion._get_training_data()
-
-        # time this function.
-        start_time = timer()
-        # initialize the gpr model use training data and internal coordinate transformer.
-        gpr_model = self._initialize_gpr_model(train_x, train_V, train_grad, coordinate_transformer)
-        
-        end_time = timer() 
-        time_elapsed = (end_time - start_time) / 60
-        print(f"the time used for construct \
-                gpr model to predict force along instanton path is: {time_elapsed} min")
-
-        # bind the coordinate transformer and gpr model to the motion object.
-        # this will enable the motion object to use gpr model to predict potential and force.
-        self.coordinate_transformer = coordinate_transformer
-        self.gpr_model = gpr_model 
-        self.motion.bind_gpr_model(gpr_model, coordinate_transformer)
-
-        # check the training error and cross-validation error of the gpr model.
-        self.check_training_result()
 
     def check_training_result(self):
         """
@@ -249,6 +257,38 @@ class ActiveLearning(object):
                 test_x
             )
     
+    def initialize_gpr_model(self):
+        """
+        initialize the coordinate transformer and gpr model.
+        1. Initialize coordinate transformer to transform between internal coordinate and cartesian coordinate.
+        2. initialize GPR_Wrapper, which combines coordinate transformer and GPR model.
+        """
+        coordinate_transformer = self.initialize_internal_coord()
+
+        # for the training data, we have the option to read it from .txt file or generate it using the current geometry.
+        # this provides the flexibility for choosing the training data for the initial model.
+        train_x, train_V, train_grad = self.motion._get_training_data()
+
+        # time this function.
+        start_time = timer()
+        # initialize the gpr model use training data and internal coordinate transformer.
+        gpr_model = self._initialize_gpr_model(train_x, train_V, train_grad, coordinate_transformer)
+        
+        end_time = timer() 
+        time_elapsed = (end_time - start_time) / 60
+        print(f"the time used for construct \
+                gpr model to predict force along instanton path is: {time_elapsed} min")
+
+        # bind the coordinate transformer and gpr model to the motion object.
+        # this will enable the motion object to use gpr model to predict potential and force.
+        self.coordinate_transformer = coordinate_transformer
+        self.gpr_model = gpr_model 
+        self.motion.bind_gpr_model(gpr_model, coordinate_transformer)
+
+        # check the training error and cross-validation error of the gpr model.
+        self.check_training_result()
+
+    # update the gpr model
     def update_gpr_model(self):
         """
         update the Gaussian Process Regression model at the end of each simulation step.
@@ -267,7 +307,7 @@ class ActiveLearning(object):
         else:
             # compute ab initio force & force error before update gpr model.
             new_ab_initio_pots, new_ab_initio_forces = self.before_gpr_update_force_error(new_training_x)
-            # update the gpr model.
+            # update the gpr model (subroutine).
             self._update_gpr_model(new_training_x, new_ab_initio_pots, new_ab_initio_forces)
             # check force error after update the gpr model.
             self.after_gpr_update_force_error(new_training_x, new_ab_initio_forces)
@@ -420,7 +460,6 @@ class ActiveLearning(object):
         self.force_diff_ratio_after_update_list = []
         self.force_diff_amplitude_after_update_list = [] 
     
-
     def update_GPR_model_with_one_new_data_point(self, unused_train_x, train_beads, train_forces):
         """
         update the GPR model with 1 training data point with the highest uncertainty variance.
@@ -598,3 +637,4 @@ class ActiveLearning(object):
             prefix = neb_gpr_folder_path
         )
         # -------------------------
+    
