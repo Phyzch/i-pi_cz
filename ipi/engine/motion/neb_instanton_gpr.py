@@ -2272,7 +2272,7 @@ class RP_MAP(object):
 
         print("use cubic interpolation to generate MAP path")
 
-
+# -------   for generating the ring polymer beads along the instanton path -------
     def classical_dynamics_along_MAP(self):
         """
         classical dynamics on the inverted potential -V(x)
@@ -2444,6 +2444,22 @@ class RP_MAP(object):
             self.output_maker,
         )
 
+
+    def generate_ring_polymer_beads(self, neb_beads, step):
+        """
+        Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
+        """
+        self.initialize(neb_beads)
+
+        # start classical dynamics along minimum action path (MAP) on the inverted potential.
+        t_list, v_list, x_list = self.classical_dynamics_along_MAP()
+
+        # interpolate the ring polymer beads from the generated trajectory.
+        self.interpolate_ring_polymer_beads(t_list, v_list, x_list, step)
+        
+# -------- for generating ring polymer beads along the instanton path -------
+
+# ------ for hessian calculation ---------------
     def compute_ring_polymer_hessian(self):
         """
         compute hessian of ring polymer
@@ -2542,6 +2558,7 @@ class RP_MAP(object):
             folder
         )
 
+# ------- construct gpr hessian model --------------------
   
     def load_gpr_hessian_training_data(self, 
                                        candidate_hessian_point_x):
@@ -2801,6 +2818,9 @@ class RP_MAP(object):
 
             pass
 
+# ----- constructing gpr hessian model  END -------
+
+# ------ add new grad & hessian data to gpr_hessian model --------- 
     def add_new_hessian_data(self):
         """
         (1) compute ab initio hessian at new hessian data index.
@@ -3063,6 +3083,8 @@ class RP_MAP(object):
         self.store_ab_initio_hessian_and_grad_data(candidate_grad_point_x,
                                                 candidate_hessian_point_x)
 
+# ---------- add new grad & hessian data to the gpr_hessian model END ----------
+
     def predict_ring_polymer_hessians_using_gpr(self):
         """
         predict hessians of all ring polymer beads using Gaussian Process regression model. (self.gpr_hessian)
@@ -3116,17 +3138,7 @@ class RP_MAP(object):
                 self.predict_ring_polymer_hessians_using_gpr()
 
 
-    def generate_ring_polymer_beads(self, neb_beads, step):
-        """
-        Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
-        """
-        self.initialize(neb_beads)
 
-        # start classical dynamics along minimum action path (MAP) on the inverted potential.
-        t_list, v_list, x_list = self.classical_dynamics_along_MAP()
-
-        # interpolate the ring polymer beads from the generated trajectory.
-        self.interpolate_ring_polymer_beads(t_list, v_list, x_list, step)
 
 
 
