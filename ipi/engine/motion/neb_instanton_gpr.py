@@ -328,6 +328,9 @@ class MAPNEBGPRMover(Motion):
         # number of optimization steps.
         SharedData.inner_loop_optimization_step = 0
 
+        # instanton temperature available
+        self.instanton_temperature_avail = False
+
     def bind(self, ens, beads, nm, cell, bforce, prng, omaker):
         super(MAPNEBGPRMover, self).bind(ens, beads, nm, cell, bforce, prng, omaker)
         if len(self.fixatoms) == len(self.beads[0]):
@@ -502,14 +505,21 @@ class MAPNEBGPRMover(Motion):
         )
         print("total optimization step for neb stage: " + str(SharedData.inner_loop_optimization_step))
 
-        self.rp_map.generate_ring_polymer_beads(self.beads, step)
+        if not self.instanton_temperature_avail:
+            # first compute the temperature along the instanton path and generate ring polymer beads along the path.
+            # once done, we predict gpr hessian in the next step.
+            self.rp_map.generate_ring_polymer_beads(self.beads, step)
+            # set temperature available = True to enable follow up Hessian prediction.
+            self.instanton_temperature_avail = True 
+        else:
+            # use GPR to predict hessians for ring polymer beads or compute it ab-initio way.
+            self.rp_map.generate_hessian_along_instanton_path()
+            # save the potential, q, temperature, hessian of instanton beads for RESTART.
+            self.save_instanton_ring_polymer()
 
-        # save the potential, q, temperature, hessian of instanton beads for RESTART.
-        self.save_instanton_ring_polymer()
-
-        # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
-        # therefore, we set ["stage"] == "converged" and exit at next step.
-        self.options["stage"] = "converged"
+            # ! If we exit here, the RESTART file will not record the hessian and instanton geometry we just computed.
+            # therefore, we set ["stage"] == "converged" and exit at next step.
+            self.options["stage"] = "converged"
 
     def converge_stage_motion(self, step):
         """
@@ -2245,7 +2255,7 @@ class RP_MAP(object):
         self.ridge_regularization_alpha = nebmover.optarrays["ridge_regularization_alpha"]
         self.gpr_covar_inverse_nugget = nebmover.optarrays["gpr_covar_inverse_nugget"]
 
-    def initialize(self, neb_beads, neb_final_step):
+    def initialize(self, neb_beads):
         """
         initialize the RP_MAP dynamics. This should be called after beads have converged to minimum action path using line integral nudged elastic band method.
         :param: neb_beads: beads in MAPNEBMover, with optimized geometry for Minimum Action Path.
@@ -2262,7 +2272,6 @@ class RP_MAP(object):
 
         print("use cubic interpolation to generate MAP path")
 
-        self.final_step = neb_final_step
 
     def classical_dynamics_along_MAP(self):
         """
@@ -2401,7 +2410,7 @@ class RP_MAP(object):
             f.write("temperature for instanton path : (K) \n")
             f.write(str(temp_kelvin) + "\n")
 
-    def interpolate_ring_polymer_beads(self, t_list, v_list, x_list):
+    def interpolate_ring_polymer_beads(self, t_list, v_list, x_list, step):
         """
         interpolate ring polymer beads from the imaginary time trajectory along Minimum Action Path (MAP).
         t_list , v_list, x_list: list of time / velocity / trajectory from MD simulation along path.
@@ -2424,7 +2433,7 @@ class RP_MAP(object):
 
         ipi.utils.nebinstool.print_neb_instanton_geo(
             "instanton_along_MAP_FINAL",
-            self.final_step,
+            step,
             self.rp_beads.nbeads,
             self.rp_beads.natoms,
             self.neb_beads.names,
@@ -3225,10 +3234,6 @@ class RP_MAP(object):
             coord, hessian_data_point_index, internal_coordinate_bool=False
         )
 
-        _, _, hessians_q, _, _, _ = self.gpr_hessian_model.predict_latent_function(
-            coord, hessian_data_point_index, internal_coordinate_bool=True
-        )
-
         # reshape hessians ([nbeads, 3 * natoms, 3 * natoms])
         # to fit the shape of self.rp_hessian: [3 * natoms, nbeads * 3 * natoms]
         self.rp_hessian = np.reshape(
@@ -3243,23 +3248,9 @@ class RP_MAP(object):
             prefix, self.rp_hessian, self.output_maker
         )
 
-    def generate_ring_polymer_beads(self, neb_beads, neb_final_step):
+    def generate_hessian_along_instanton_path(self):
         """
-        Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
         """
-        self.initialize(neb_beads, neb_final_step)
-
-        # optimize GPR model to make sure it will give accurate force for dynamics.
-        # Separate point as test set and training set, add training set until the generalization error is small.
-        if self.test_gpr_model_along_instanton_path:
-            self.optimize_GPR_model_for_dynamics_evolution()
-
-        # start classical dynamics along minimum action path (MAP) on the inverted potential.
-        t_list, v_list, x_list = self.classical_dynamics_along_MAP()
-
-        # interpolate the ring polymer beads from the generated trajectory.
-        self.interpolate_ring_polymer_beads(t_list, v_list, x_list)
-
         # code to test the GPModelWithHessianWrapper
         if self.final_hessian_bool:
             if self.ab_initio_hessian_bool:
@@ -3279,4 +3270,24 @@ class RP_MAP(object):
                 # predict hessians of ring polymer beads using Gaussian Process Regression.
                 # The result is stored in self.rp_hessians, which will be stored in RESTART file for post-processing.
                 self.predict_ring_polymer_hessians_using_gpr()
+
+
+    def generate_ring_polymer_beads(self, neb_beads, step):
+        """
+        Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
+        """
+        self.initialize(neb_beads)
+
+        # optimize GPR model to make sure it will give accurate force for dynamics.
+        # Separate point as test set and training set, add training set until the generalization error is small.
+        if self.test_gpr_model_along_instanton_path:
+            self.optimize_GPR_model_for_dynamics_evolution()
+
+        # start classical dynamics along minimum action path (MAP) on the inverted potential.
+        t_list, v_list, x_list = self.classical_dynamics_along_MAP()
+
+        # interpolate the ring polymer beads from the generated trajectory.
+        self.interpolate_ring_polymer_beads(t_list, v_list, x_list, step)
+
+
 
