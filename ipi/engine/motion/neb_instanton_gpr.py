@@ -600,7 +600,7 @@ class MAPNEBGPRMover(Motion):
 
         
 
-    def bind_gpr_model(self, gpr_model:gpr.gprtools.GPModelWithDerivativesWrapper, coordinate_transformer: gpr.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
+    def bind_gpr_model(self, gpr_model: gpr.gprtools.GPModelWithDerivativesWrapper, coordinate_transformer: gpr.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
         """
         bind the gpr model and coordinate_transformer to the LINEGradientMapper class
         the LINEBGradientMapper will perform LI-NEB using gpr generated potential and force.
@@ -616,6 +616,12 @@ class MAPNEBGPRMover(Motion):
 
         self.optimizer.gpr_model = gpr_model 
         self.optimizer.coordinate_transformer = coordinate_transformer
+
+    def bind_gpr_hessian_model(self, gpr_hessian_model: gpr.gpr_hessian_tools.GPModelWithHessiansWrapper):
+        """
+        bind the gpr hessian model to rp_map (ring polymer minimum action path)
+        """
+        self.rp_map.gpr_hessian_model = gpr_hessian_model
 
     def neb_stage_exit_step(self, step):
         """
@@ -651,38 +657,6 @@ class MAPNEBGPRMover(Motion):
 
         self.options["stage"] = "instanton"
 
-        # store potential and forces for the final LI-NEB beads.
-        beads_potential_shift, beads_potential_grad_x, _, _ = (
-            self.gpr_model.predict_latent_function(np.copy(self.beads.q))
-        )
-        self.LINEB_pots = (
-            beads_potential_shift + self.optarrays["energy_shift"]
-        )
-        self.LINEB_forces = - beads_potential_grad_x
-
-        ipi.utils.nebinstgprtool.store_training_data(
-            self.beads.q, self.LINEB_pots, self.LINEB_forces, prefix="LINEB_beads"
-        )
-
-        # store all training data
-        train_x = self.gpr_model.train_cartesian_inputs
-        train_V = self.gpr_model.train_cartesian_targets[:, 0]
-        train_V_to_store = train_V + self.optarrays["energy_shift"]
-        train_grad = self.gpr_model.train_cartesian_targets[:, 1:]
-        train_f_to_store = -train_grad
-
-        ipi.utils.nebinstgprtool.store_training_data(
-            train_x, train_V_to_store, train_f_to_store, prefix="neb_final_gpr_training"
-        )
-        neb_gpr_folder_path = "neb_final_gpr_training"
-        ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_model(self.gpr_model,
-                                                                            neb_gpr_folder_path)
-        
-        # store fixed dofs.
-        ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_model(
-            self.gpr_model,
-            prefix = neb_gpr_folder_path
-        )
 
     # ------ code below is for auxiliary functions --------------
     def print_geometry(self, step):
@@ -2164,7 +2138,6 @@ class RP_MAP(object):
         self.prefix = nebmover.options["prefix"]
         self.final_hessian_bool = nebmover.options["final_hessian_bool"]
         self.ab_initio_hessian_bool = nebmover.options["ab_initio_hessian_bool"]
-        self.test_gpr_model_along_instanton_path = nebmover.options["test_gpr_model_along_instanton_path"]
 
         self.energy_shift = nebmover.optarrays["energy_shift"]
         self.output_maker = nebmover.output_maker
@@ -2210,14 +2183,6 @@ class RP_MAP(object):
         ]
         self.gpr_noise_std = nebmover.optarrays["gpr_noise_std"]
 
-        # bind the error criterion of the gpr model
-        self.gpr_relative_force_error_criterion = nebmover.optarrays[
-            "gpr_relative_force_error_criterion"
-        ]
-        self.gpr_absolute_force_error_criterion = nebmover.optarrays[
-            "gpr_absolute_force_error_criterion"
-        ]
-
         self.gpr_fix_internal_dofs_bool = nebmover.options["gpr_fix_internal_dofs_bool"]
         self.gpr_fix_internal_dofs_cutoff = nebmover.options["gpr_fix_internal_dofs_cutoff"]
         self.gpr_rigid_internal_dofs_cutoff = nebmover.options["gpr_rigid_internal_dofs_cutoff"]
@@ -2252,15 +2217,19 @@ class RP_MAP(object):
 
         # options to do cross validation of gpr hessian model.
         self.cross_validation_bool = nebmover.options["cross_validation_bool"]
+        # regularization for the linear regression and GPR.
         self.ridge_regularization_alpha = nebmover.optarrays["ridge_regularization_alpha"]
         self.gpr_covar_inverse_nugget = nebmover.optarrays["gpr_covar_inverse_nugget"]
 
-    def initialize(self, neb_beads):
+# -------   for generating the ring polymer beads along the instanton path -------
+    def classical_dynamics_along_MAP(self, neb_beads):
         """
-        initialize the RP_MAP dynamics. This should be called after beads have converged to minimum action path using line integral nudged elastic band method.
+        classical dynamics on the inverted potential -V(x)
+        the final time will be 1/2 of the imaginary period.
         :param: neb_beads: beads in MAPNEBMover, with optimized geometry for Minimum Action Path.
-        :param: neb_forces: LINEBGradientMapper.rforces object.
-        :param: step: final step in MAPNEBMover simulation. (Used for output of instanton geometry.)
+        :return:  t_list: a list of time of trajectories.
+                  v_list: a list of velocity of trajectories.
+                  x_list: a list of coordinate of trajectories.
         """
         self.neb_beads.q[:] = neb_beads.q[:]  # initialize neb beads position.
 
@@ -2272,15 +2241,6 @@ class RP_MAP(object):
 
         print("use cubic interpolation to generate MAP path")
 
-# -------   for generating the ring polymer beads along the instanton path -------
-    def classical_dynamics_along_MAP(self):
-        """
-        classical dynamics on the inverted potential -V(x)
-        the final time will be 1/2 of the imaginary period.
-        :return:  t_list: a list of time of trajectories.
-                  v_list: a list of velocity of trajectories.
-                  x_list: a list of coordinate of trajectories.
-        """
         start_time = timer()
         
         t, r_distance = 0, 0  # time & normalized distance along path.
@@ -2449,15 +2409,13 @@ class RP_MAP(object):
         """
         Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
         """
-        self.initialize(neb_beads)
-
         # start classical dynamics along minimum action path (MAP) on the inverted potential.
-        t_list, v_list, x_list = self.classical_dynamics_along_MAP()
+        t_list, v_list, x_list = self.classical_dynamics_along_MAP(neb_beads)
 
         # interpolate the ring polymer beads from the generated trajectory.
         self.interpolate_ring_polymer_beads(t_list, v_list, x_list, step)
-        
-# -------- for generating ring polymer beads along the instanton path -------
+
+# -------- for generating ring polymer beads along the instanton path END-------
 
 # ------ for hessian calculation ---------------
     def compute_ring_polymer_hessian(self):
@@ -2476,614 +2434,6 @@ class RP_MAP(object):
             )
 
             self.rp_beads.q = rp_beads_q
-
-    def construct_selective_hessian_calculator(self, candidate_hessian_point_x):
-        """
-        initialize SelectiveHessianCalculation class.
-        Use this function to only compute a few number of beads along rigid mode 
-        and perform linear regression.
-        - load existing hessian computed along the rigid mode.
-        - compute new hessian along rigid mode if required.
-        - construct linear regression model. 
-        """
-        self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
-            candidate_hessian_point_x,
-            self.coordinate_transformer,
-            self.gpr_rigid_internal_dofs_cutoff,
-            self.cross_validation_bool
-            )
-        
-        if len(self.new_hessian_data_index_rigid_mode) > 0:
-            # for computing new data point for hessian along rigid modes.
-            new_train_x_rigid_mode =  candidate_hessian_point_x[self.new_hessian_data_index_rigid_mode]
-            new_rigid_mode_bead_number = len(new_train_x_rigid_mode)
-            new_rigid_mode_rp_bead = Beads(self.neb_beads.natoms, new_rigid_mode_bead_number)
-            new_rigid_mode_rp_force = self.rp_forces.copy(new_rigid_mode_rp_bead, self.dcell)
-
-            self.selective_hessian_calculator.rigid_modes_hessian_preprocess(
-                prefix= self.read_gpr_hessian_folder,
-                new_train_x= new_train_x_rigid_mode,
-                new_rp_bead = new_rigid_mode_rp_bead,
-                new_rp_force = new_rigid_mode_rp_force,
-                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode,
-                ridge_regularization_alpha= self.ridge_regularization_alpha["hessian"]
-            )
-        else:
-            self.selective_hessian_calculator.rigid_modes_hessian_preprocess(
-                prefix= self.read_gpr_hessian_folder,
-                new_rigid_mode_bead_index= self.new_hessian_data_index_rigid_mode,
-                ridge_regularization_alpha= self.ridge_regularization_alpha["hessian"]
-            )
-
-    def train_gpr_hessian_model(self):
-        """
-        train the gpr hessian model:
-        (1) train the model
-        (2) time the model training.
-        (3) check training error of the model.
-        """
-        if self.train_hessian_model_bool:
-            print("We are going to train the gpr model with hessian data.\
-                This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
-            start_t = timer()
-
-            self.gpr_hessian_model.train_model()
-
-            end_t = timer()
-            time_elapsed = (end_t - start_t) / 60
-            print(f"the elapsed time for re-training the model is {time_elapsed} min.")
-
-            ipi.utils.nebinstgprtool.analyze_train_error(self.gpr_hessian_model)
-            pass
-    
-    def store_gpr_hessian_model_parameters(self, folder):
-        """
-        (1) store the hyper-parameter for gpr model
-        (2) store the rigid dofs for gpr hessian model.
-        (3) store the fix dofs for gpr hessian model.
-        """ 
-        ipi.utils.nebinstgprtool.store_training_hyperparameter_in_gpr_hessian_model(
-            self.gpr_hessian_model, folder
-        )
-
-        # store fixed internal dofs.
-        ipi.utils.nebinstgprtool.store_fixed_internal_dofs_gpr_hessian_model(
-            self.gpr_hessian_model,
-            folder
-        )
-
-        # store rigid internal dofs in the gpr model
-        ipi.utils.nebinstgprtool.store_rigid_internal_dofs_gpr_hessian_model(
-            self.gpr_hessian_model,
-            folder
-        )
-
-# ------- construct gpr hessian model --------------------
-  
-    def load_gpr_hessian_training_data(self, 
-                                       candidate_hessian_point_x):
-        """
-        load the training data for the gaussian process regression model with hessian data.
-        """
-        print(
-                "read_gpr_hessian_folder provided. \
-                Will read potential & gradients & hessians from folder and create gpr_hessian model."
-        )
-        # create gpr_hessian model using data read from read_gpr_hessian_folder
-        (
-            cartesian_coordinate_x,
-            training_V,
-            training_forces,
-            hessian_index_list,
-            hessian_data_list,
-        ) = ipi.utils.nebinstgprtool.read_training_data_with_hessian(
-            self.read_gpr_hessian_folder
-        )
-        # load fixed internal dofs and rigid internal dofs
-        gpr_fixed_internal_dofs = ipi.utils.nebinstgprtool.read_fixed_internal_dofs(self.read_gpr_hessian_folder)
-        gpr_rigid_internal_dofs = ipi.utils.nebinstgprtool.read_rigid_internal_dofs(self.read_gpr_hessian_folder)
-
-        if self.selective_hessian_bool:
-            # initialize the selective hessian calculator to compute hessian along rigid modes.
-            self.construct_selective_hessian_calculator(candidate_hessian_point_x)
-            # update the hessian along the rigid mode.
-            hessian_data_list = self.selective_hessian_calculator.update_hessian_rigid_modes(
-                cartesian_coordinate_x[hessian_index_list],
-                training_forces[hessian_index_list],
-                hessian_data_list
-            )
-
-        return (cartesian_coordinate_x, 
-                training_V, training_forces, 
-                hessian_index_list, hessian_data_list, 
-                gpr_fixed_internal_dofs, gpr_rigid_internal_dofs)
-
-    def _initialize_gpr_hessian_model(self, gpr_data):
-        """
-        create gpr hessian model using the data.
-        """
-        (train_x, 
-        train_V, train_forces, 
-        hessian_index_list, hessian_data_list, 
-        gpr_fixed_internal_dofs, gpr_rigid_internal_dofs) = gpr_data 
-
-        train_V_shifted = train_V - self.energy_shift
-        train_grads = -train_forces
-
-        # choose the first data point with hessian information as the reference point for mean function.
-        ref_x = train_x[hessian_index_list[0]]
-        ref_V_shifted = np.array([train_V_shifted[hessian_index_list[0]]])
-        ref_grads = train_grads[hessian_index_list[0]]
-        ref_hessians = hessian_data_list[0]
-        
-        # For testing the error induced by forward and backward transformation of gradient and hessian.
-        ipi.utils.nebinstgprtool.analyze_transformation_between_cartesian_coord_and_internal_coord(
-            np.array([ref_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
-        )
-
-        self.gpr_hessian_model = (
-            gpr.gpr_hessian_tools.GPModelWithHessiansWrapper(
-                train_x,
-                train_V_shifted,
-                train_grads,
-                hessian_data_list,
-                hessian_index_list,
-                self.rp_beads.natoms,
-                self.coordinate_transformer,
-                self.fix_dofs,
-                self.gpr_SE_kernel_number,
-                self.gpr_kernel_outputscale,
-                self.gpr_kernel_lengthscale_ratio,
-                self.gpr_noise_std,
-                constant_mean_func_bool= False,
-                ref_mean_x=ref_x,
-                ref_mean_V=ref_V_shifted,
-                ref_mean_grad_x=ref_grads,
-                ref_mean_hessian_x=ref_hessians,
-                train_bool= False,
-                gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-                gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
-                gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
-                gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
-                gpr_rigid_internal_dofs= gpr_rigid_internal_dofs,
-                ridge_regularization_alpha= self.ridge_regularization_alpha,
-                singular_value_cutoff= self.gpr_covar_inverse_nugget
-            )
-        )
-
-        model_hyperparameter_exists = \
-            ipi.utils.nebinstgprtool.load_training_hyperparameter_for_gpr_hessian_model(
-                self.gpr_hessian_model,
-                self.read_gpr_hessian_folder
-        )
-
-        if (not model_hyperparameter_exists) | self.train_hessian_model_bool:
-            # the hyper-parameter of the gpr hessian model does not exist.
-            # or we want to train the model by setting train_hessian_model as true.
-            self.train_gpr_hessian_model()
-
-        
-
-    def construct_new_gpr_hessian_model(self,
-                                        candidate_hessian_point_x):
-        """
-        """
-        print(
-            "read_gpr_hessian_folder not provided. Will create gpr_hessian model from training data in gpr model."
-        )
-        # the initial data for gpr_hessian model is the same as gpr_model.
-        train_x = np.copy(self.gpr_model.train_cartesian_inputs)
-        train_V_shifted = np.copy(self.gpr_model.train_cartesian_targets[:, 0])
-        train_grads = np.copy(self.gpr_model.train_cartesian_targets[:, 1:])
-
-        if not self.add_new_hessian_data_bool:
-            raise (
-            "Error. You must provide hessian data for gpr_hessian training. \
-                Either add new hessian data (add_new_hessian_data_bool= True) or read hessian data \
-                from read_gpr_hessian_folder"
-        )
-
-        if len(self.new_hessian_data_index) == 0:
-            raise("Must provide the index of new hessian data point if add_new_hessian_data_bool = True")
-
-        # use the first data point as the reference point for mean function 
-        # when constructing gpr model with hessian
-        ref_x = candidate_hessian_point_x[self.new_hessian_data_index[0]]
-        new_beads = Beads(self.neb_beads.natoms, 1)
-        new_forces = self.rp_forces.copy(new_beads, self.dcell)
-        new_beads.q[0] = ref_x
-        
-        ref_V_shifted = dstrip(new_forces.pots).copy() - self.energy_shift
-        ref_grads = -dstrip(new_forces.f).copy()[0] 
-
-        if self.selective_hessian_bool:
-            # initialize the selective_hessian_calculator.
-            self.construct_selective_hessian_calculator(candidate_hessian_point_x)
-
-            ref_hessians = self.selective_hessian_calculator.get_hessian(
-                new_beads,
-                new_forces,
-                np.copy(new_beads.q)
-            )
-            ref_hessians = ref_hessians[0]
-
-        else:
-            # only 1 bead, so no need to transform the hessian.
-            ref_hessians = ipi.utils.nebinstool.get_hessian(
-                new_beads,
-                new_forces,
-                np.copy(new_beads.q),
-                self.neb_beads.natoms, 
-                1
-            )
-
-        # include the reference hessian data point into the training data.
-        train_x = np.concatenate([train_x, [ref_x]], axis= 0)
-        train_V_shifted = np.concatenate([train_V_shifted, ref_V_shifted], axis= 0)
-        train_V = train_V_shifted + self.energy_shift 
-        train_grads = np.concatenate([train_grads, [ref_grads]], axis= 0)
-        train_forces = - train_grads 
-        hessian_data_list = np.array([ref_hessians])
-        hessian_index = (train_x.shape[0] - 1)
-        hessian_index_list = np.array([hessian_index])
-
-        gpr_data = (train_x, train_V, train_forces, 
-                    hessian_index_list, hessian_data_list, 
-                    None, None)
-
-        self._initialize_gpr_hessian_model(gpr_data)
-  
-    def load_gpr_hessian_model(self,
-                               candidate_hessian_point_x):
-        """
-        load gpr hessian model. The hessian are already computed.
-        """
-        gpr_data = self.load_gpr_hessian_training_data(candidate_hessian_point_x)
-
-        self._initialize_gpr_hessian_model(gpr_data)
-
-        self.store_gpr_hessian_model_parameters(self.read_gpr_hessian_folder)
-
-    def cross_validate_gpr_hessian_model(self,
-                                         candidate_hessian_point_x):
-        """
-        read training data (potential V, gradient, hessians) from folder. 
-        split data into training set and cross validation set.
-        Perform the cross validation. 
-        """
-        print("Cross validate the gpr hessian model.")
-        print("\n")
-
-        (cartesian_coordinate_x, 
-        potential_data, force_data, 
-        hessian_index_list, hessian_data_list, 
-        gpr_fixed_internal_dofs, gpr_rigid_internal_dofs) = self.load_gpr_hessian_training_data(candidate_hessian_point_x)        
-
-        train_set, cv_set = ipi.utils.nebinstgprtool.split_train_cv_data(
-            cartesian_coordinate_x,
-            potential_data,
-            force_data,
-            hessian_index_list,
-            hessian_data_list,
-            training_ratio = 0.8
-        )
-        # training data
-        train_x, training_V, training_forces, train_hessian_index_list, train_hessian_data_list = train_set 
-        # cross validation data.
-        cv_x, cv_V, cv_force, cv_hessian_index_list, cv_hessian_data = cv_set 
-        
-        gpr_data = (train_x, training_V, training_forces,
-                    train_hessian_index_list, train_hessian_data_list,
-                    gpr_fixed_internal_dofs, gpr_rigid_internal_dofs)
-
-        self._initialize_gpr_hessian_model(gpr_data)
-
-        self.store_gpr_hessian_model_parameters(self.read_gpr_hessian_folder)
-
-        # cross validate the ML model.
-        if len(cv_x) > 0:
-            cv_V_shifted = cv_V - self.energy_shift
-            cv_grads = - cv_force 
-            
-            ipi.utils.nebinstgprtool.analyze_cross_validation_error(
-                self.gpr_hessian_model,
-                cv_x,
-                cv_V_shifted,
-                cv_grads,
-                cv_hessian_index_list,
-                cv_hessian_data
-            )
-
-    def construct_gpr_hessian_model(self):
-        """
-        construct the gpr_hessian model, which will predict hessian information using Gaussian Process Regression.
-        """
-        candidate_hessian_point_x, _ = (
-            ipi.utils.nebinstool.path_equal_distance_interpolation(
-                np.copy(self.neb_beads.q), self.candidate_hessian_data_number
-            )
-        )
-        
-        if self.read_gpr_hessian_folder == "None":
-            # create gpr_hessian model using data from gpr model
-            self.construct_new_gpr_hessian_model(
-                candidate_hessian_point_x
-            )
-            pass
-        else:
-            if not self.cross_validation_bool:
-                self.load_gpr_hessian_model(candidate_hessian_point_x)
-            else:
-                self.cross_validate_gpr_hessian_model(candidate_hessian_point_x)
-
-            pass
-
-# ----- constructing gpr hessian model  END -------
-
-# ------ add new grad & hessian data to gpr_hessian model --------- 
-    def add_new_hessian_data(self):
-        """
-        (1) compute ab initio hessian at new hessian data index.
-        (2) add new hessian data into gpr_hessian_model.
-        """
-        if os.path.exists( os.path.join(self.read_gpr_hessian_folder, "candidate_hessian_data_info.h5") ):
-            ab_initio_hessian_file_exists = True 
-        else:
-            ab_initio_hessian_file_exists = False
-
-        # get the coordinate for the data point that we want to compute the hessian info.
-        if ab_initio_hessian_file_exists:
-            # read candidate_hessian_point_x, hessian_index_in_candidate_list from self.read_gpr_hessian_folder.
-            (candidate_hessian_point_x, self.hessian_index_in_candidate_list) = (
-                ipi.utils.nebinstgprtool.read_candidate_hessian_data_coordinate(
-                    self.read_gpr_hessian_folder
-                )
-            )
-        else:
-            candidate_hessian_point_x, _ = (
-                ipi.utils.nebinstool.path_equal_distance_interpolation(
-                    np.copy(self.neb_beads.q), self.candidate_hessian_data_number
-                )
-            )
-            # index of hessian data that is already computed among candidate data point list.
-            self.hessian_index_in_candidate_list = np.array([])
-
-        if self.add_new_hessian_data_bool:
-            # find the location of data point we can compute hessian & the index of data point that we have already computed hessians.
-            if len(self.new_hessian_data_index) == 0:
-                    raise("Must provide the index of new hessian data point if add_new_hessian_data_bool= True")
-            
-            # the first index of new hessian data index is already used when constructing the model.
-            if not ab_initio_hessian_file_exists:
-                self.hessian_index_in_candidate_list = np.array([self.new_hessian_data_index[0]])
-                self.new_hessian_data_index = self.new_hessian_data_index[1:]
-
-            # handling error when specify the hessian data point.
-            assert (
-                len(candidate_hessian_point_x) == self.candidate_hessian_data_number
-            ), "the candidate hessian data point number read from file is not the same as the one in input.xml"
-
-            if len(self.new_hessian_data_index) != 0:
-                assert (
-                    np.max(self.new_hessian_data_index) < self.candidate_hessian_data_number
-                ), "the index of new hessian data point should not be larger than the number of candidate hessian data point"
-
-            if len(self.new_hessian_data_index) != 0 and len(self.hessian_index_in_candidate_list) != 0: 
-                common_index = np.intersect1d(
-                    self.new_hessian_data_index, self.hessian_index_in_candidate_list
-                )
-                assert (
-                    len(common_index) == 0
-                ), "At least one data point in new_hessian_data_index coincide with the one point that we have already computed hessian.\
-                    please double check new_hessian_data_index entry in input.xml"
-
-            if len(self.new_hessian_data_index) > 0:
-                # the new data point that we will compute hessian.
-                new_hessian_point_x = candidate_hessian_point_x[self.new_hessian_data_index]
-                new_hessian_data_num = len(new_hessian_point_x)
-                # beads & forces object to call the server to compute hessians.
-                natoms = self.neb_beads.natoms
-                new_beads = Beads(natoms, new_hessian_data_num)
-                new_forces = self.rp_forces.copy(new_beads, self.dcell)
-                new_beads.q = new_hessian_point_x
-
-                new_pots = new_forces.pots
-                new_grads = -dstrip(new_forces.f).copy()
-
-                # compute ab initio hessians of new data points.
-                if self.selective_hessian_bool:
-                    new_hessians = self.selective_hessian_calculator.get_hessian(
-                        new_beads,
-                        new_forces,
-                        np.copy(new_beads.q)
-                    )
-                else:
-                    new_hessians = ipi.utils.nebinstool.get_hessian(
-                        new_beads,
-                        new_forces,
-                        np.copy(new_beads.q),
-                        natoms,
-                        new_hessian_data_num
-                    )
-
-                    new_hessians = np.transpose(
-                        np.reshape(
-                            new_hessians, [3 * natoms, new_hessian_data_num, 3 * natoms]
-                        ),
-                        (1, 0, 2),
-                    )
-
-
-                ipi.utils.nebinstgprtool.add_hessian_data_to_model(
-                    self.gpr_hessian_model,
-                    new_hessian_point_x,
-                    new_pots,
-                    new_grads,
-                    new_hessians,
-                    self.energy_shift,
-                    retrain_bool= False,
-                )
-        
-        return candidate_hessian_point_x
-
-    def add_new_grad_data(self):
-        """
-        """
-        if os.path.exists( os.path.join(self.read_gpr_hessian_folder, "candidate_grad_data_info.h5") ):
-            ab_initio_grad_file_exists = True 
-        else:
-            ab_initio_grad_file_exists = False
-
-        if ab_initio_grad_file_exists:
-            (candidate_grad_point_x, self.grad_index_in_candidate_list) = (
-                ipi.utils.nebinstgprtool.read_candidate_grad_data_coordinate(
-                    self.read_gpr_hessian_folder
-                )
-            )
-        else:
-            candidate_grad_point_x, _ = (
-                ipi.utils.nebinstool.path_equal_distance_interpolation(
-                    np.copy(self.neb_beads.q),
-                    self.candidate_grad_data_number
-                )
-            )
-            self.grad_index_in_candidate_list = np.array([])
-
-            
-        if self.add_new_grad_data_bool:
-            # error handling.
-            if len(self.new_grad_data_index) == 0:
-                raise("Must provide the index of new gradient data point if add_new_grad_data_bool=True")
-                
-            assert (
-                len(candidate_grad_point_x) == self.candidate_grad_data_number
-            ), "the candidate gradient data point number read from the file is not the same as the one in input.xml"
-
-            if len(self.new_grad_data_index) != 0:
-                assert(
-                    np.max(self.new_grad_data_index) < self.candidate_grad_data_number
-                ), "the index of new gradient data point should not be larger than the number of candidate gradient data point"
-
-            if len(self.new_grad_data_index) != 0 and len(self.grad_index_in_candidate_list) != 0:
-                common_index = np.intersect1d(
-                    self.new_grad_data_index, self.grad_index_in_candidate_list
-                )
-
-                assert (
-                    len(common_index) == 0
-                    ), "At least one data point in new_grad_data_index coincide with the one point that we have already computed grads.\
-                        please double check new_grad_data_index entry in input.xml" 
-            
-            new_grad_point_x = candidate_grad_point_x[self.new_grad_data_index]
-            new_grad_point_num = len(self.new_grad_data_index)
-
-            natoms = self.neb_beads.natoms 
-            new_beads = Beads(natoms, new_grad_point_num)
-            new_forces = self.rp_forces.copy(new_beads, self.dcell)
-            new_beads.q = new_grad_point_x 
-
-            # compute ab initio potentials and forces.
-            new_pots = new_forces.pots 
-            new_grads = -dstrip(new_forces.f).copy() 
-
-            # add potential and gradient data into the gpr model.
-            ipi.utils.nebinstgprtool.add_potential_grad_data_to_model(
-                self.gpr_hessian_model,
-                new_grad_point_x,
-                new_pots,
-                new_grads,
-                self.energy_shift,
-                retrain_bool= False
-            )
-        
-        return candidate_grad_point_x
-
-    def store_ab_initio_hessian_and_grad_data(self,
-                                              candidate_grad_point_x,
-                                              candidate_hessian_point_x):
-        """
-        store the computed ab initio gradient and hessian data into data folder.
-        """
-        # if we have updated the data, we store the data set and training hyper-parameters to a given folder.
-        if self.add_new_hessian_data_bool or self.add_new_grad_data_bool:
-            # create a new data folder with up to date potential, gradient & hessian data.
-            # the newly computed hessian will also be stored in this file.
-            self.data_destination_folder = (
-                ipi.utils.nebinstgprtool.store_training_data_in_gpr_hessian_model(
-                    self.gpr_hessian_model, self.energy_shift
-                )
-            )
-
-            # store the hyper-parameters & fix dofs & rigid dofs of the gpr model in the data folder.
-            self.store_gpr_hessian_model_parameters(self.data_destination_folder)
-
-            # update candidate hessian data info.
-            if self.add_new_hessian_data_bool:
-                # update the hessian index with newly computed data point.
-                self.hessian_index_in_candidate_list = np.concatenate(
-                    [self.hessian_index_in_candidate_list, self.new_hessian_data_index]
-                )
-            # store candidate_hessian_point_x, hessian_index_in_candidate_list in data destination folder.
-            ipi.utils.nebinstgprtool.store_candidate_hessian_data_coordinate(
-                candidate_hessian_point_x,
-                self.hessian_index_in_candidate_list,
-                self.data_destination_folder,
-            )
-
-            # update candidate gradient data info.
-            if self.add_new_grad_data_bool:
-                # update the grad index with newly computed data point.
-                self.grad_index_in_candidate_list = np.concatenate(
-                    [self.grad_index_in_candidate_list, self.new_grad_data_index]
-                )
-            # store candidate_grad_point_x, grad_index_in_candidate_list in data destination folder.
-            ipi.utils.nebinstgprtool.store_candidate_grad_data_coordinate(
-                candidate_grad_point_x,
-                self.grad_index_in_candidate_list,
-                self.data_destination_folder
-            )
-
-        # if we do selective hessian modeling.
-        if self.selective_hessian_bool:
-                if self.add_new_hessian_data_bool or self.add_new_grad_data_bool:
-                    # store the information about hessian along rigid mode in new folder.
-                    self.selective_hessian_calculator.store_rigid_dofs_hessian(self.data_destination_folder)                    
-                elif len(self.new_hessian_data_index_rigid_mode) > 0:
-                    # we have added new hessian data for rigid mode.
-                    self.selective_hessian_calculator.store_rigid_dofs_hessian(self.read_gpr_hessian_folder)
-    
-
-    def add_new_hessian_and_grad_data(self):
-        """
-        (1) compute the new ab initio hessian at new_hessian_data_index.
-        (2) Add new hessian data into gpr_hessian_model
-        (3) store the updated data set into new folder.
-        """
-        # For the initial stage, must provide hessian data to add to the training data.
-        if (
-            not self.add_new_hessian_data_bool
-        ) and self.read_gpr_hessian_folder == "None":
-            raise (
-                "Error. You must provide hessian data for gpr_hessian training. \
-                  Either add new hessian data (add_new_hessian_data_bool= True) or read hessian data \
-                  from read_gpr_hessian_folder"
-            )
-
-        # Now we add ab initio hessian data along the path into the gpr model.
-        candidate_hessian_point_x = self.add_new_hessian_data()
-
-        # Now we add ab initio grad data along the path into the gpr model.
-        candidate_grad_point_x = self.add_new_grad_data() 
-
-        # train the model.
-        if (self.add_new_hessian_data_bool or self.add_new_grad_data_bool) and self.train_hessian_model_bool:
-            self.train_gpr_hessian_model()
-                
-        # store the computed ab inito gradient and hessian data if we compute new data point. 
-        self.store_ab_initio_hessian_and_grad_data(candidate_grad_point_x,
-                                                candidate_hessian_point_x)
-
-# ---------- add new grad & hessian data to the gpr_hessian model END ----------
 
     def predict_ring_polymer_hessians_using_gpr(self):
         """
@@ -3106,13 +2456,6 @@ class RP_MAP(object):
             np.transpose(hessians, (1, 0, 2)), [3 * natoms, nbeads * 3 * natoms]
         )
 
-        # store computed hessians.
-        prefix = os.path.join(
-            self.data_destination_folder, "nbeads=" + str(int(nbeads))
-        )
-        ipi.utils.nebinstool.print_instanton_hess(
-            prefix, self.rp_hessian, self.output_maker
-        )
 
     def generate_hessian_along_instanton_path(self):
         """
@@ -3125,14 +2468,6 @@ class RP_MAP(object):
                 self.compute_ring_polymer_hessian()
 
             else:
-                # create gpr hessian model either reading data from input file or using training data from gpr model.
-                self.construct_gpr_hessian_model()
-
-                # add new hessian data into GPR model.
-                # the location of new hessian data is given by self.new_hessian_data_point_index.
-                # candidate_hessian_point_x spaced with equal distance along the path.
-                self.add_new_hessian_and_grad_data()
-
                 # predict hessians of ring polymer beads using Gaussian Process Regression.
                 # The result is stored in self.rp_hessians, which will be stored in RESTART file for post-processing.
                 self.predict_ring_polymer_hessians_using_gpr()
