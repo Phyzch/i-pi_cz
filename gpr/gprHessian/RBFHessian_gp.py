@@ -116,7 +116,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             training_data_hessian_data_point_index
         )
         assert len(train_targets) == target_len, "the length of target data is wrong."
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         # set the likelihood function for Gaussian Process Regression model. Likelihood function describe the noise in data.
         likelihood = self._set_likelihood_noise_prior(
             train_inputs,
@@ -649,8 +649,8 @@ def train_gpr_model(
 
     # define loss function for GPs. -- we choose the marginal log likelihood
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
-    # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-    mll = CustomMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    # mll = CustomMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
     mll = mll.to(device= model.device)
 
     # initialize loss_func_change and old_loss to enable while loop
@@ -728,7 +728,7 @@ def predict_latent_function_GPHessian(
               grads_var: [test_data_num, ndofs]. variance of posterior predictions for gradients.
               hessians_var: [test_data_with_hessian_number, ndofs, ndofs]: variance of posterior predictions for hessians.
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     test_data_num = test_inputs.shape[0]
     test_data_with_hessian_number = len(test_data_hessian_data_point_index_tensor)

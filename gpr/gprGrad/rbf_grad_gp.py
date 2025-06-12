@@ -45,7 +45,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         self.input_dim = ard_num_dims
         self.output_dim = output_dims
         cuda_available = torch.cuda.is_available()
-        self.device = torch.device('cuda' if cuda_available else 'cpu')
+        self.device = torch.device('cuda:0' if cuda_available else 'cpu')
         self.singular_value_cutoff = singular_value_cutoff
 
         # set the noise prior information and construct the likelihood class.
@@ -411,6 +411,7 @@ def train_gpr(model: GPModelWithDerivatives,
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     # use our own version of marginal log likelihood function to perform the pseudo-inverse of covariance matrix.
     mll = RBFGradMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
+    # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
     mll = mll.to(device= model.device)
 
     # initialize loss_func_change and old_loss to enable while loop
@@ -421,7 +422,6 @@ def train_gpr(model: GPModelWithDerivatives,
     train_counts_output = 20
 
     loss_value_list = []
-    loss_prior_list = []
 
     while loss_func_change > training_error_cutoff:
         # reset the gradients of all optimized torch.Tensor

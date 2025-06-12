@@ -901,7 +901,7 @@ class GPModelWithHessiansWrapper:
         (5) transform potential, gradient and hessian into 1d data array.
         """
         cuda_available = torch.cuda.is_available()
-        self.device = torch.device('cuda' if cuda_available else 'cpu')
+        self.device = torch.device('cuda:0' if cuda_available else 'cpu')
         print("GPytorch for force & hessian prediction.")
         if cuda_available:
             print("CUDA is available. GPU is enabled.")
@@ -1924,7 +1924,7 @@ class GPModelWithHessiansWrapper:
             if not cuda_available:
                 state_dict = torch.load(file_path, map_location= torch.device('cpu'))
             else:
-                state_dict = torch.load(file_path, map_location= torch.device('cuda'))
+                state_dict = torch.load(file_path, map_location= torch.device('cuda:0'))
             self.gpr_model.load_state_dict(state_dict)
             print("successfully load the gpr model in gpr_hessian_tools.py")
         else:

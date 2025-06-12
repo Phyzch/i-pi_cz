@@ -580,7 +580,7 @@ class GPModelWithDerivativesWrapper:
 
         # put tensor on gpu if cuda is available
         cuda_available = torch.cuda.is_available()
-        self.device = torch.device('cuda' if cuda_available else 'cpu')
+        self.device = torch.device('cuda:0' if cuda_available else 'cpu')
         print("GPytorch for force prediction:")
         if cuda_available:
             print("CUDA is available. GPU is enabled.")
@@ -1136,7 +1136,7 @@ class GPModelWithDerivativesWrapper:
             if not cuda_available:
                 state_dict = torch.load(file_path, map_location= torch.device('cpu'))
             else:
-                state_dict = torch.load(file_path, map_location= torch.device('cuda'))
+                state_dict = torch.load(file_path, map_location= torch.device('cuda:0'))
             self.gpr_model.load_state_dict(state_dict)
             print("successfully load the gpr model in gprtools.py")
         else:
