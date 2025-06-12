@@ -905,6 +905,10 @@ class GPModelWithHessiansWrapper:
         print("GPytorch for force & hessian prediction.")
         if cuda_available:
             print("CUDA is available. GPU is enabled.")
+            print(f"CUDA version: {torch.version.cuda}")
+            print(f"Number of GPUs available: {torch.cuda.device_count()}")
+            print(f"Current GPU device: {torch.cuda.current_device()}")
+            print(f"GPU Name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
         else:
             print("CUDA is not available. Running Gpytorch on CPU.")
 
@@ -1099,6 +1103,8 @@ class GPModelWithHessiansWrapper:
             ref_mean_hessian_q_upper_triag_tensor,
             singular_value_cutoff= singular_value_cutoff
         )
+
+        self.gpr_model = self.gpr_model.to(device= self.device)
 
         if train_bool:
             # train the gaussian process regression model.
@@ -1913,8 +1919,12 @@ class GPModelWithHessiansWrapper:
         """
         load the hyper-parameter of the gpr model
         """
+        cuda_available = torch.cuda.is_available()
         if os.path.exists(file_path):
-            state_dict = torch.load(file_path)
+            if not cuda_available:
+                state_dict = torch.load(file_path, map_location= torch.device('cpu'))
+            else:
+                state_dict = torch.load(file_path, map_location= torch.device('cuda'))
             self.gpr_model.load_state_dict(state_dict)
             print("successfully load the gpr model in gpr_hessian_tools.py")
         else:

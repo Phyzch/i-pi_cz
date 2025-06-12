@@ -44,7 +44,8 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         """
         self.input_dim = ard_num_dims
         self.output_dim = output_dims
-        self.device = train_inputs.device
+        cuda_available = torch.cuda.is_available()
+        self.device = torch.device('cuda' if cuda_available else 'cpu')
         self.singular_value_cutoff = singular_value_cutoff
 
         # set the noise prior information and construct the likelihood class.
@@ -129,7 +130,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         mean_constant_estimate = np.mean(train_target_func)
         self.mean_module.constant = torch.nn.Parameter(
             torch.ones(1) * mean_constant_estimate
-        ).to(device= self.device)
+        )
 
     def _set_gpr_kernel(
         self,
@@ -385,10 +386,22 @@ def train_gpr(model: GPModelWithDerivatives,
 
     :return: None
     """
+    cuda_available = torch.cuda.is_available()
     # set model & likelihood to the training mode
     model.train()
     likelihood = model.likelihood
     likelihood.train()
+
+    train_inputs = model.train_inputs[
+        0
+    ]  # model.train_inputs is the tuple containing our training data.
+    train_targets = model.train_targets
+
+    # put all tensor on cuda.
+    model = model.to(device= model.device)
+    likelihood = likelihood.to(device = model.device)
+    train_inputs= train_inputs.to(device= model.device)
+    train_targets = train_targets.to(device= model.device)
 
     # choose the optimizer for the training to train the parameter of models (raw_parameter)
     # https://pytorch.org/docs/stable/generated/torch.optim.Adam.html
@@ -398,11 +411,7 @@ def train_gpr(model: GPModelWithDerivatives,
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     # use our own version of marginal log likelihood function to perform the pseudo-inverse of covariance matrix.
     mll = RBFGradMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
-
-    train_inputs = model.train_inputs[
-        0
-    ]  # model.train_inputs is the tuple containing our training data.
-    train_targets = model.train_targets
+    mll = mll.to(device= model.device)
 
     # initialize loss_func_change and old_loss to enable while loop
     loss_func_change = 1000
@@ -424,24 +433,21 @@ def train_gpr(model: GPModelWithDerivatives,
         loss_value = loss.detach().item()
         loss_value_list.append(loss_value)
 
-        if (
-            loss_value > old_loss_value
-            and abs((loss_value - old_loss_value) / old_loss_value) > 0.1
-        ):
-            print(
-                "@WARNING: the training could be unstable. loss function increases:  {}   ->     {}".format(
-                    old_loss_value, loss_value
+        if not cuda_available:
+            # disable all output if running on cuda.
+            if (
+                loss_value > old_loss_value
+                and abs((loss_value - old_loss_value) / old_loss_value) > 0.1
+            ):
+                print(
+                    "@WARNING: the training could be unstable. loss function increases:  {}   ->     {}".format(
+                        old_loss_value, loss_value
+                    )
                 )
-            )
 
         # calculate the change of loss function to decide whether we will stop the loop.
         loss_func_change = np.abs(loss_value - old_loss_value)
         old_loss_value = loss_value
-
-        # compute loss from prior
-        loss_prior = torch.tensor(0.0)
-        loss_prior = -mll._add_other_terms(loss_prior, [])
-        loss_prior_list.append(loss_prior.item())
 
         # backpropagation the loss function to compute the gradient of each parameter
         loss.backward()
@@ -450,9 +456,10 @@ def train_gpr(model: GPModelWithDerivatives,
 
         train_counts = train_counts + 1
 
-        if output_training_info:
-            if train_counts % train_counts_output == 0:
-                print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
+        if not cuda_available:
+            if output_training_info:
+                if train_counts % train_counts_output == 0:
+                    print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
     
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))

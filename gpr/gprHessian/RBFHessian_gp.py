@@ -412,12 +412,13 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             grad_covar_factor_rank=likelihood_force_noise_rank,
             hessian_covar_factor_rank=likelihood_hessian_noise_rank,
         )
-
-        likelihood.to(device= train_inputs.device)
+        
         # set the initial value of pot noise, force noise and hessian noise
         likelihood.pot_noises = pot_noise_mean
         likelihood.force_noises = force_noise_mean
         likelihood.hessian_noises = hessian_noise_mean
+
+        likelihood = likelihood.to(device= train_inputs.device)
 
         return likelihood
 
@@ -623,6 +624,7 @@ def train_gpr_model(
     :param: training_error_cutoff: train until the change of loss function in one step is smaller than the cutoff.
     :return: None
     """
+    cuda_available = torch.cuda.is_available()
     # set model & likelihood to the training mode
     likelihood = model.likelihood
     model.train()
@@ -630,6 +632,12 @@ def train_gpr_model(
 
     train_inputs = model.train_inputs[0]
     train_targets = model.train_targets
+
+    # make sure all device are on GPU.
+    likelihood = likelihood.to(device= model.device)
+    model = model.to(device= model.device)
+    train_inputs = train_inputs.to(device= model.device)
+    train_targets = train_targets.to(device= model.device)
 
     # number of total training data points : M.
     # number of data points containing hessian information: M_H.
@@ -643,6 +651,7 @@ def train_gpr_model(
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
     mll = CustomMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
+    mll = mll.to(device= model.device)
 
     # initialize loss_func_change and old_loss to enable while loop
     loss_func_change = 1000
@@ -687,7 +696,7 @@ def train_gpr_model(
 
         train_counts = train_counts + 1
 
-        if output_training_info:
+        if (not cuda_available) and output_training_info:
             if train_counts % train_counts_output == 0:
                 print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
 

@@ -371,7 +371,7 @@ class GPRForceMapper(object):
             large_uncertainty_bool = (force_uncertainty > force_uncertainty_cutoff)
             large_uncertainty_bead_index = np.arange(nbeads)[large_uncertainty_bool]
 
-            new_training_x = beads_q[large_uncertainty_bead_index]
+            new_training_x = dstrip(beads_q[large_uncertainty_bead_index]).copy()
         
         return new_training_x
 
@@ -442,9 +442,10 @@ class GPRForceMapper(object):
             self.force_diff_amplitude_after_update_list / self.ab_initio_force_amplitude_list
         )
 
-        # check the uncertainty of force for updated potential.
+        # check the uncertainty of force for the updated potential.
         # increase the gpr_force_uncertainty criterion if it is not met after we have updated the pot.
-        _, _, _, var_grad_x_uncertainty = self.gpr_model.predict_latent_function(new_training_x)
+        beads_q = self.motion.beads.q 
+        _, _, _, var_grad_x_uncertainty = self.gpr_model.predict_latent_function(beads_q)
         max_std_grad_x_uncertainty = np.max(np.sqrt(var_grad_x_uncertainty))
         if max_std_grad_x_uncertainty > self.motion.optarrays["gpr_force_uncertainty_criterion"]:
             print("@Warning: The uncertainty of gpr prediction is still higher than cutoff criterion after update the model.")
