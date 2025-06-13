@@ -665,7 +665,7 @@ class GPModelWithDerivativesWrapper:
             kernel_outputscale,
             kernel_lengthscale_ratio,
             moving_likelihood_noise_variance,
-            singular_value_cutoff= singular_value_cutoff 
+            nugget= singular_value_cutoff 
         )
         self.gpr_model = self.gpr_model.to(device= self.device)
 

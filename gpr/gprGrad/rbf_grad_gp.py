@@ -6,7 +6,6 @@ from gpytorch.utils.generic import length_safe_zip
 from gpytorch.distributions import MultivariateNormal
 import warnings
 from gpytorch.utils.warnings import GPInputWarning
-from .rbf_grad_prediction_strategies import RBFGradPredictionStrategies
 from .rbf_grad_marginal_log_likelihood import RBFGradMarginalLogLikelihood
 from gpytorch.models.exact_prediction_strategies import prediction_strategy
 
@@ -25,7 +24,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         kernel_outputscale,
         kernel_lengthscale_ratio,
         likelihood_noise_variance,
-        singular_value_cutoff
+        nugget
     ):
         """
         :param: train_inputs: training data.  torch.Tensor object. shape: [N, d]. N: number of data points. d: input data dimensions.
@@ -46,7 +45,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         self.output_dim = output_dims
         cuda_available = torch.cuda.is_available()
         self.device = torch.device('cuda:0' if cuda_available else 'cpu')
-        self.singular_value_cutoff = singular_value_cutoff
+        self.nugget = nugget
 
         # set the noise prior information and construct the likelihood class.
         likelihood = self._set_likelihood_noise_prior(
@@ -224,7 +223,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         """
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
-
+        # add nugget to covar_x to regularize the kernel.
+        diag_nugget = torch.eye(covar_x.shape[0]) * self.nugget 
+        covar_x = covar_x + diag_nugget
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
     # ------ functions below are auxiliary functions to output gpr model parameters ------------------------
@@ -321,20 +322,11 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                 train_output = super(gpytorch.models.ExactGP, self).__call__(*train_inputs, **kwargs)
 
                 # Create the prediction strategy for
-                # self.prediction_strategy = prediction_strategy(
-                #     train_inputs=train_inputs,
-                #     train_prior_dist=train_output,
-                #     train_labels=self.train_targets,
-                #     likelihood=self.likelihood,
-                # )
-
-                # Create the prediction strategy using psuedo-inverse
-                self.prediction_strategy = RBFGradPredictionStrategies(
+                self.prediction_strategy = prediction_strategy(
                     train_inputs=train_inputs,
                     train_prior_dist=train_output,
                     train_labels=self.train_targets,
                     likelihood=self.likelihood,
-                    singular_value_cutoff= self.singular_value_cutoff
                 )
 
             # Concatenate the input to the training input
@@ -410,7 +402,7 @@ def train_gpr(model: GPModelWithDerivatives,
     # define loss function for GPs. -- we choose the marginal log likelihood
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
     # use our own version of marginal log likelihood function to perform the pseudo-inverse of covariance matrix.
-    mll = RBFGradMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
+    mll = RBFGradMarginalLogLikelihood(likelihood, model)
     # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
     mll = mll.to(device= model.device)
 

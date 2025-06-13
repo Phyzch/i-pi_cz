@@ -1101,7 +1101,7 @@ class GPModelWithHessiansWrapper:
             ref_mean_V_tensor,
             ref_mean_grad_q_tensor,
             ref_mean_hessian_q_upper_triag_tensor,
-            singular_value_cutoff= singular_value_cutoff
+            nugget= singular_value_cutoff
         )
 
         self.gpr_model = self.gpr_model.to(device= self.device)

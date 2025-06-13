@@ -34,8 +34,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         train_labels,
         likelihood,
         training_data_hessian_data_point_index,
-        hessian_fixdofs,
-        singular_value_cutoff
+        hessian_fixdofs
     ):
         """
         :param: train_inputs: training input data.
@@ -75,7 +74,6 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             (self.nactive + 1) * self.nactive / 2
         )  # the size of upper triangle part of the hessian.
 
-        self.singular_value_cutoff = singular_value_cutoff
 
     @property
     @cached(name="mean_cache")
@@ -90,21 +88,8 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
         train_labels_offset = (self.train_labels - train_mean).unsqueeze(-1)  # y
 
-        # pseudo-inverse the covariance matrix.
-        train_train_covar_tensor = train_train_covar.to_dense()
-        covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
-        covar_eigval_min = torch.min(torch.real(covar_eigval)) 
-        covar_eigval_max = torch.max(torch.real(covar_eigval))
-
-        singular_value_cutoff = self.singular_value_cutoff
-        if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
-            # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
-            covar_inverse = torch.linalg.pinv(train_train_covar_tensor, rtol= singular_value_cutoff) # (K(X,X) + sigma^2 I)^-1 * y
-            mean_cache = (covar_inverse @ train_labels_offset).squeeze(-1) 
-        else:
-            mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
+        mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
         
-
         if settings.detach_test_caches.on():
             mean_cache = mean_cache.detach()
 
@@ -124,25 +109,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         """
         train_train_covar = self.lik_train_train_covar 
 
-        # pseudo-inverse the covariance matrix
-        train_train_covar_tensor = train_train_covar.to_dense()
-        covar_eigval = torch.linalg.eigvals(train_train_covar_tensor)
-        covar_eigval_min = torch.min(torch.real(covar_eigval))
-        covar_eigval_max = torch.max(torch.real(covar_eigval))
-
-        singular_value_cutoff = self.singular_value_cutoff
-        if abs(covar_eigval_min / covar_eigval_max) < singular_value_cutoff:
-            # the covariance matrix is ill-conditioned. We should perform the pseudo-inverse 
-            U, S ,Vh = torch.linalg.svd(train_train_covar_tensor)
-            nonzero_indices = (S > singular_value_cutoff * covar_eigval_max).nonzero().squeeze(-1)
-            nonzero_s = S[nonzero_indices]
-            nonzero_u = torch.index_select(U, dim= 1, index= nonzero_indices)
-            nonzero_vh = torch.index_select(Vh, dim= 0, index= nonzero_indices)
-            nonzero_s_inv_root = 1/ torch.sqrt(nonzero_s)
-            nonzero_s_inv_root_matrix = torch.diag(nonzero_s_inv_root)
-            train_train_covar_inv_root = nonzero_u @ nonzero_s_inv_root_matrix @ nonzero_vh # (K(x,x) + sigma^2 I)^(-1/2)
-        else:
-            train_train_covar_inv_root = to_dense(train_train_covar.root_inv_decomposition().root)   # (K(x,x) + sigma^2 I)^(-1/2)
+        train_train_covar_inv_root = to_dense(train_train_covar.root_inv_decomposition().root)   # (K(x,x) + sigma^2 I)^(-1/2)
 
         return train_train_covar_inv_root
 

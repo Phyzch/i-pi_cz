@@ -44,7 +44,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         ref_mean_pot: torch.Tensor = torch.Tensor([]),
         ref_mean_grad: torch.Tensor = torch.Tensor([]),
         ref_mean_hessian: torch.Tensor = torch.Tensor([]),
-        singular_value_cutoff = 1e-8
+        nugget = 1e-8
     ):
         """
         :param: train_inputs: input coordinate of training data.
@@ -97,7 +97,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             training_data_hessian_data_point_index
         )
 
-        self.singular_value_cutoff = singular_value_cutoff
+        self.nugget = nugget
         # dofs that we will not include in hessian calculations.
         self.hessian_fixdofs = hessian_fixdofs
         ard_num_dims = train_inputs.shape[-1]
@@ -442,6 +442,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_data_point_index_1=inputs_hessian_data_point_index,
                 hessian_data_point_index_2=inputs_hessian_data_point_index,
             )
+            diag_nugget = torch.eye(covar_x.shape[0]) * self.nugget 
+            covar_x = covar_x + diag_nugget
 
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
@@ -548,8 +550,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                     train_labels=self.train_targets,
                     likelihood=self.likelihood,
                     training_data_hessian_data_point_index=self.training_data_hessian_data_point_index,
-                    hessian_fixdofs=self.hessian_fixdofs,
-                    singular_value_cutoff= self.singular_value_cutoff
+                    hessian_fixdofs=self.hessian_fixdofs
                 )
 
             # Concatenate the training input and test input into one input for generating the joint distribution
