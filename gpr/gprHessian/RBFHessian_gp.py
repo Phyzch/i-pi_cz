@@ -777,6 +777,7 @@ def predict_latent_function_GPHessian(
         grads = grads.detach().cpu().numpy()
         hessians = hessians.detach().cpu().numpy()
         pots_var = pots_var.detach().cpu().numpy()
+        grads_var = grads_var.detach().cpu().numpy()
         hessians_var = hessians_var.detach().cpu().numpy()
 
         return pots, grads, hessians, pots_var, grads_var, hessians_var
