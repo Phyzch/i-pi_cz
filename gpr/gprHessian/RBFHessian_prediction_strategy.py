@@ -86,6 +86,9 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             self.lik_train_train_covar,
         )  # covariance matrix of y(x) (likelihood) : K(X,X) + sigma^2 I
 
+        train_mean = train_mean.to(dtype= torch.float32)
+        train_train_covar = train_train_covar.to(dtype= torch.float32)
+        self.train_labels = self.train_labels.to(dtype= torch.float32)
         train_labels_offset = (self.train_labels - train_mean).unsqueeze(-1)  # y
 
         mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
@@ -108,9 +111,8 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         use pseudo-inverse (Moore Penrose inverse) when the covariance matrix becomes ill-conditioned. (smallest eigenvalue is close to 0).
         """
         train_train_covar = self.lik_train_train_covar 
-
         train_train_covar_inv_root = to_dense(train_train_covar.root_inv_decomposition().root)   # (K(x,x) + sigma^2 I)^(-1/2)
-
+        train_train_covar_inv_root = train_train_covar_inv_root.to(dtype= torch.float32)
         return train_train_covar_inv_root
 
 
@@ -174,6 +176,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
                 )
 
         precomputed_cache = self.covar_cache
+        precomputed_cache = precomputed_cache.to(dtype= test_train_covar.dtype)
         covar_inv_quad_form_root = self._exact_predictive_covar_inv_quad_form_root(
             precomputed_cache, test_train_covar
         )

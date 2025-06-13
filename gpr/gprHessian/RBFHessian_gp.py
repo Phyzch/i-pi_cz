@@ -435,7 +435,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         mean_x = self.mean_module(
             x, hessian_data_point_index=inputs_hessian_data_point_index, nactive=nactive
         )
-        mean_x = mean_x.to(dtype= torch.float32)
+
         with settings.lazily_evaluate_kernels(False):
             covar_x = self.covar_module(
                 x,
@@ -443,10 +443,12 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_data_point_index_1=inputs_hessian_data_point_index,
                 hessian_data_point_index_2=inputs_hessian_data_point_index,
             )
-            covar_x = covar_x.to(dtype= torch.float32)
+            
             diag_nugget = torch.eye(covar_x.shape[0]).to(device= self.device, dtype= covar_x.dtype) * self.nugget 
             covar_x = covar_x + diag_nugget
 
+        mean_x = mean_x.to(dtype= torch.float32)
+        covar_x = covar_x.to(dtype= torch.float32)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
     def __call__(self, *args, **kwargs) -> MultivariateNormal:
@@ -598,6 +600,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                         "ExactGP.forward must return a MultivariateNormal"
                     )
             full_mean, full_covar = full_output.loc, full_output.lazy_covariance_matrix
+
 
             # Make the prediction of test data.
             with settings.cg_tolerance(
