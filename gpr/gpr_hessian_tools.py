@@ -1526,7 +1526,7 @@ class GPModelWithHessiansWrapper:
             self.get_free_moving_internal_coordinate(
                 test_x
                 )
-        ).to(device= self.device)
+        ).to(device= self.device, dtype=torch.float32)
         
         test_hessian_data_point_index_tensor = torch.from_numpy(
             test_hessian_data_point_index
