@@ -298,6 +298,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         for i in range(1, gpr_SE_kernel_number):
             self.covar_module = self.covar_module + self.covar_module_component_list[i]
 
+
     def _set_likelihood_noise_prior(
         self,
         train_inputs,
@@ -443,7 +444,6 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_data_point_index_1=inputs_hessian_data_point_index,
                 hessian_data_point_index_2=inputs_hessian_data_point_index,
             )
-            
             diag_nugget = torch.eye(covar_x.shape[0]).to(device= self.device, dtype= covar_x.dtype) * self.nugget 
             covar_x = covar_x + diag_nugget
 
@@ -621,7 +621,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
 def train_gpr_model(
     model: GPModelWithHessians,
-    training_error_cutoff=np.power(10.0, -3),
+    training_error_cutoff=np.power(10.0, -1),
     output_training_info=True,
 ):
     """
@@ -655,8 +655,8 @@ def train_gpr_model(
 
     # define loss function for GPs. -- we choose the marginal log likelihood
     # because we need to maximise the marginal log likelihood, we should define the loss function as -mll
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-    # mll = CustomMarginalLogLikelihood(likelihood, model, singular_value_cutoff= model.singular_value_cutoff)
+    # mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    mll = CustomMarginalLogLikelihood(likelihood, model)
     mll = mll.to(device= model.device)
 
     # initialize loss_func_change and old_loss to enable while loop
@@ -669,42 +669,43 @@ def train_gpr_model(
     loss_value_list = []
     loss_prior_list = []
     loss_mll_list = []
+    with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget) and 
+           gpytorch.settings.max_cg_iterations(10000)):
+        while loss_func_change > training_error_cutoff:
+            # reset the gradients of all optimized torch.Tensor
+            optimizer.zero_grad()
+            # output from model training data
+            output = model(train_inputs)
+            # calculate the loss function. here the returned loss is a torch.tensor.
+            loss = -mll(
+                output, train_targets, M, model.training_data_hessian_data_point_index
+            )
+            loss_value = loss.item()
 
-    while loss_func_change > training_error_cutoff:
-        # reset the gradients of all optimized torch.Tensor
-        optimizer.zero_grad()
-        # output from model training data
-        output = model(train_inputs)
-        # calculate the loss function. here the returned loss is a torch.tensor.
-        loss = -mll(
-            output, train_targets, M, model.training_data_hessian_data_point_index
-        )
-        loss_value = loss.item()
+            loss_prior = torch.tensor(0.0, device= model.device)
+            loss_prior = -mll._add_other_terms(loss_prior, []) / M
+            loss_prior_list.append(loss_prior.item())
 
-        loss_prior = torch.tensor(0.0, device= model.device)
-        loss_prior = -mll._add_other_terms(loss_prior, []) / M
-        loss_prior_list.append(loss_prior.item())
+            # loss function from probability distribution. No contribution from prior. 
+            loss_mll = loss_value - loss_prior
+            loss_mll_list.append(loss_mll)
 
-        # loss function from probability distribution. No contribution from prior. 
-        loss_mll = loss_value - loss_prior
-        loss_mll_list.append(loss_mll)
+            # calculate the change of loss function to decide whether we will stop the loop.
+            loss_func_change = np.abs(loss_value - old_loss_value)
+            old_loss_value = loss_value
 
-        # calculate the change of loss function to decide whether we will stop the loop.
-        loss_func_change = np.abs(loss_value - old_loss_value)
-        old_loss_value = loss_value
+            loss_value_list.append(loss_value)
+            # back propagation the loss function to compute the gradient of each parameter
+            loss.backward()
 
-        loss_value_list.append(loss_value)
-        # back propagation the loss function to compute the gradient of each parameter
-        loss.backward()
+            # optimizer optimize the parameter using the gradient info.
+            optimizer.step()
 
-        # optimizer optimize the parameter using the gradient info.
-        optimizer.step()
+            train_counts = train_counts + 1
 
-        train_counts = train_counts + 1
-
-        if (not cuda_available) and output_training_info:
-            if train_counts % train_counts_output == 0:
-                print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
+            if (not cuda_available) and output_training_info:
+                if train_counts % train_counts_output == 0:
+                    print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
 
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))

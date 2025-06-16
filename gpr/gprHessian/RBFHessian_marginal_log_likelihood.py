@@ -11,9 +11,8 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
     We change the __forward__() function since num_data is different for our case (not function_dist.event_shape.numel() in ExactMarginalLogLikelihood)
     """
 
-    def __init__(self, likelihood, model, singular_value_cutoff):
+    def __init__(self, likelihood, model):
         super(CustomMarginalLogLikelihood, self).__init__(likelihood, model)
-        self.singular_value_cutoff = singular_value_cutoff
 
     def forward(self, function_dist, target, *params):
         """
