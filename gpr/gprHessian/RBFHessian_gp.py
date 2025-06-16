@@ -621,7 +621,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
 def train_gpr_model(
     model: GPModelWithHessians,
-    training_error_cutoff=np.power(10.0, -1),
+    training_error_cutoff=np.power(10.0, -3),
     output_training_info=True,
 ):
     """
