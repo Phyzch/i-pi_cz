@@ -412,6 +412,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             noise_covar_factor_with_hessian_array=noise_covar_factor_with_hessian_array,
             grad_covar_factor_rank=likelihood_force_noise_rank,
             hessian_covar_factor_rank=likelihood_hessian_noise_rank,
+            nugget= self.nugget
         )
         
         # set the initial value of pot noise, force noise and hessian noise
@@ -444,8 +445,6 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_data_point_index_1=inputs_hessian_data_point_index,
                 hessian_data_point_index_2=inputs_hessian_data_point_index,
             )
-            diag_nugget = torch.eye(covar_x.shape[0]).to(device= self.device, dtype= covar_x.dtype) * self.nugget 
-            covar_x = covar_x + diag_nugget
 
         mean_x = mean_x.to(dtype= torch.float32)
         covar_x = covar_x.to(dtype= torch.float32)
@@ -617,6 +616,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 )
 
             return full_output.__class__(predictive_mean, predictive_covar)
+    
 
 
 def train_gpr_model(
@@ -646,7 +646,6 @@ def train_gpr_model(
     train_targets = train_targets.to(device= model.device)
 
     # number of total training data points : M.
-    # number of data points containing hessian information: M_H.
     M = train_inputs.shape[-2]
 
     # choose the optimizer for the training to train the parameter of models (raw_parameter)
@@ -669,6 +668,7 @@ def train_gpr_model(
     loss_value_list = []
     loss_prior_list = []
     loss_mll_list = []
+
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget) and 
            gpytorch.settings.max_cg_iterations(10000)):
         while loss_func_change > training_error_cutoff:
@@ -709,8 +709,21 @@ def train_gpr_model(
 
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
-        
-    pass
+
+    check_cond_number(model)
+    pass 
+
+def check_cond_number(model: GPModelWithHessians):
+    """
+    check conditional number of the covariance matrix.
+    """
+    likelihood = model.likelihood
+    train_inputs = model.train_inputs[0]
+    # number of total training data points : M.
+    M = train_inputs.shape[-2]
+    covar = likelihood(model(train_inputs), M, model.training_data_hessian_data_point_index).lazy_covariance_matrix.to_dense()
+    cond = torch.linalg.cond(covar)
+    print(f"conditional number for covariance matrix: {cond}")
 
 
 def predict_latent_function_GPHessian(

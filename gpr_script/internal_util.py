@@ -3,6 +3,7 @@ import gpr.internal.ZmatrixInternal
 from ipi.engine.motion import Motion 
 from ipi.utils.depend import dstrip
 import numpy as np 
+import h5py 
 
 def select_reference_points(motion: Motion):
     """
@@ -48,3 +49,18 @@ def create_coordinate_transformer(motion:Motion, ref_x_list):
         raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
 
     return coordinate_transformer
+
+def output_internal_coord(coordinate_transformer: gpr.internal.ZmatrixInternal.non_redundant_coordinate_transformer):
+    """
+    output the singular vector corresponds to the internal coordinate.
+    """
+    Vh = np.copy(coordinate_transformer.ref_Vh)
+    internal_coord_num = coordinate_transformer.nonzero_S_index_len
+    ref_x = coordinate_transformer.ref_x
+    # store data in hdf5 file.
+
+    with h5py.File('internal_coord.h5', "w") as h5f:
+        h5f.attrs['ndofs'] = internal_coord_num
+        h5f.create_dataset('modes', data= Vh, compression= 'gzip')
+        h5f.create_dataset('ref_x', data= ref_x, compression= 'gzip')
+    

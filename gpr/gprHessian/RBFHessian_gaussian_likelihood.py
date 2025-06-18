@@ -54,6 +54,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         noise_covar_factor_with_hessian_array: torch.Tensor = torch.tensor([]),
         grad_covar_factor_rank: int = 0,
         hessian_covar_factor_rank: int = 0,
+        nugget: float = 0
     ):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         super(Likelihood, self).__init__()
@@ -70,6 +71,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         self.ndof = ndof
         self.hessian_triu_size = hessian_triu_size
         self.has_covar_factor = has_covar_factor
+        self.nugget = nugget
 
         if not has_covar_factor:
             # The case that the noise of potential, gradient & hessian are (sigma_V)^2 I, (sigma_g)^2 I, (sigma_H)^2 I
@@ -402,6 +404,9 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                 noise_covar_factor_all_data.transpose(-1, -2),
             )
 
+            diagonal_nugget = torch.diag(torch.ones(noise_covar_matrix.shape[0])) * self.nugget
+            noise_covar_matrix = noise_covar_matrix + diagonal_nugget
+            
         return noise_covar_matrix
 
     def forward(self, function_samples: Tensor, *params, **kwargs: Any):

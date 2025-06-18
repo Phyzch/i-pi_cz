@@ -316,6 +316,8 @@ class GPRForceMapper(object):
         self.gpr_model = gpr_model 
         self.motion.bind_gpr_model(gpr_model, coordinate_transformer)
 
+        # output the representation of internal coordinates.
+        internal_util.output_internal_coord(coordinate_transformer)
         # check the training error and cross-validation error of the gpr model.
         self.check_training_result()
 
@@ -835,7 +837,6 @@ class GPRHessianMapper(object):
             time_elapsed = (end_t - start_t) / 60
             print(f"the elapsed time for re-training the model is {time_elapsed} min.")
 
-            gpr_util.analyze_train_error(self.gpr_hessian_model)
             pass
     
     def store_gpr_hessian_model_parameters(self, folder):
@@ -962,6 +963,9 @@ class GPRHessianMapper(object):
             # or we want to train the model by setting train_hessian_model as true.
             self.train_gpr_hessian_model()
 
+        gpr_util.analyze_train_error(self.gpr_hessian_model)
+            
+
     def construct_new_gpr_hessian_model(self,
                                         candidate_hessian_point_x):
         """
@@ -1031,6 +1035,7 @@ class GPRHessianMapper(object):
                     None, None)
 
         self._initialize_gpr_hessian_model(gpr_data)
+
   
     def load_gpr_hessian_model(self,
                                candidate_hessian_point_x):
@@ -1376,6 +1381,8 @@ class GPRHessianMapper(object):
         # train the model.
         if (self.add_new_hessian_data_bool or self.add_new_grad_data_bool) and self.train_hessian_model_bool:
             self.train_gpr_hessian_model()
+
+            gpr_util.analyze_train_error(self.gpr_hessian_model)
                 
         # store the computed ab inito gradient and hessian data if we compute new data point. 
         self.store_ab_initio_hessian_and_grad_data(candidate_grad_point_x,

@@ -1109,6 +1109,9 @@ class GPModelWithHessiansWrapper:
         if train_bool:
             # train the gaussian process regression model.
             gpr.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
+        else:
+            # print the condition number of the covariance matrix.
+            gpr.gprHessian.RBFHessian_gp.check_cond_number(self.gpr_model)
 
     def transform_data_into_internal_coordinate(self, 
                                                 train_x, 
