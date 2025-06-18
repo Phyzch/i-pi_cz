@@ -16,6 +16,7 @@ from gpytorch.priors import Prior
 from gpytorch.constraints import Interval, GreaterThan
 from gpytorch.distributions import base_distributions
 from gpytorch.lazy import LazyEvaluatedKernelTensor
+import gpytorch
 
 from linear_operator.operators import LinearOperator, DiagLinearOperator
 
@@ -403,9 +404,6 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
                 noise_covar_factor_all_data,
                 noise_covar_factor_all_data.transpose(-1, -2),
             )
-
-            diagonal_nugget = torch.diag(torch.ones(noise_covar_matrix.shape[0])) * self.nugget
-            noise_covar_matrix = noise_covar_matrix + diagonal_nugget
             
         return noise_covar_matrix
 
@@ -424,6 +422,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         noise = self._shaped_noise_covar(M, hessian_data_point_index_array).diagonal(
             dim1=-1, dim2=-2
         )  # take diagonal part of the matrix.
+
         return base_distributions.Independent(
             base_distributions.Normal(function_samples, noise.sqrt()), 1
         )
@@ -450,9 +449,25 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         if isinstance(covar, LazyEvaluatedKernelTensor):
             covar = covar.evaluate_kernel()
 
+        # compute the largest eigenval of covariance matrix.
+        eigval_max = power_iteration(covar, num_iters= 50)
+        diagonal_nugget = torch.diag(torch.ones(covar.shape[0])) * self.nugget * eigval_max
+        
         # compute the covariance matrix of the noise.
         noise_covar = self._shaped_noise_covar(M, hessian_data_point_index_array)
 
-        full_covar = covar + noise_covar
+        full_covar = covar + noise_covar + diagonal_nugget
 
         return function_dist.__class__(mean, full_covar)
+    
+def power_iteration(mat: gpytorch.lazy.LazyTensor, num_iters=20):
+    """
+    compute largest eigenvalue using Rayleigh quotient 
+    """
+    n = mat.shape[-1]
+    b_k = torch.randn(n, device=mat.device)
+    for _ in range(num_iters):
+        b_k1 = mat @ b_k
+        b_k1_norm = b_k1.norm()
+        b_k = b_k1 / b_k1_norm
+    return (b_k @ (mat @ b_k)).item() 
