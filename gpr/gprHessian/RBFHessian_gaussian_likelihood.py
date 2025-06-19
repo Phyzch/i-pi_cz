@@ -450,7 +450,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
             covar = covar.evaluate_kernel()
 
         # compute the largest eigenval of covariance matrix.
-        eigval_max = power_iteration(covar, num_iters= 50)
+        eigval_max = power_iteration(covar, num_iters= 20)
         diagonal_nugget = torch.diag(torch.ones(covar.shape[0])) * self.nugget * eigval_max
         
         # compute the covariance matrix of the noise.

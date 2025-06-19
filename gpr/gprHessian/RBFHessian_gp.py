@@ -669,8 +669,10 @@ def train_gpr_model(
     loss_prior_list = []
     loss_mll_list = []
 
-    with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget) and 
-           gpytorch.settings.max_cg_iterations(10000)):
+    cg_tolerance= 1e-2
+    with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),
+           gpytorch.settings.max_cg_iterations(10000),
+           gpytorch.settings.cg_tolerance(cg_tolerance)):
         while loss_func_change > training_error_cutoff:
             # reset the gradients of all optimized torch.Tensor
             optimizer.zero_grad()
