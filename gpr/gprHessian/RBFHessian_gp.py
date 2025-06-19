@@ -602,9 +602,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
 
             # Make the prediction of test data.
-            with settings.cg_tolerance(
+            with (settings.cg_tolerance(
                 settings.eval_cg_tolerance.value()
-            ) and settings.fast_pred_var(True):
+            ), settings.fast_pred_var(True)):
                 (
                     predictive_mean,
                     predictive_covar,

@@ -92,7 +92,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         train_labels_offset = (self.train_labels - train_mean).unsqueeze(-1)  # y
 
         mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
-        
+
         if settings.detach_test_caches.on():
             mean_cache = mean_cache.detach()
 
