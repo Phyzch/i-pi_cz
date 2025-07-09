@@ -446,8 +446,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_data_point_index_2=inputs_hessian_data_point_index,
             )
 
-        mean_x = mean_x.to(dtype= torch.float32)
-        covar_x = covar_x.to(dtype= torch.float32)
+        mean_x = mean_x.to(dtype= torch.float64)
+        covar_x = covar_x.to(dtype= torch.float64)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
     def __call__(self, *args, **kwargs) -> MultivariateNormal:
@@ -603,8 +603,10 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
             # Make the prediction of test data.
             with (settings.cg_tolerance(
-                settings.eval_cg_tolerance.value()
-            ), settings.fast_pred_var(True)):
+                0.001
+            ), settings.max_cg_iterations(100000),
+            settings.fast_pred_var(True),
+            ):
                 (
                     predictive_mean,
                     predictive_covar,

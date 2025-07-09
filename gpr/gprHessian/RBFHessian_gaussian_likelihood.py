@@ -455,8 +455,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         # compute the covariance matrix of the noise.
         noise_covar = self._shaped_noise_covar(M, hessian_data_point_index_array)
 
-        # full_covar = covar + noise_covar + diagonal_nugget
-        full_covar = covar + noise_covar
+        full_covar = covar + noise_covar + diagonal_nugget
 
         return function_dist.__class__(mean, full_covar)
     
@@ -465,7 +464,7 @@ def power_iteration(mat: gpytorch.lazy.LazyEvaluatedKernelTensor, num_iters=20):
     compute largest eigenvalue using Rayleigh quotient 
     """
     n = mat.shape[-1]
-    b_k = torch.randn(n, device=mat.device)
+    b_k = torch.randn(n, device=mat.device, dtype= torch.float64)
     for _ in range(num_iters):
         b_k1 = mat @ b_k
         b_k1_norm = b_k1.norm()

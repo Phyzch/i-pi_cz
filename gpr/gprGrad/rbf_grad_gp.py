@@ -81,8 +81,8 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             likelihood_noise_variance / 10
         )  # we set the std of the prior distribution as 1/10 of the mean value.
 
-        noise_mean_tensor = torch.from_numpy(likelihood_noise_variance_mean).to(device= self.device, dtype=torch.float32)
-        noise_std_tensor = torch.from_numpy(likelihood_noise_variance_std).to(device= self.device, dtype=torch.float32)
+        noise_mean_tensor = torch.from_numpy(likelihood_noise_variance_mean).to(device= self.device, dtype=torch.float64)
+        noise_std_tensor = torch.from_numpy(likelihood_noise_variance_std).to(device= self.device, dtype=torch.float64)
 
         # set the prior of the noise as a normal distribution.
         task_noise_prior = gpytorch.priors.NormalPrior(
@@ -223,8 +223,8 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         """
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
-        mean_x = mean_x.to(dtype= torch.float32)
-        covar_x = covar_x.to(dtype= torch.float32)
+        mean_x = mean_x.to(dtype= torch.float64)
+        covar_x = covar_x.to(dtype= torch.float64)
         # add nugget to covar_x to regularize the kernel.
         diag_nugget = torch.eye(covar_x.shape[0]).to(device= self.device, dtype= covar_x.dtype) * self.nugget 
         covar_x = covar_x + diag_nugget
@@ -393,10 +393,10 @@ def train_gpr(model: GPModelWithDerivatives,
     train_targets = model.train_targets
 
     # put all tensor on cuda.
-    model = model.to(device= model.device, dtype= torch.float32)
-    likelihood = likelihood.to(device = model.device, dtype= torch.float32)
-    train_inputs= train_inputs.to(device= model.device, dtype= torch.float32)
-    train_targets = train_targets.to(device= model.device, dtype= torch.float32)
+    model = model.to(device= model.device, dtype= torch.float64)
+    likelihood = likelihood.to(device = model.device, dtype= torch.float64)
+    train_inputs= train_inputs.to(device= model.device, dtype= torch.float64)
+    train_targets = train_targets.to(device= model.device, dtype= torch.float64)
 
     # choose the optimizer for the training to train the parameter of models (raw_parameter)
     # https://pytorch.org/docs/stable/generated/torch.optim.Adam.html

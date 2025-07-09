@@ -5,6 +5,8 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 """
 
 import torch
+torch.set_default_dtype(torch.float64)
+
 import numpy as np
 # from gpr.internalcoordtools import non_redundant_coordinate_transformer
 from gpr.internal.ZmatrixInternal import non_redundant_coordinate_transformer # type: ignore
@@ -1529,7 +1531,7 @@ class GPModelWithHessiansWrapper:
             self.get_free_moving_internal_coordinate(
                 test_x
                 )
-        ).to(device= self.device, dtype=torch.float32)
+        ).to(device= self.device, dtype=torch.float64)
         
         test_hessian_data_point_index_tensor = torch.from_numpy(
             test_hessian_data_point_index

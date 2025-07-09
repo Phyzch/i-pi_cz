@@ -86,19 +86,19 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             self.lik_train_train_covar,
         )  # covariance matrix of y(x) (likelihood) : K(X,X) + sigma^2 I
 
-        train_mean = train_mean.to(dtype= torch.float32)
-        train_train_covar = train_train_covar.to(dtype= torch.float32)
-        self.train_labels = self.train_labels.to(dtype= torch.float32)
+        train_mean = train_mean.to(dtype= torch.float64)
+        train_train_covar = train_train_covar.to(dtype= torch.float64)
+        self.train_labels = self.train_labels.to(dtype= torch.float64)
         train_labels_offset = (self.train_labels - train_mean).unsqueeze(-1)  # y
 
-        mean_cache1 = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
+        mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
 
         # debug the linear cg error. compared with pseudo-inverse.
         # psuedo-inverse code.
-        train_train_covar_tensor = train_train_covar.to_dense()
-        singular_value_cutoff = self.likelihood.nugget
-        covar_inverse = torch.linalg.pinv(train_train_covar_tensor, rtol= singular_value_cutoff)
-        mean_cache = (covar_inverse @ train_labels_offset).squeeze(-1)
+        # train_train_covar_tensor = train_train_covar.to_dense()
+        # singular_value_cutoff = self.likelihood.nugget
+        # covar_inverse = torch.linalg.pinv(train_train_covar_tensor, rtol= singular_value_cutoff)
+        # mean_cache = (covar_inverse @ train_labels_offset).squeeze(-1)
 
         if settings.detach_test_caches.on():
             mean_cache = mean_cache.detach()
@@ -119,7 +119,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         """
         train_train_covar = self.lik_train_train_covar 
         train_train_covar_inv_root = to_dense(train_train_covar.root_inv_decomposition().root)   # (K(x,x) + sigma^2 I)^(-1/2)
-        train_train_covar_inv_root = train_train_covar_inv_root.to(dtype= torch.float32)
+        train_train_covar_inv_root = train_train_covar_inv_root.to(dtype= torch.float64)
         return train_train_covar_inv_root
 
 

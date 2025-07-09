@@ -157,12 +157,12 @@ def update_model_with_new_data(
 
     # check the data type of input training data. If it's not torch.Tensor, convert it to torch.Tensor.
     if not isinstance(new_train_inputs, torch.Tensor):
-        new_train_inputs_tensor = torch.from_numpy(np.array(new_train_inputs)).to(device= model.device, dtype=torch.float32)
+        new_train_inputs_tensor = torch.from_numpy(np.array(new_train_inputs)).to(device= model.device, dtype=torch.float64)
     else:
         new_train_inputs_tensor = torch.clone(new_train_inputs)
 
     if not isinstance(new_train_targets, torch.Tensor):
-        new_train_targets_tensor = torch.from_numpy(np.array(new_train_targets)).to(device= model.device, dtype=torch.float32)
+        new_train_targets_tensor = torch.from_numpy(np.array(new_train_targets)).to(device= model.device, dtype=torch.float64)
     else:
         new_train_targets_tensor = torch.clone(new_train_targets)
 
@@ -650,7 +650,7 @@ class GPModelWithDerivativesWrapper:
 
         # ------- transform input from numpy array to torch.tensor -----------
         (moving_train_inputs, moving_train_targets) = map(
-            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float32), (moving_train_inputs, moving_train_targets)
+            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (moving_train_inputs, moving_train_targets)
         )
 
         # -------- fixing certain dofs. -----------------
@@ -798,7 +798,7 @@ class GPModelWithDerivativesWrapper:
 
         # transform to internal coordinate q. normalization + filter fixed dofs.
         moving_test_q = self.get_free_moving_internal_coordinate(test_x_array)
-        moving_test_q = torch.from_numpy(moving_test_q).to(device= self.device, dtype=torch.float32)
+        moving_test_q = torch.from_numpy(moving_test_q).to(device= self.device, dtype=torch.float64)
 
         # use Gaussian process regression model to make prediction
         moving_normalized_test_mean, moving_normalized_test_covar_matrix = (
@@ -926,7 +926,7 @@ class GPModelWithDerivativesWrapper:
 
         # transform numpy array into tensor.
         (moving_new_train_inputs, moving_new_train_targets) = map(
-            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float32), (moving_new_train_inputs, moving_new_train_targets)
+            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (moving_new_train_inputs, moving_new_train_targets)
         )
 
         # we only add new training data if they are not too close to each other.
