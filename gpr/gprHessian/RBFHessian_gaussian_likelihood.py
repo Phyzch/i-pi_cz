@@ -455,7 +455,8 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         # compute the covariance matrix of the noise.
         noise_covar = self._shaped_noise_covar(M, hessian_data_point_index_array)
 
-        full_covar = covar + noise_covar + diagonal_nugget
+        # full_covar = covar + noise_covar + diagonal_nugget
+        full_covar = covar + noise_covar
 
         return function_dist.__class__(mean, full_covar)
     
