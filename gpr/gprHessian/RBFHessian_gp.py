@@ -92,6 +92,16 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         :param: ref_mean_coordinate, ref_mean_V, ref_mean_grad, ref_mean_hessian (upper triangle):
                 this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         """
+        # settings for evaluation of training. cg is used for (K + noise)^{-1}
+        # set cg tolerance and max iteration.
+        self.max_cg_iteration = int(pow(10.0, 5))
+        self.cg_tolerance = 1e-3
+
+        # set cg tolerance and max iteration during training.
+        # the tolerance is looser because training involves multiple iterations and can be expensive to do.
+        self.train_max_cg_iteration = int(pow(10.0, 4))
+        self.train_cg_tolerance = 1e-2
+
         # the data point index that contains the hessian information.
         self.training_data_hessian_data_point_index = (
             training_data_hessian_data_point_index
@@ -602,9 +612,12 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
 
             # Make the prediction of test data.
+            # note: the inference uses (K + sigma^2 I)^{-1} y, which is solved by linear conjugate gradient (cg)
+            # to achieve satisfactory accuracy, we need to tight up the tolerance and max_cg_iterations.
+            # current max_cg_iteration = 10^6 & cg_tolerance = 1e-3
             with (settings.cg_tolerance(
-                0.001
-            ), settings.max_cg_iterations(100000),
+                self.cg_tolerance
+            ), settings.max_cg_iterations(self.max_cg_iteration),
             settings.fast_pred_var(True),
             ):
                 (
@@ -671,10 +684,9 @@ def train_gpr_model(
     loss_prior_list = []
     loss_mll_list = []
 
-    cg_tolerance= 1e-2
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),
-           gpytorch.settings.max_cg_iterations(10000),
-           gpytorch.settings.cg_tolerance(cg_tolerance)):
+           gpytorch.settings.max_cg_iterations(model.train_max_cg_iteration),
+           gpytorch.settings.cg_tolerance(model.train_cg_tolerance)):
         while loss_func_change > training_error_cutoff:
             # reset the gradients of all optimized torch.Tensor
             optimizer.zero_grad()

@@ -360,7 +360,10 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             test_shape = torch.Size([joint_shape[0] - self.prediction_strategy.train_shape[0], *tasks_shape])
 
             # Make the prediction
-            with settings.cg_tolerance(settings.eval_cg_tolerance.value()):
+            max_cg_iteration = int(pow(10.0, 5))
+            with (settings.cg_tolerance(settings.eval_cg_tolerance.value()),
+                  settings.max_cg_iterations(max_cg_iteration),
+                  settings.fast_pred_var(True)):
                 (
                     predictive_mean,
                     predictive_covar,
@@ -418,43 +421,51 @@ def train_gpr(model: GPModelWithDerivatives,
 
     loss_value_list = []
 
-    while loss_func_change > training_error_cutoff:
-        # reset the gradients of all optimized torch.Tensor
-        optimizer.zero_grad()
-        # output from model training data
-        output = model(train_inputs)
-        # calculate the loss function. here the returned loss is a torch.tensor.
-        loss = -mll(output, train_targets)
-        loss_value = loss.detach().item()
-        loss_value_list.append(loss_value)
+    # tight up the conjugate gradient tolerance and max iteration number
+    max_cg_iteration = int(pow(10.0, 4))
+    cg_tolerance = 1e-2
+    with(gpytorch.settings.max_cg_iterations(max_cg_iteration),
+         gpytorch.settings.cg_tolerance(cg_tolerance),
+         gpytorch.settings.cholesky_jitter(float_value= model.nugget, 
+                                           double_value= model.nugget)
+                                           ):
+        while loss_func_change > training_error_cutoff:
+            # reset the gradients of all optimized torch.Tensor
+            optimizer.zero_grad()
+            # output from model training data
+            output = model(train_inputs)
+            # calculate the loss function. here the returned loss is a torch.tensor.
+            loss = -mll(output, train_targets)
+            loss_value = loss.detach().item()
+            loss_value_list.append(loss_value)
 
-        if not cuda_available:
-            # disable all output if running on cuda.
-            if (
-                loss_value > old_loss_value
-                and abs((loss_value - old_loss_value) / old_loss_value) > 0.1
-            ):
-                print(
-                    "@WARNING: the training could be unstable. loss function increases:  {}   ->     {}".format(
-                        old_loss_value, loss_value
+            if not cuda_available:
+                # disable all output if running on cuda.
+                if (
+                    loss_value > old_loss_value
+                    and abs((loss_value - old_loss_value) / old_loss_value) > 0.1
+                ):
+                    print(
+                        "@WARNING: the training could be unstable. loss function increases:  {}   ->     {}".format(
+                            old_loss_value, loss_value
+                        )
                     )
-                )
 
-        # calculate the change of loss function to decide whether we will stop the loop.
-        loss_func_change = np.abs(loss_value - old_loss_value)
-        old_loss_value = loss_value
+            # calculate the change of loss function to decide whether we will stop the loop.
+            loss_func_change = np.abs(loss_value - old_loss_value)
+            old_loss_value = loss_value
 
-        # backpropagation the loss function to compute the gradient of each parameter
-        loss.backward()
-        # optimizer optimize the parameter using the gradient info.
-        optimizer.step()
+            # backpropagation the loss function to compute the gradient of each parameter
+            loss.backward()
+            # optimizer optimize the parameter using the gradient info.
+            optimizer.step()
 
-        train_counts = train_counts + 1
+            train_counts = train_counts + 1
 
-        if not cuda_available:
-            if output_training_info:
-                if train_counts % train_counts_output == 0:
-                    print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
+            if not cuda_available:
+                if output_training_info:
+                    if train_counts % train_counts_output == 0:
+                        print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
     
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
