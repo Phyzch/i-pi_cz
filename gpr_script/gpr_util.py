@@ -470,8 +470,11 @@ def analyze_hessian_error(coord,
     the hessian for constrained internal dofs are predicted by linear regression. 
     We analyze error for both two block components.
     """
+    ab_initio_hess_norm = compute_frobenius_norm(ab_initio_hessians)
+    print(f"{data_type}: frobenius norm for hessians {ab_initio_hess_norm}")
+
     relative_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
-        predicted_hessians, ab_initio_hessians
+        ab_initio_hessians, predicted_hessians
     )
 
     print(f"{data_type}: relative hessian error for ring polymer beads: {relative_hessian_error}")
@@ -497,8 +500,8 @@ def analyze_hessian_error(coord,
                                                           constrained_dofs_2d_index[0],
                                                             constrained_dofs_2d_index[1]]
     constrained_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
-        constrained_predicted_hessian_q, 
-        constrained_ab_initio_hessian_q
+        constrained_ab_initio_hessian_q, 
+        constrained_predicted_hessian_q 
     )
     print(f"{data_type}: relative hessian error for constrained dofs (modeled by linear regression): {constrained_hessian_error}")
 
@@ -511,8 +514,8 @@ def analyze_hessian_error(coord,
                                                          cross_term_2d_index[0],
                                                          cross_term_2d_index[1]]
     cross_term_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
-        cross_term_predicted_hessian_q,
-        cross_term_ab_initio_hessian_q
+        cross_term_ab_initio_hessian_q,
+        cross_term_predicted_hessian_q
     )
     print(f"{data_type}: relative hessian error for cross term (modeled by linear regression): {cross_term_hessian_error}")
 
@@ -525,8 +528,8 @@ def analyze_hessian_error(coord,
                                                           free_moving_dofs_2d_index[0],
                                                           free_moving_dofs_2d_index[1]]
     free_moving_hessian_error = compute_relative_matrix_error_with_frobenius_norm(
-        free_moving_predicted_hessian_q,
-        free_moving_ab_initio_hessian_q
+        free_moving_ab_initio_hessian_q,
+        free_moving_predicted_hessian_q
     )
     print(f"{data_type}: relative hessian error for free moving dofs of ring polymers beads \
            (modeled by Gaussian Process Regression): {free_moving_hessian_error}")
@@ -603,6 +606,7 @@ def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper
         )
     )
 
+    print(f"index for cross validation data point: {cv_hessian_data_point_index}")
     # compute relative error in potential for cross validation data.
     V_error = np.abs(cv_pots - predicted_pots) / np.abs(cv_pots)
     print(f"cross validation data: error of potential prediction {V_error}")
