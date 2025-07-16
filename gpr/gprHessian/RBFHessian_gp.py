@@ -304,10 +304,20 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self.covar_module_component_list = covar_module_component_list
 
         # sum of Squared Exponential Covariance function. This will be the covariance function.
-        self.covar_module = self.covar_module_component_list[0]
+        covar_module = self.covar_module_component_list[0]
         for i in range(1, gpr_SE_kernel_number):
-            self.covar_module = self.covar_module + self.covar_module_component_list[i]
+            covar_module = covar_module + self.covar_module_component_list[i]
 
+        # use multi-device kernel.
+        n_devices = torch.cuda.device_count() 
+        print("Planning to run on {} GPUs".format(n_devices))
+        output_device = torch.device("cuda:0")
+
+        self.covar_module = gpytorch.kernels.MultiDeviceKernel(
+            covar_module, 
+            device_ids= range(n_devices),
+            output_device= output_device
+        )
 
     def _set_likelihood_noise_prior(
         self,
