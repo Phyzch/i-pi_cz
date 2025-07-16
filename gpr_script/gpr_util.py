@@ -325,11 +325,19 @@ def split_train_cv_data(cartesian_coordinate_x,
         train_hessian_data_num = hessian_data_num - cv_hessian_data_num
 
         all_hessian_index = np.copy(hessian_index_list)
+        min_hessian_index = np.min(all_hessian_index).astype(int)
+        max_hessian_index = np.max(all_hessian_index).astype(int)
         # use a seed to replicate the result.
         np.random.seed(42)
-        np.random.shuffle(all_hessian_index)
-        cv_hessian_index = np.sort(all_hessian_index[:cv_hessian_data_num])
-        train_hessian_index = np.sort(all_hessian_index[cv_hessian_data_num:])
+        while True:
+            np.random.shuffle(all_hessian_index)
+            cv_hessian_index = np.sort(all_hessian_index[:cv_hessian_data_num])
+            train_hessian_index = np.sort(all_hessian_index[cv_hessian_data_num:])
+            if (min_hessian_index in cv_hessian_index) or (max_hessian_index in cv_hessian_index):
+                 seed = np.random.randint(0, 100)
+                 np.random.seed(seed)
+            else:
+                break 
 
         hessian_index_in_cv_data_bool = [1 if hessian_index_list[i] in cv_hessian_index else 0 for i in range(hessian_data_num)]
         cv_index = np.nonzero(hessian_index_in_cv_data_bool)[0]  # index in hessian_data for cross validation hessians.
@@ -355,7 +363,7 @@ def split_train_cv_data(cartesian_coordinate_x,
     train_set = Dataset(train_x, train_pot, train_force, train_hessian_index_list, train_hessian_data)
     cv_set = Dataset(cv_x, cv_pot, cv_force, cv_hessian_index_list, cv_hessian_data)
     
-    return train_set, cv_set 
+    return train_set, cv_set, cv_index 
 
 def compute_frobenius_norm(input_matrix: np.ndarray):
     """
@@ -606,7 +614,6 @@ def analyze_cross_validation_error(gpr_hessian_model: GPModelWithHessiansWrapper
         )
     )
 
-    print(f"index for cross validation data point: {cv_hessian_data_point_index}")
     # compute relative error in potential for cross validation data.
     V_error = np.abs(cv_pots - predicted_pots) / np.abs(cv_pots)
     print(f"cross validation data: error of potential prediction {V_error}")

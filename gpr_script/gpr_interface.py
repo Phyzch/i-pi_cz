@@ -1063,7 +1063,7 @@ class GPRHessianMapper(object):
         hessian_index_list, hessian_data_list, 
         gpr_fixed_internal_dofs, gpr_rigid_internal_dofs) = self.load_gpr_hessian_training_data(candidate_hessian_point_x)        
 
-        train_set, cv_set = gpr_util.split_train_cv_data(
+        train_set, cv_set, cv_index = gpr_util.split_train_cv_data(
             cartesian_coordinate_x,
             potential_data,
             force_data,
@@ -1089,6 +1089,7 @@ class GPRHessianMapper(object):
             cv_V_shifted = cv_V - self.energy_shift
             cv_grads = - cv_force 
             
+            print(f"index for cross validation data point: {cv_index}")
             gpr_util.analyze_cross_validation_error(
                 self.gpr_hessian_model,
                 cv_x,
