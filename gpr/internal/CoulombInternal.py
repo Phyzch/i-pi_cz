@@ -6,7 +6,8 @@ Code written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laborat
 
 import numpy as np
 from numpy.linalg import norm as npnorm
-
+import os 
+import h5py 
 
 class non_redundant_coordinate_transformer:
     """
@@ -15,7 +16,9 @@ class non_redundant_coordinate_transformer:
 
     def __init__(self, natom, 
                  ref_x, 
-                 singular_value_cutoff = np.power(10.0, -2)):
+                 singular_value_cutoff = np.power(10.0, -2),
+                 load: bool= False,
+                 load_file_path= None):
         """
         :param: natom: number of atoms for the molecule
         :param: ref_x: Cartesian coordinate of the reference point
@@ -24,18 +27,46 @@ class non_redundant_coordinate_transformer:
         """
         self.natom = natom
         self.ref_x = ref_x
-        self.internal_coord_type = "bond"
+        self.internal_coord_type = "Coulomb"
 
-        if np.size(ref_x) != 3 * natom:
+        if load:
+            self.load_coordinate_transformer(load_file_path)
+
+        if np.size(self.ref_x) != 3 * natom:
             raise (
                 "The size of reference point for initializing non redundant coordinate is not 3 * natom: size of ref_x: {} , natom: {}".format(
-                    np.size(ref_x), natom
+                    np.size(self.ref_x), natom
                 )
             )
 
         # compute transformation matrix U between non_redundant_coordinate q and redundant_coordinate d for reference point
         # we can access U as self.ref_U
         self._compute_transformation_matrix_U_for_ref_point(singular_value_cutoff)
+
+
+    def store_coordinate_transformer(self, file_path):
+        """
+        store internal_coord_type & ref_x_list for the coordinate transformer 
+        """
+        file_name = os.path.join(file_path, "coordinate_transformer.hdf5")
+        with h5py.File(file_name, "w") as f:
+            f.create_dataset("internal_coord_type", data= self.internal_coord_type)
+            f.create_dataset("ref_x", data= self.ref_x)
+        
+        print("data for coordinate transformer successfully stored")
+
+    def load_coordinate_transformer(self, file_path):
+        """
+        load internal_coord_type & ref_x_list for coordinate transformer.
+        """
+        file_name = os.path.join(file_path, "coordinate_transformer.hdf5")
+        try:
+            with h5py.File(file_name, "r") as f:
+                self.internal_coord_type = f["internal_coord_type"][()].decode()
+                self.ref_x = np.array(f["ref_x"])
+        except:
+            print("@Warning: Fails to load ref_x for coordinate transformer.")
+
 
     # for reference point, compute transformation matrix U.
     def _compute_transformation_matrix_U_for_ref_point(self,

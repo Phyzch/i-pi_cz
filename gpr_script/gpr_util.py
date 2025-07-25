@@ -138,6 +138,8 @@ def store_training_hyperparameter_in_gpr_model(
 
     gpr_model.save_model(file_path)
 
+    gpr_model.coordinate_transformer.store_coordinate_transformer(folder_path)
+
 def load_training_hyperparameter_in_gpr_model(
         gpr_model: GPModelWithDerivativesWrapper,
         folder_path

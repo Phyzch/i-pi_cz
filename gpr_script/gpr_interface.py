@@ -138,8 +138,11 @@ class GPRForceMapper(object):
         # call select ref points to generate ref points for coordinate transformer.
         ref_x_list = internal_util.select_reference_points(self.motion)
 
-        coordinate_transformer = internal_util.create_coordinate_transformer(self.motion,
-                                                               ref_x_list)
+        load = self.motion.options["read_initial_gpr_training_data"]
+        coordinate_transformer = internal_util.create_coordinate_transformer(
+                                                               self.motion,
+                                                               ref_x_list,
+                                                               load)
         return coordinate_transformer
     
     def _initialize_gpr_model(self, train_x, train_V, train_grad, coordinate_transformer):

@@ -23,27 +23,35 @@ def select_reference_points(motion: Motion):
     
     return ref_x_list 
 
-def create_coordinate_transformer(motion:Motion, ref_x_list):
+def create_coordinate_transformer(motion:Motion, ref_x_list, load):
     """
     Initialize the coordinate transformer that transform the system 
     from the Cartesian coordinate into the internal coordinate.
+    :param: load: whether to load data for coordinate transformer.
     """
     names = dstrip(motion.beads.names).copy().tolist()
     ref_x = ref_x_list[0]
+
+    neb_final_gpr_folder = "neb_final_gpr_training"
+
     # create coordinate_transformer, 
     # which handles the transformation from the Cartesian coordinate to internal coordinate.
     # This is for Coulomb matrix type internal coordinate.
     internal_coord = motion.options["internal_coord"]
     if internal_coord == "Coulomb":
         coordinate_transformer = gpr.internal.CoulombInternal.non_redundant_coordinate_transformer(
-            motion.beads.natoms, ref_x 
+            motion.beads.natoms, ref_x,
+            load= load, 
+            load_file_path= neb_final_gpr_folder 
         )
     elif internal_coord == "bond":
         # This is for internal coordinate that include bond angles and bond distance
         coordinate_transformer = gpr.internal.ZmatrixInternal.non_redundant_coordinate_transformer(
                 motion.beads.natoms,
                 ref_x_list,
-                names
+                names,
+                load,
+                load_file_path= neb_final_gpr_folder
         )
     else:
         raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
