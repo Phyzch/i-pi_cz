@@ -39,6 +39,16 @@ class InputNebInstGPR(InputDictionary):
                 "help": "Defines the method to evolve the nudged elastic band",
                 "options": ["verlet", "cg", "FIRE"],
             },
+        ),
+
+        "cal_type": (
+            InputAttribute,
+            {
+                "dtype": str,
+                "default": "rate",
+                "help": "Define the type of calculation. rate / tunneling_splitting.",
+                "options": ["rate", "splitting"]
+            }
         )
     }
 
@@ -718,6 +728,7 @@ class InputNebInstGPR(InputDictionary):
 
         # options
         self.mode.store(options["mode"])
+        self.cal_type.store(options["cal_type"])
         self.opt.store(options["opt"])
         self.asr.store(options["asr"])
         self.stage.store(options["stage"])
@@ -834,4 +845,5 @@ class InputNebInstGPR(InputDictionary):
     def fetch(self):
         rv = super(InputNebInstGPR, self).fetch()
         rv["mode"] = self.mode.fetch()
+        rv["cal_type"] = self.cal_type.fetch()
         return rv

@@ -65,6 +65,7 @@ class MAPNEBGPRMover(Motion):
         fix_dofs= np.array([]),
         asr = "none",
         mode="verlet",
+        cal_type= "rate",
         prefix="neb_instanton",
         tolerances={"gradient": 5e-3, 
                     "gradient_end_bead": 1e-2,
@@ -154,6 +155,8 @@ class MAPNEBGPRMover(Motion):
         self.options["mode"] = mode
         # optimizer for optimization (neb / string / improved string)
         self.options["opt"] = opt
+        # type of calculation. rate or tunneling splitting.
+        self.options["cal_type"] = cal_type 
 
         self.options["asr"] = asr
         self.options["stage"] = stage
@@ -242,10 +245,6 @@ class MAPNEBGPRMover(Motion):
         if self.options["opt"] == "neb":
             self.optimizer = LINEBMethod()
         elif self.options["opt"] == "string":
-            self.optimizer = StringMethod()
-        elif self.options["opt"] == "improved_string":
-            # The bead redistribution part is the same as string method. 
-            # but the gradient mapper (gm) is different.
             self.optimizer = StringMethod()
         else:
             raise ValueError("The opt Value does not match any existing options. Please choose either neb/string/improved_string.")
@@ -1350,6 +1349,8 @@ class GradientMapper(object):
         self.fixatoms = ens.fixatoms.copy()
         self.fix_dofs = ens.optarrays["fix_dofs"]
         self.asr = ens.options["asr"]
+        # type of calculation: rate or tunneling_splitting.
+        self.cal_type = ens.options["cal_type"]
         
         self.instanton_path_energy = ens.optarrays[
             "instanton_path_energy"
@@ -1952,6 +1953,11 @@ class LINEBGradientMapper(GradientMapper):
         # add spring force for all beads.
         neb_optimization_force = neb_optimization_force + spring_force
 
+        if self.cal_type == "splitting":
+            # fix the end beads location. 
+            neb_optimization_force[0] = np.zeros([3 * natom])
+            neb_optimization_force[nimage - 1] = np.zeros([3 * natom])
+
         return neb_optimization_force
 
 class StringGradientMapper(GradientMapper):
@@ -2019,6 +2025,7 @@ class StringGradientMapper(GradientMapper):
 
         # evaluate the optimization forces for the string method. 
         self.optimization_force = self.compute_string_optimization_force(nimage, natoms, self.btau)
+
         # project out translation (&rotation) dofs depending on the asr mode.
         m = self.dbeads.m3[0, self.fixatoms_mask][np.arange(0, 3 * natoms, 3)]
         self.optimization_force = ipi.utils.nebinstool.apply_symmetry_projection(m, q, natoms, self.optimization_force, 
@@ -2082,32 +2089,36 @@ class StringGradientMapper(GradientMapper):
         self.transverse_force = np.copy(neb_optimization_force)
 
         # for two end beads.
-        # add energy constraint force for two end beads.
-        neb_optimization_force[0] = end_beads_energy_constraint_force[0]
-        neb_optimization_force[nimage - 1] = end_beads_energy_constraint_force[1]
+        if self.cal_type == "rate":
+            # add energy constraint force for two end beads.
+            neb_optimization_force[0] = end_beads_energy_constraint_force[0]
+            neb_optimization_force[nimage - 1] = end_beads_energy_constraint_force[1]
 
-        # add force term to end beads to make sure the path along end beads aligns with gradient of potential.
-        # spring force for end bead 1
-        unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(
-            mscaled_q[1] - mscaled_q[0]
-        )
-        spring_force_bead0 = (
-            unit_vec_1 * np.linalg.norm(self.action_forces[1])
-        )
-        neb_optimization_force[0] = neb_optimization_force[0] + (
-            spring_force_bead0 - np.dot(spring_force_bead0, f0) * f0
-        )
+            # add force term to end beads to make sure the path along end beads aligns with gradient of potential.
+            # spring force for end bead 1
+            unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(
+                mscaled_q[1] - mscaled_q[0]
+            )
+            spring_force_bead0 = (
+                unit_vec_1 * np.linalg.norm(self.action_forces[1])
+            )
+            neb_optimization_force[0] = neb_optimization_force[0] + (
+                spring_force_bead0 - np.dot(spring_force_bead0, f0) * f0
+            )
 
-        # spring force for end bead 2
-        unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(
-            mscaled_q[nimage - 2] - mscaled_q[nimage - 1]
-        )
-        spring_force_bead1 = (
-            unit_vec_2 * np.linalg.norm(self.action_forces[-2])
-        )
-        neb_optimization_force[nimage -1] = neb_optimization_force[nimage -1] + (
-            spring_force_bead1 - np.dot(spring_force_bead1, f1) * f1
-        )
+            # spring force for end bead 2
+            unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(
+                mscaled_q[nimage - 2] - mscaled_q[nimage - 1]
+            )
+            spring_force_bead1 = (
+                unit_vec_2 * np.linalg.norm(self.action_forces[-2])
+            )
+            neb_optimization_force[nimage -1] = neb_optimization_force[nimage -1] + (
+                spring_force_bead1 - np.dot(spring_force_bead1, f1) * f1
+            )
+        elif self.cal_type == "splitting":
+            neb_optimization_force[0] = np.zeros([3 * natoms])
+            neb_optimization_force[nimage - 1] = np.zeros([3 * natoms])
 
         return neb_optimization_force
 
