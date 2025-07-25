@@ -462,11 +462,8 @@ if case == "reactant":
     outfile = open("freq.dat", "w")  
     aux = np.zeros(nzeros)
     dd = np.concatenate((aux, hess_eigval))
-
-    # TODO: bug in the code. now convert to frequency in cm^-1 unit
-    dd_freq = np.sqrt(dd) 
     
-    np.savetxt(outfile, dd_freq.reshape(1, dd.size))
+    np.savetxt(outfile, dd.reshape(1, dd.size))  #save square of frequency (eigenvalue of h0 matrix.)
     outfile.close()
 
     # logQvib    = - sum_k log(beta_P * hbar * eta_k)

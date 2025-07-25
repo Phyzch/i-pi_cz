@@ -5,6 +5,7 @@ from geometric.internal import *
 import geometric.internal
 from .molecule import NewMolecule
 # List of Primitive Internal Coordinate.
+import warnings 
 
 def convert_bohrs_degrees(prims, values):
     """ Convert values of primitive ICs (or differences) from
@@ -435,7 +436,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
             zero_s_max = np.max(np.abs(zero_S))
             if zero_s_max > np.power(10.0, -4) * np.min(np.abs(nonzero_S)):
                 # nonzero value is too large
-                raise (
+                warnings.warn(
                     "zero singular value of matrix B is too large. zero_s_max: {}  min(nonzero_s): {}".format(
                         zero_s_max, np.min(np.abs(nonzero_S))
                     )

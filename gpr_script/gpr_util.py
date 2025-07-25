@@ -25,6 +25,9 @@ def store_fixed_internal_dofs_gpr_model(gpr_model: GPModelWithDerivativesWrapper
     """
     fixed_internal_dofs = gpr_model.output_fixed_internal_dofs()
     
+    if not os.path.exists(prefix):
+        os.mkdir(prefix)
+
     file_path = os.path.join(prefix, "fixed_internal_dofs.txt")
     with open(file_path, "w") as f:
         for dof in fixed_internal_dofs:
@@ -126,7 +129,10 @@ def store_training_hyperparameter_in_gpr_model(
 ):
     """
     store the hyper-parameter of the trained gpr model
-    """
+    """    
+    if not os.path.exists(folder_path):
+        os.mkdir(folder_path)
+    
     file_name = "gpr.pth"
     file_path = os.path.join(folder_path, file_name)
 

@@ -553,7 +553,7 @@ class MAPNEBGPRMover(Motion):
         """
         # choose two end beads and the bead in the middle as initial training data.
         # We will train the GPR model to optimize hyperparameter using the initial data.
-        initial_bead_number = 3 
+        initial_bead_number = 10 
         nbeads = self.beads.nbeads
         # compute forces one by one in case we use the 'centroid' trick to avoid 
         # computing forces for all beads to converge the path.

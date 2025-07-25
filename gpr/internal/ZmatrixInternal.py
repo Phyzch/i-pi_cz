@@ -19,7 +19,8 @@ class non_redundant_coordinate_transformer:
         """
         self.natom = natoms
         self.ref_x = ref_x_list[0]
-
+        self.internal_coord_type = "bond"
+        
         if np.size(self.ref_x) != 3 * natoms:
             raise (
                 "The size of reference point for initializing non redundant coordinate is not 3 * natom: size of ref_x: {} , natom: {}".format(
@@ -44,6 +45,7 @@ class non_redundant_coordinate_transformer:
         self.ref_S = self.dlc_coord.S
         self.ref_Vh = self.dlc_coord.ref_Vh  
         self.nonzero_S_index_len = len(self.ref_S)
+
         print(f"Number of nonzero dofs: {self.nonzero_S_index_len}")
     
     def compute_delocalized_wilson_matrix_Bq(self, x):

@@ -24,6 +24,7 @@ class non_redundant_coordinate_transformer:
         """
         self.natom = natom
         self.ref_x = ref_x
+        self.internal_coord_type = "bond"
 
         if np.size(ref_x) != 3 * natom:
             raise (
