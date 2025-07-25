@@ -2276,6 +2276,7 @@ class RP_MAP(object):
 
         dr = 1000
 
+        step_num = 0
         while dr > 0:
             old_r_distance = r_distance
             # r is normalized distance along path, in the range of [0, 1]
@@ -2288,6 +2289,16 @@ class RP_MAP(object):
 
             for key, value in zip(data_lists.keys(), [x, v, t, r_distance, v_r, pot]):
                 data_lists[key].append(value)
+            
+            step_num = step_num + 1
+            if step_num % 100 == 0:
+                print(f"step number: {step_num}")
+                print(f"r_distance: {r_distance},  v_r: {v_r}")
+
+            if r_distance > 1:
+                print("Warning: r_distance > 0.")
+                print(f"r_distance: {r_distance},  v_r: {v_r}")
+                break 
 
         for key in data_lists.keys():
             data_lists[key] = np.array(data_lists[key])
