@@ -2146,6 +2146,8 @@ class RP_MAP(object):
         bind function for RP_MAP
         nebmover: MAPNEBMover instance.
         """
+        self.cal_type = nebmover.options["cal_type"]
+
         self.prefix = nebmover.options["prefix"]
         self.final_hessian_bool = nebmover.options["final_hessian_bool"]
         self.ab_initio_hessian_bool = nebmover.options["ab_initio_hessian_bool"]
@@ -2399,7 +2401,12 @@ class RP_MAP(object):
         """
         # interpolate to get ring polymer position.
         rp_t_list, rp_x_list = ipi.utils.nebinstool.interpolate_ring_polymer_beads(
-            self.imag_time_period, t_list, x_list, v_list, self.rp_bead_number
+            self.imag_time_period, 
+            t_list, 
+            x_list, 
+            v_list, 
+            self.rp_bead_number,
+            self.cal_type
         )
 
         ipi.utils.nebinstool.print_instanton_rp_time(

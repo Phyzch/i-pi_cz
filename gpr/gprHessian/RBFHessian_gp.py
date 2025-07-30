@@ -309,15 +309,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             covar_module = covar_module + self.covar_module_component_list[i]
 
         # use multi-device kernel.
-        n_devices = torch.cuda.device_count() 
-        print("Planning to run on {} GPUs".format(n_devices))
-        output_device = torch.device("cuda:0")
-
-        self.covar_module = gpytorch.kernels.MultiDeviceKernel(
-            covar_module, 
-            device_ids= range(n_devices),
-            output_device= output_device
-        )
+        self.covar_module = covar_module 
 
     def _set_likelihood_noise_prior(
         self,

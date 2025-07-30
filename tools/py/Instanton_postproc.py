@@ -420,7 +420,7 @@ elif case == "instanton":
             h = np.add(h0, spring)
             if asr != "none":
                 print(
-                    "We are changing asr to none since we consider a fixed ended linear polimer for the post-processing"
+                    "We are changing asr to none since we consider a fixed ended linear polymer for the post-processing"
                 )
                 asr = "none"
     else:

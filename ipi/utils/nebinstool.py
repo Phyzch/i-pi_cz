@@ -171,7 +171,12 @@ def path_equal_distance_interpolation(neb_bead_q, interpolation_bead_number):
 
 
 def interpolate_ring_polymer_beads(
-    period, t_list, x_list, v_list, instanton_bead_number
+    period, 
+    t_list, 
+    x_list, 
+    v_list, 
+    instanton_bead_number,
+    cal_type= "rate"
 ):
     """
     interpolate the position of ring polymer beads along minmium action path.
@@ -186,12 +191,20 @@ def interpolate_ring_polymer_beads(
     :return: rp_t_list: time list for instanton ring-polymer
              rp_x_list: coordinate list for instanton ring-polymer
     """
-    rp_t_list = np.linspace(
-        0, period / 2, instanton_bead_number, endpoint=False
-    )  # i * beta * hhbar / (2N) : here i = 0, ..., N-1.
-    rp_t_list = rp_t_list + period / (
-        4 * instanton_bead_number
-    )  # (1/2 + i) * (beta * hbar / (2N)) : here i = 0, .., N-1
+    if cal_type == "rate":
+        rp_t_list = np.linspace(
+            0, period / 2, instanton_bead_number, endpoint=False
+        )  # i * beta * hhbar / (2N) : here i = 0, ..., N-1.
+        rp_t_list = rp_t_list + period / (
+            4 * instanton_bead_number
+        )  # (1/2 + i) * (beta * hbar / (2N)) : here i = 0, .., N-1
+    elif cal_type == "splitting":
+        # tunneling splitting calculation.
+        # linear ring polymer with fixed two end points.
+        rp_t_list = np.linspace(0, period/ 2, instanton_bead_number + 2, endpoint= True)
+        rp_t_list = rp_t_list[1:-1]
+    else:
+        raise ValueError("unrecognized cal_type. Must be rate or splitting.")
 
     print("imaginary time list for ring polymer: " + str(rp_t_list))
 
