@@ -11,16 +11,18 @@ def select_reference_points(motion: Motion):
     Initialize non redundant coordinate transformer.
     choose the point with the highest potential in the initial instanton path as reference point.
     """
-    beads_pots = np.copy(motion.forces.pots)
-    bead_index_at_transition_state = np.argmax(beads_pots)
-    ref_x = dstrip(motion.beads.q[bead_index_at_transition_state]).copy()
+    # previous ways.
+    # beads_pots = np.copy(motion.forces.pots)
+    # bead_index_at_transition_state = np.argmax(beads_pots)
+    # ref_x = dstrip(motion.beads.q[bead_index_at_transition_state]).copy()
 
-    # Now, we just use the poiont with lowest energy at reactant and product side.
-    ref_x_reactant = dstrip(motion.beads.q[0]).copy() # coordinate at reactant side.
-    ref_x_product = dstrip(motion.beads.q[-1]).copy() # coordinate at product side
+    # # Now, we just use the poiont with lowest energy at reactant and product side.
+    # ref_x_reactant = dstrip(motion.beads.q[0]).copy() # coordinate at reactant side.
+    # ref_x_product = dstrip(motion.beads.q[-1]).copy() # coordinate at product side
 
-    ref_x_list = np.array([ref_x, ref_x_reactant, ref_x_product])
+    # ref_x_list = np.array([ref_x, ref_x_reactant, ref_x_product])
     
+    ref_x_list = dstrip(motion.beads.q).copy()
     return ref_x_list 
 
 def create_coordinate_transformer(motion:Motion, ref_x_list, load):

@@ -399,20 +399,29 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
         # Atomic mass array
         self.mass = np.repeat([PeriodicTable[i] for i in molecule.elem], 3)
 
-        # Build the DLC's. This takes some time, so we have the option to turn it off.
-        # xyz in molecule.xyz is already in bohr unit.
-        xyz = molecule.xyz.flatten()
-        
-        self.build_dlc(xyz)
+        # Build DLCs
+        # xyzs in molecule.xyzs is already in bohr unit.
+        self.build_dlc(molecule.xyzs)
     
-    def build_dlc(self, xyz):
+    def build_dlc(self, xyzs):
         """
         Build delocalized internal coordinate.
         param: xyz: Cartesian coordinate.
         """
-        Bmat = self.Prims.wilsonB(xyz)
+        # flatten the xyzs
+        xyzs = np.reshape(xyzs, (xyzs.shape[0], -1))
+        # list of Bmat.
+        Bmat_list = []
+        for index in range(xyzs.shape[0]):
+            xyz = xyzs[index]
+            Bmat = self.Prims.wilsonB(xyz)
+            Bmat_list.append(Bmat)
+        Bmat_list = np.array(Bmat_list)
+
+        Bmat_average = np.mean(Bmat_list, axis= 0)
+
         # SVD decomposition of Bmat
-        U, S, Vh = np.linalg.svd(Bmat, full_matrices= False)
+        U, S, Vh = np.linalg.svd(Bmat_average, full_matrices= False)
 
         natom = self.na
         # If we do not include information about the position of 

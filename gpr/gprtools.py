@@ -236,12 +236,15 @@ class FixInternalDofs(object):
         
         self.input_dim = np.shape(train_inputs)[1]
         self.output_dim = np.shape(train_targets)[1]
+
+        # code that use the change in inputs to choose relevant dofs in GPR model.
+        """
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
-        # check whether coordinate alng certain internal dofs need to be fixed.
+        # check whether coordinate along certain internal dofs need to be fixed.
         # the change along internal coordinate will be computed using Wilson's B matrix. (any coordinate should be fine.)
         # This is to fix the problem for the planar molecule
-        Bq = coordinate_transformer.compute_delocalized_wilson_matrix_Bq(np.array([train_x[0]]))[0]
-        (u, sq, vh) = np.linalg.svd(Bq, full_matrices= False)
+        sq = coordinate_transformer.ref_S 
+        vh = coordinate_transformer.ref_Vh 
         # compute change of training data along Cartesian coordinate.
         train_x_change = np.max(train_x, axis= 0) - np.min(train_x, axis= 0)
 
@@ -292,7 +295,7 @@ class FixInternalDofs(object):
             self.fixed_internal_dofs =  np.array(
                 []
             )
-        
+
         if len(self.fixed_internal_dofs) != 0:
             self.free_moving_dofs = np.delete(
                 np.arange(self.input_dim), self.fixed_internal_dofs
@@ -302,6 +305,29 @@ class FixInternalDofs(object):
             ]  # the first column of the target is the potential V.
         else:
             self.free_moving_dofs = np.arange(self.input_dim)
+            self.targets_fixed_dofs = np.array([])
+        """
+        
+        # code that use the change in forces as criterion to select dofs to include in GPR model.
+        grad_q = train_targets[:, 1:]
+        grad_q_change = np.max(grad_q, axis = 0) - np.min(grad_q, axis= 0)
+        grad_q_change_cutoff = np.max(grad_q_change) / np.power(10.0, 3)
+
+        self.free_moving_dofs = np.arange(self.input_dim)[ grad_q_change > grad_q_change_cutoff ]
+        self.fixed_internal_dofs = np.arange(self.input_dim)[ grad_q_change <= grad_q_change_cutoff ]
+        # load the fixed internal dofs from the folder.
+        if gpr_fixed_internal_dofs is not None:
+            self.fixed_internal_dofs = gpr_fixed_internal_dofs
+            self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
+
+        print(f"@gpr_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
+        print(f"@gpr_model: free moving dofs: {self.free_moving_dofs}")
+
+        if len(self.fixed_internal_dofs) != 0:
+            self.targets_fixed_dofs = np.mean(train_targets, axis= 0)[
+                self.fixed_internal_dofs + 1
+            ]
+        else:
             self.targets_fixed_dofs = np.array([])
 
     def transform_training_data_to_free_moving_dofs(

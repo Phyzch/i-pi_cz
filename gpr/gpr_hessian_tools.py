@@ -339,7 +339,6 @@ class FixInternalDofs(object):
     :param: grads: gradients in internal coordinate.
     :param: hessians: hessians in internal coordinate.
     :param: gpr_fix_internal_dofs_bool: bool variable. Fix internal dofs or not.
-    :param: gpr_fix_internal_dofs_cutoff: if change of inputs along certain dof is small than certain value, it is fixed.
     """
 
     def __init__(
@@ -351,28 +350,26 @@ class FixInternalDofs(object):
         coordinate_transformer: non_redundant_coordinate_transformer,
         grads: np.ndarray,
         hessians: np.ndarray,
-        gpr_fix_internal_dofs_bool: bool,
-        gpr_fix_internal_dofs_cutoff: float,
+        gpr_rigid_internal_dofs_bool: bool,
         rigid_internal_dofs_cutoff: float,
-        gpr_fixed_internal_dofs= None,
         gpr_rigid_internal_dofs= None,
         force_ridge_regularization_alpha: float = 0.1,
         hessian_ridge_regularization_alpha: float = 0.1
     ):
         self.input_dim = grads.shape[1]
-        self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
 
+        # code that use the change in inputs to choose relevant dofs in GPR model.
+        """
         # check whether coordinate alng certain internal dofs need to be fixed.
         # the change along internal coordinate will be computed using Wilson's B matrix. 
         # This is to fix the problem for the planar molecule
-        Bq = coordinate_transformer.compute_delocalized_wilson_matrix_Bq(np.array([train_x[0]]))[0]
-        (u, sq, vh) = np.linalg.svd(Bq, full_matrices= False)
+        sq = coordinate_transformer.ref_S 
+        vh = coordinate_transformer.ref_Vh      
         # compute change of training data along Cartesian coordinate.
         train_x_change = np.max(train_x, axis= 0) - np.min(train_x, axis= 0)
 
         # check the case that we do not fix cartesian dofs. 
         # report error if these dofs are small
-
         train_x_cutoff = pow(10.0, -3)
         index = [i for i in range(len(train_x_change)) if train_x_change[i] < train_x_cutoff]
         if len(index) != 0:
@@ -395,62 +392,48 @@ class FixInternalDofs(object):
 
         # output information for selecting fix internal dofs value.
         print(f"@For Fixing internal dofs: for reference, train_inputs_change: {train_inputs_change}.")
-        print(f"Make sure cutoff value for fixing internal dofs is appropriate. Current value: {gpr_fix_internal_dofs_cutoff}")
 
-        if np.min(train_inputs_change) < 1e-5 and (not gpr_fix_internal_dofs_bool):
+        if np.min(train_inputs_change) < 1e-5 and (not gpr_rigid_internal_dofs_bool):
             print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
             raise(RuntimeError, "Certain internal dofs of input data is fixed.\
                    Should turn gpr_fix_internal_dofs_bool on.")
     
 
-        if gpr_fix_internal_dofs_bool:
-            if gpr_fixed_internal_dofs is None:
-                self.fixed_internal_dofs = np.array(
-                    [
-                        i
-                        for i in range(self.input_dim)
-                        if train_inputs_change[i] < gpr_fix_internal_dofs_cutoff
-                    ]
-                )
-            else:
-                self.fixed_internal_dofs = gpr_fixed_internal_dofs
-                print("@gpr_hessian_model: load fixed internal dofs.")
-            
+        if gpr_rigid_internal_dofs_bool:
             if gpr_rigid_internal_dofs is None:
                 self.rigid_internal_dofs = np.array(
                     [
                         i for i in range(self.input_dim)
-                        if (train_inputs_change[i] > self.fix_internal_dofs_cutoff) and
-                        (train_inputs_change[i] < rigid_internal_dofs_cutoff)
+                        if (train_inputs_change[i] < rigid_internal_dofs_cutoff)
                     ]
                 ).astype(int)
             else:
                 self.rigid_internal_dofs = gpr_rigid_internal_dofs
                 print("@gpr_hessian_model: load rigid internal dofs")
 
-            self.fixed_internal_dofs = np.array([i for i in self.fixed_internal_dofs if i not in self.rigid_internal_dofs]).astype(int)
-
-            print(f"@gpr_hessian_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
             print(f"@gpr_hessian_model: rigid internal dofs {self.rigid_internal_dofs}")
         else:
-            self.fixed_internal_dofs = np.array(
-                []
-            ).astype(int)
-
             self.rigid_internal_dofs = np.array(
                 []
             ).astype(int)
+        """
 
-        self.constrained_internal_dofs = np.concatenate(
-            [self.fixed_internal_dofs,
-             self.rigid_internal_dofs]
-        ).astype(int)
+        # code that use the change in forces as criterion to select dofs to include in GPR model.
+        grads_change = np.max(grads, axis= 0) - np.min(grads, axis= 0)
+        grads_change_cutoff = np.max(grads_change) / np.power(10.0, 3)
+        self.rigid_internal_dofs = np.arange(self.input_dim)[grads_change < grads_change < grads_change_cutoff]
+        if gpr_rigid_internal_dofs is not None:
+            self.rigid_internal_dofs = gpr_rigid_internal_dofs
+            print("@gpr_hessian_model: load rigid internal dofs")
+        
+        print(f"@gpr_hessian_model: rigid internal dofs {self.rigid_internal_dofs}")
 
-
-        if len(self.constrained_internal_dofs) != 0:
+        # compute free moving dofs.
+        # fit linear regression model for cross terms
+        if len(self.rigid_internal_dofs) != 0:
             self.free_moving_dofs = np.delete(
                 np.arange(self.input_dim), 
-                self.constrained_internal_dofs
+                self.rigid_internal_dofs
             )
             print(f"@gpr_hessian_model: free moving dofs {self.free_moving_dofs}")
             self.free_moving_dofs_2d_index = np.meshgrid(
@@ -460,19 +443,16 @@ class FixInternalDofs(object):
             )
 
             self.constrained_internal_dofs_2d_index = np.meshgrid(
-                self.constrained_internal_dofs, 
-                self.constrained_internal_dofs,
+                self.rigid_internal_dofs, 
+                self.rigid_internal_dofs,
                 indexing= 'ij'
             )
 
             self.cross_term_2d_index = np.meshgrid(
-                self.constrained_internal_dofs,
+                self.rigid_internal_dofs,
                 self.free_moving_dofs,
                 indexing= 'ij'
             )
-
-            # use linear regression to fit gradients. 
-            self.grads_for_fixed_dofs = np.mean(grads, axis=0)[self.fixed_internal_dofs]
             
             # linear regression fit for gradient in rigid dof.
             if len(self.rigid_internal_dofs) != 0:
@@ -550,7 +530,7 @@ class FixInternalDofs(object):
                           The components correspond to constrained internal dofs will be fitted using linear regression model.
                           shape: [data_num, ndofs, ndofs]
         """
-        constrained_dofs = self.constrained_internal_dofs
+        constrained_dofs = self.rigid_internal_dofs
         num_constrained_dofs = len(constrained_dofs)
         data_num = len(hessians)
         
@@ -589,7 +569,7 @@ class FixInternalDofs(object):
         :param: hessians: hessian data. The data along constrained dofs will be predicted by linear regression model.
         """
         data_num = predict_inputs.shape[0]
-        num_constrained_dofs = len(self.constrained_internal_dofs)
+        num_constrained_dofs = len(self.rigid_internal_dofs)
         num_free_moving_dofs = len(self.free_moving_dofs)
 
         # predict block diagonal component for constrained dofs.
@@ -612,7 +592,7 @@ class FixInternalDofs(object):
                                 hessians,
                                 alpha):
         if (
-            len(self.constrained_internal_dofs) != 0
+            len(self.rigid_internal_dofs) != 0
             and len(hessians) > 0
         ):
             self.constrained_part_hessian_reg_model, self.cross_term_reg_model = self.linear_regression_fit_hessian(
@@ -667,9 +647,9 @@ class FixInternalDofs(object):
         """
         input_dim = self.input_dim
         hessian_triu_size = int((input_dim + 1) * input_dim / 2)
-        if len(self.constrained_internal_dofs) != 0:
+        if len(self.rigid_internal_dofs) != 0:
             row_to_delete_grad = 1 + np.array(
-                self.constrained_internal_dofs
+                self.rigid_internal_dofs
             )  # the row in noise_covar_factor matrix corresponds to gradient.
 
             if not with_hessian_bool:
@@ -783,9 +763,6 @@ class FixInternalDofs(object):
         # the prediction of the gradient data in all dofs
         test_grads = np.zeros([test_data_num, self.input_dim])
         test_grads[:, self.free_moving_dofs] = test_moving_grads
-        if len(self.fixed_internal_dofs) != 0:
-            # the grad along the fixed dof is the average value.
-            test_grads[:, self.fixed_internal_dofs] = test_grads_fixed_dofs
         
         if len(self.rigid_internal_dofs) != 0:
             # the gradients in rigid internal dofs:
@@ -796,7 +773,7 @@ class FixInternalDofs(object):
             test_grads[:, self.rigid_internal_dofs] = test_grads_rigid_dofs
 
         if len(test_moving_hessians) > 0:
-            if len(self.constrained_internal_dofs) != 0:
+            if len(self.rigid_internal_dofs) != 0:
                 test_data_with_hessian_num = test_moving_hessians.shape[0]
                 test_hessians = np.zeros(
                         [test_data_with_hessian_num,
@@ -857,10 +834,8 @@ class GPModelWithHessiansWrapper:
         ref_mean_grad_x: np.ndarray = np.array([]),
         ref_mean_hessian_x: np.ndarray = np.array([]),
         train_bool= True,
-        gpr_fix_internal_dofs_bool= False,
-        gpr_fix_internal_dofs_cutoff= 1e-4,
+        gpr_rigid_internal_dofs_bool= False,
         gpr_rigid_internal_dofs_cutoff= 5e-2,
-        gpr_fixed_internal_dofs= None,
         gpr_rigid_internal_dofs= None,
         ridge_regularization_alpha= {
                 "force": 0.1,
@@ -996,10 +971,8 @@ class GPModelWithHessiansWrapper:
             self.coordinate_transformer,  
             train_grad_q, 
             train_hessian_q,
-            gpr_fix_internal_dofs_bool,
-            gpr_fix_internal_dofs_cutoff,
+            gpr_rigid_internal_dofs_bool,
             gpr_rigid_internal_dofs_cutoff,
-            gpr_fixed_internal_dofs,
             gpr_rigid_internal_dofs,
             self.force_ridge_regularization_alpha,
             self.hessian_ridge_regularization_alpha 
@@ -1938,12 +1911,6 @@ class GPModelWithHessiansWrapper:
         else:
             raise(FileExistsError, f"unable to load the gpr model in gpr_hessian_tools.py at file location: {file_path}")
     
-    def output_fixed_internal_dofs(self):
-        """
-        output internal dofs that are fixed and excluded from GPR modeling.
-        """
-        fixed_internal_dofs = np.copy(self.FixingDofs.fixed_internal_dofs)
-        return fixed_internal_dofs
     
     def output_rigid_internal_dofs(self):
         """

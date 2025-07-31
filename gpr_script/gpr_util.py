@@ -439,7 +439,7 @@ def analyze_force_error(coord,
     )
 
     # error for force component that is predicted by linear regression.
-    constrained_dofs = gpr_hessian_model.FixingDofs.constrained_internal_dofs
+    constrained_dofs = gpr_hessian_model.FixingDofs.rigid_internal_dofs
 
     if len(constrained_dofs) > 0:
         constrained_force_error = (np.linalg.norm(ab_initio_grad_q[:, constrained_dofs] 
@@ -820,19 +820,6 @@ def store_training_data_in_gpr_hessian_model(
     )
 
     return prefix
-
-def store_fixed_internal_dofs_gpr_hessian_model(gpr_hessian_model: GPModelWithHessiansWrapper,
-                              prefix):
-    """
-    store fixed internal dofs in gpr_hessian_model
-    """
-    fixed_internal_dofs = gpr_hessian_model.output_fixed_internal_dofs()
-    
-    file_path = os.path.join(prefix, "fixed_internal_dofs.txt")
-    with open(file_path, "w") as f:
-        for dof in fixed_internal_dofs:
-            f.write(str(dof) + " ")
-        f.write('\n')
     
 def store_rigid_internal_dofs_gpr_hessian_model(gpr_hessian_model: GPModelWithHessiansWrapper,
                                                 prefix):

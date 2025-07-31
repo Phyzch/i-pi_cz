@@ -34,6 +34,7 @@ def union_topology(molecule_list,
         bonds = molecule.bonds
         bond_list = bond_list + bonds 
 
+
     bond_list = sorted(list(set(bond_list)))
     new_molecule.bonds = copy.deepcopy(bond_list)
 
@@ -72,6 +73,10 @@ def create_molecule(natoms, elem, xyz_list, molecule_index= 0):
     new_molecule = union_topology(molecule_list,
                                   molecule_index)
     
+    # xyzs stores all reference points' coordinate. 
+    new_molecule.xyzs = np.reshape(xyz_list, 
+                                   (xyz_list.shape[0], natoms, 3))
+
     return new_molecule
 
 

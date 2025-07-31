@@ -226,15 +226,6 @@ class GPRForceMapper(object):
         # check the training error.  
         ab_initio_V_shift = np.copy(self.gpr_model.train_cartesian_targets[:,0])
         ab_initio_forces = np.copy(-self.gpr_model.train_cartesian_targets[:,1:])
-        
-        # for debug.
-        _, predicted_grad_q, _, _ = (
-            self.gpr_model.predict_latent_function(train_x)
-        )
-        ab_initio_grad_q = - self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
-            train_x,
-            ab_initio_forces 
-        )
 
         print("\n")
         print(
@@ -861,11 +852,6 @@ class GPRHessianMapper(object):
             self.gpr_hessian_model, folder
         )
 
-        # store fixed internal dofs.
-        gpr_util.store_fixed_internal_dofs_gpr_hessian_model(
-            self.gpr_hessian_model,
-            folder
-        )
 
         # store rigid internal dofs in the gpr model
         gpr_util.store_rigid_internal_dofs_gpr_hessian_model(
@@ -893,7 +879,6 @@ class GPRHessianMapper(object):
             self.read_gpr_hessian_folder
         )
         # load fixed internal dofs and rigid internal dofs
-        gpr_fixed_internal_dofs = gpr_util.read_fixed_internal_dofs(self.read_gpr_hessian_folder)
         gpr_rigid_internal_dofs = gpr_util.read_rigid_internal_dofs(self.read_gpr_hessian_folder)
 
         if self.selective_hessian_bool:
@@ -909,7 +894,7 @@ class GPRHessianMapper(object):
         return (cartesian_coordinate_x, 
                 training_V, training_forces, 
                 hessian_index_list, hessian_data_list, 
-                gpr_fixed_internal_dofs, gpr_rigid_internal_dofs)
+                gpr_rigid_internal_dofs)
 
     def _initialize_gpr_hessian_model(self, gpr_data):
         """
@@ -918,7 +903,7 @@ class GPRHessianMapper(object):
         (train_x, 
         train_V, train_forces, 
         hessian_index_list, hessian_data_list, 
-        gpr_fixed_internal_dofs, gpr_rigid_internal_dofs) = gpr_data 
+        gpr_rigid_internal_dofs) = gpr_data 
 
         train_V_shifted = train_V - self.energy_shift
         train_grads = -train_forces
@@ -954,10 +939,8 @@ class GPRHessianMapper(object):
                 ref_mean_grad_x=ref_grads,
                 ref_mean_hessian_x=ref_hessians,
                 train_bool= False,
-                gpr_fix_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-                gpr_fix_internal_dofs_cutoff= self.gpr_fix_internal_dofs_cutoff,
+                gpr_rigid_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
-                gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
                 gpr_rigid_internal_dofs= gpr_rigid_internal_dofs,
                 ridge_regularization_alpha= self.ridge_regularization_alpha,
                 singular_value_cutoff= self.gpr_covar_inverse_nugget
