@@ -420,8 +420,8 @@ class FixInternalDofs(object):
 
         # code that use the change in forces as criterion to select dofs to include in GPR model.
         grads_change = np.max(grads, axis= 0) - np.min(grads, axis= 0)
-        grads_change_cutoff = np.max(grads_change) / np.power(10.0, 3)
-        self.rigid_internal_dofs = np.arange(self.input_dim)[grads_change < grads_change < grads_change_cutoff]
+        grads_change_cutoff = np.max(grads_change) / np.power(10.0, 2)
+        self.rigid_internal_dofs = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
         if gpr_rigid_internal_dofs is not None:
             self.rigid_internal_dofs = gpr_rigid_internal_dofs
             print("@gpr_hessian_model: load rigid internal dofs")

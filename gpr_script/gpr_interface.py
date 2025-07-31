@@ -1056,7 +1056,7 @@ class GPRHessianMapper(object):
         (cartesian_coordinate_x, 
         potential_data, force_data, 
         hessian_index_list, hessian_data_list, 
-        gpr_fixed_internal_dofs, gpr_rigid_internal_dofs) = self.load_gpr_hessian_training_data(candidate_hessian_point_x)        
+        gpr_rigid_internal_dofs) = self.load_gpr_hessian_training_data(candidate_hessian_point_x)        
 
         train_set, cv_set, cv_index = gpr_util.split_train_cv_data(
             cartesian_coordinate_x,
@@ -1073,7 +1073,7 @@ class GPRHessianMapper(object):
         
         gpr_data = (train_x, training_V, training_forces,
                     train_hessian_index_list, train_hessian_data_list,
-                    gpr_fixed_internal_dofs, gpr_rigid_internal_dofs)
+                    gpr_rigid_internal_dofs)
 
         self._initialize_gpr_hessian_model(gpr_data)
 
