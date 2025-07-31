@@ -88,6 +88,13 @@ def parse_input():
         help="Avoid the Qvib and Qrot calculation in the instanton case.",
     )
 
+    parser.add_argument(
+        "-freq",
+        "--freq_reac",
+        default= None,
+        help="List of frequencies of the minimum. Required for splitting calculation."
+    )
+
     args = parser.parse_args() # convert arguments to object and assign arguments as attributes of the namespace. return namespace. the name is specified by --.
     inputt = args.input
     case = args.case
@@ -96,6 +103,7 @@ def parse_input():
     V00 = args.energy_shift
     filt = args.filter
     quiet = args.quiet
+    input_freq = args.freq_reac 
     Verbosity = verbosity
     Verbosity.level = "quiet"
 
@@ -121,11 +129,11 @@ def parse_input():
     if args.temperature == 0.0:
         raise ValueError("The temperature must be specified.'")
     
-    return args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros
+    return args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros, input_freq 
 
 # ----- read instanton data from check point file (RESTART) -------
 
-def Read_instanton_data(inputt, V00, temp, quiet):
+def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
     '''
     Read data from RESTART file to carry out simulation.
     '''
@@ -143,9 +151,16 @@ def Read_instanton_data(inputt, V00, temp, quiet):
 
     hessian = simulation.syslist[0].motion.optarrays["instanton_hessian"]
     temp2 = simulation.syslist[0].motion.optarrays["instanton_temperature"]  # in atomic unit.
-    pots_half_rp = simulation.syslist[0].motion.optarrays["instanton_bead_pot"]   # pots for half ring polymer
-    half_rp_beads_q = simulation.syslist[0].motion.optarrays["instanton_bead_q"]
-    
+    pots = simulation.syslist[0].motion.optarrays["instanton_bead_pot"]   # pots for half ring polymer for rate calculation.
+    pos = simulation.syslist[0].motion.optarrays["instanton_bead_q"]
+
+    # type of calculation, 
+    try:
+        cal_type = simulation.syslist[0].motion.options["cal_type"]
+    except:
+        # if cal_type is unset, this by default is rate calculation. 
+        cal_type = "rate"
+
     # V0 = simulation.syslist[0].motion.optarrays["energy_shift"]
  
     if V00 != 0.0:
@@ -155,7 +170,6 @@ def Read_instanton_data(inputt, V00, temp, quiet):
         raise("must provide the energy shift: the ground state energy of the reactant. use -e <energy(eV)> \
               (if value is 0, use small number, 1e-6 for example)")
         
-
     
     if np.absolute(temp - temp2) / K2au > 2:
         print(
@@ -163,25 +177,61 @@ def Read_instanton_data(inputt, V00, temp, quiet):
         )
         sys.exit()
     
-    h0 = red2comp(hessian, nbeads, natoms)
-    full_rp_beads_q, nbeads, hessian2 = get_double(half_rp_beads_q, nbeads, natoms, h0)  # get position, nbeads and hessian for full ring polymer. (now nbeads is for full ring polymer)
-
-    hessian = hessian2 
-    
+    # process hessians.
     # generate m3 for half ring polymer
     m3_one_bead = np.repeat(dstrip(m), 3)
-    m3_half_rp = np.tile(m3_one_bead, ( int(nbeads / 2) , 1))
-    # now generate m3 for full ring polymer
-    m3 = np.concatenate((m3_half_rp, m3_half_rp), axis = 0)
-    omega2 = (temp * nbeads * kb / hbar) ** 2
 
-    h = 0
-    spring = SpringMapper.spring_hessian(
-        natoms, nbeads, m3_one_bead, omega2, mode = "full"
-    )
-    h = np.add(hessian, spring)
+    
+    if cal_type == "rate":
+        h0 = red2comp(hessian, nbeads, natoms)
+        full_rp_beads_q, nbeads, hessian2 = get_double(pos, nbeads, natoms, h0)  # get position, nbeads and hessian for full ring polymer. (now nbeads is for full ring polymer)
 
-    return neb_beads, m, nbeads, natoms, temp2, pots_half_rp, full_rp_beads_q, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2
+        pos = full_rp_beads_q
+        hessian = hessian2 
+
+        m3_half_rp = np.tile(m3_one_bead, ( int(nbeads / 2) , 1))
+        # now generate m3 for full ring polymer
+        m3 = np.concatenate((m3_half_rp, m3_half_rp), axis = 0)
+
+        omega2 = (temp * nbeads * kb / hbar) ** 2
+        pots = np.concatenate((pots, np.flipud(pots)), axis= 0)
+
+        h = 0
+        spring = SpringMapper.spring_hessian(
+            natoms, nbeads, m3_one_bead, omega2, mode = "full"
+        )
+        h = np.add(hessian, spring)
+
+    elif cal_type == "splitting":
+        if input_freq is None:
+            print(
+                'Please provide a name of the file containing the list of the frequencies for the minimum using "-freq" flag'
+            )
+            print(" You can generate that file using this script in the case reactant.")
+            sys.exit()
+        
+        print(f"Linear ring polymer for splitting calculation. Has {nbeads} beads.")
+
+        omega2 = (temp * nbeads * kb / hbar) ** 2
+        
+        m3 = np.tile(m3_one_bead, (nbeads , 1))
+
+        h0 = red2comp(hessian, nbeads, natoms)
+        spring= SpringMapper.spring_hessian(
+            natoms, nbeads, m3_one_bead, omega2, mode="splitting"
+        )
+        h = np.add(h0, spring)
+        if asr != "none":
+            print(
+                "We are changing asr to none since we consider a fixed ended linear polymer for the post-processing"
+            )
+            asr = "none"
+
+    return (neb_beads, m, nbeads, natoms, temp2, 
+            pots, pos, 
+            V0, h,  m3, 
+            omega2, asr,
+            cal_type)
 
 
 # -----Some functions-----------------
@@ -347,9 +397,16 @@ def print_instanton_path(nbeads, natoms, names, bead_q ,pots, filename = "instan
 
 
 def compute_instanton_rate():
-    args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros = parse_input()
+    args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros, input_freq = parse_input()
 
-    neb_beads, m, nbeads, natoms, temp2, pots_half_rp, full_rp_beads_q, half_rp_beads_q, V0, h, m3, m3_half_rp, omega2 = Read_instanton_data(inputt, V00, temp, quiet)
+    (neb_beads, m, nbeads, natoms, temp2, 
+     pots, pos, 
+     V0, h, m3,  omega2, asr, cal_type) = Read_instanton_data(inputt, 
+                                                         V00, 
+                                                         temp, 
+                                                         quiet,
+                                                         asr,
+                                                         input_freq)
 
     beta = 1.0 / (kb * temp)
     betaP = 1.0 / (kb * (nbeads) * temp)
@@ -363,7 +420,7 @@ def compute_instanton_rate():
     if not quiet:
         print("Diagonalization ... \n\n")
         # d: eigvalue for mass weighted hessian after deleting trans & rot dof. w: eigenvector, detI: determinant of momentum of inertia
-        hess_eigval, hess_eigvec, detI = clean_hessian(h, full_rp_beads_q, natoms, nbeads, m, m3, asr, mofi=True)  # remove the  translational and rotational modes.
+        hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3, asr, mofi=True)  # remove the  translational and rotational modes.
         print("Final lowest 10 frequencies (cm^-1)")
         d10 = np.array2string(
             np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au,
@@ -374,82 +431,163 @@ def compute_instanton_rate():
         print(("{}".format(d10)))
     
     # print instanton path for half ring polymer
-    print_instanton_path( int(nbeads/2), natoms, neb_beads.names, half_rp_beads_q, pots_half_rp)
-
-    Qtras = ((np.sum(m)) / (2 * np.pi * beta * hbar**2)) ** 1.5  # see eq.(58) in review paper: https://doi.org/10.1080/0144235X.2018.1472353
-
-    if asr == "poly" and not quiet:
-        Qrot = (8 * np.pi * detI / ((hbar) ** 6 * (betaP) ** 3)) ** 0.5
-        Qrot /= nbeads**3  # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+    if cal_type == "rate":
+        nbeads_to_print = int(nbeads / 2)
     else:
-        Qrot = 1.0
+        nbeads_to_print = nbeads 
+    print_instanton_path(nbeads_to_print, natoms, neb_beads.names, pos, pots)
 
-    if not quiet:
-        del_freq = np.sign(hess_eigval[1]) * np.absolute(hess_eigval[1]) ** 0.5 / cm2au
-        print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
+    if  cal_type == "rate":
+        Qtras = ((np.sum(m)) / (2 * np.pi * beta * hbar**2)) ** 1.5  # see eq.(58) in review paper: https://doi.org/10.1080/0144235X.2018.1472353
 
-        if asr != "poly":
-            print("WARNING asr != poly")
-            print("First 10 eigenvalues")
-            ten_eigv = np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au
-            print("{}".format(ten_eigv))
-            print(
-                "Please check that this you don't have any unwanted zero frequency"
+        if asr == "poly" and not quiet:
+            Qrot = (8 * np.pi * detI / ((hbar) ** 6 * (betaP) ** 3)) ** 0.5
+            Qrot /= nbeads**3  # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+        else:
+            Qrot = 1.0
+
+        if not quiet:
+            del_freq = np.sign(hess_eigval[1]) * np.absolute(hess_eigval[1]) ** 0.5 / cm2au
+            print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
+
+            if asr != "poly":
+                print("WARNING asr != poly")
+                print("First 10 eigenvalues")
+                ten_eigv = np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au
+                print("{}".format(ten_eigv))
+                print(
+                    "Please check that this you don't have any unwanted zero frequency"
+                )
+
+            logQvib = (
+                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, 1)))))
+                + nzeros * np.log(nbeads)
+                + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
             )
 
-        logQvib = (
-            -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, 1)))))
-            + nzeros * np.log(nbeads)
-            + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+            logQvib1 = (
+                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[3:]))))
+                + nzeros * np.log(nbeads)
+                + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+            )
+            print(f"For debug: logQvib with contribution excluding first 3 eigenvalues {logQvib1}")
+
+        else:
+            logQvib = 0.0
+
+        pos_half_rp = pos[: int(len(pos) / 2), :]
+        m3_half_rp = m3[:int(len(m3) / 2), :]
+        BN = 2 * np.sum(m3_half_rp[1:, :] * (pos_half_rp[1:, :] - pos_half_rp[:-1, :]) ** 2)  # 2 * : account for full ring-polymer
+        action1 = (pots.sum() - nbeads * V0) * 1.0 / (temp * nbeads * kb)   # \beta \hbar \sum(Vi - V0) potential contribution to the action
+        action2 = spring_pot(nbeads, pos, omega2, m3) / (temp * nbeads * kb)  # free spring term contribution to the action.
+
+        print(
+            "\nWe are done. Instanton rate. Nbeads {} (diff only {})".format(
+                nbeads, nbeads / 2
+            )
         )
 
-        logQvib1 = (
-            -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[3:]))))
-            + nzeros * np.log(nbeads)
-            + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
-        )
-        print(f"For debug: logQvib with contribution excluding first 3 eigenvalues {logQvib1}")
+        print("V0  {} eV ( {} Kcal/mol) ".format(V0 / eV2au, V0 / cal2au / 1000))
 
+        print(
+            "   {:8s} {:8s}  | {:11s} | {:11s} | {:11s} | {:8s} ( {:8s},{:8s} ) |".format(
+                "BN",
+                "(BN*N)",
+                "Qt(bohr^-3)",
+                "Qrot",
+                "log(Qvib*N)",
+                "S/hbar",
+                "S1/hbar",
+                "S2/hbar",
+            )
+        )
+        print(
+            "{:8.3f} ( {:8.3f} ) | {:11.3f} | {:11.3f} | {:11.3f} | {:8.3f} ( {:8.3f} {:8.3f} ) |".format(
+                BN,
+                BN * nbeads,
+                Qtras,
+                Qrot,
+                logQvib,
+                (action1 + action2),
+                action1,
+                action2,
+            )
+        )
+        print("\n\n")
+    elif cal_type == "splitting":
+        # read frequency of minimum. 
+        out = open(input_freq, "r")
+        d_min = np.zeros(natoms * 3)
+        aux = out.readline().split()
+        if len(aux) != (natoms * 3):
+            print(("We are expecting {} frequencies.".format((natoms * 3 - 6))))
+            print(("instead we have read  {}".format(len(aux))))
+        for i in range((natoms * 3)):
+            d_min[i] = float(aux[i])
+        d_min = d_min.reshape((natoms * 3))
+        out.close()
+        ww = get_rp_freq(d_min, nbeads, temp, mode="splitting")
+        react = np.sum(np.log(ww))
+
+        action1 = (pots.sum() - nbeads * V0) * 1 / (temp * nbeads * kb) 
+        action2 = spring_pot(nbeads, pos, omega2, m3) / (temp * nbeads * kb)
+        action = action1 + action2
+        if action / hbar > 5.0:
+            print(
+                f"WARNING, S/h: {action / hbar} seems to big. Probably a proper energy shift is missing."
+            )
+        
+        BN = np.sum(m3[1:, :] * (pos[1:, :] - pos[:-1, :]) ** 2)
+
+        if not quiet:
+            inst = np.sum(np.log(np.sqrt(np.absolute(np.delete(hess_eigval, [1])))))
+            phi = np.exp(inst - react)
+        else:
+            phi = 1 
+        
+        tetaphi = (
+            betaP * hbar * np.sqrt(action / (2 * hbar * np.pi)) * np.exp(-action / hbar)
+        )
+        teta = tetaphi / phi
+        h = -teta / betaP  # h is half of the tunneling splitting.
+
+        print("\n\nWe are done")
+        print("Nbeads {}, betaP {} a.u.,hbar {} a.u".format(nbeads, betaP, hbar))
+        print("")
+        print("V0  {} eV ( {} Kcal/mol) ".format(V0 / eV2au, (V0 / cal2au) / 1000))
+        print(
+            "S1/hbar {} ,S2/hbar {} ,S/hbar {}".format(
+                action1 / hbar, action2 / hbar, action / hbar
+            )
+        )
+        print("BN {} a.u.".format(BN))
+        print(
+            "BN/(hbar^2 * betaN)  {}  (should be same as S/hbar) ".format(
+                (BN / ((hbar**2) * betaP))
+            )
+        )
+        print("")
+        if quiet:
+            print("phi is not computed because you specified the quiet option")
+            print(
+                ("We can provied only Tetaphi which value is {} a.u. ".format(tetaphi))
+            )
+        else:
+            print(("phi {} a.u.   Teta {} a.u. ".format(phi, tetaphi / phi)))
+            print(
+                "Tunnelling splitting matrix element (h)  {} a.u ({} cm^-1)".format(
+                    h, h / cm2au
+                )
+            )
+
+            print(
+                "Tunneling splitting for symmetric well (Delta = 2h) {} a.u. ({} cm^-1)".format(
+                    h * 2, h * 2 / cm2au
+                )
+            )
     else:
-        logQvib = 0.0
+        print("We can not recongnize the mode.")
+        sys.exit()
 
-    BN = 2 * np.sum(m3_half_rp[1:, :] * (half_rp_beads_q[1:, :] - half_rp_beads_q[:-1, :]) ** 2)  # 2 * : account for full ring-polymer
-    factor = 1.0000  # default
-    action1 = (2 * pots_half_rp.sum() * factor - nbeads * V0) * 1.0 / (temp * nbeads * kb)   # \beta \hbar \sum(Vi - V0) potential contribution to the action
-    action2 = spring_pot(nbeads, full_rp_beads_q, omega2, m3) / (temp * nbeads * kb)  # free spring term contribution to the action.
-
-    print(
-        "\nWe are done. Instanton rate. Nbeads {} (diff only {})".format(
-            nbeads, nbeads / 2
-        )
-    )
-
-    print("V0  {} eV ( {} Kcal/mol) ".format(V0 / eV2au, V0 / cal2au / 1000))
-
-    print(
-        "   {:8s} {:8s}  | {:11s} | {:11s} | {:11s} | {:8s} ( {:8s},{:8s} ) |".format(
-            "BN",
-            "(BN*N)",
-            "Qt(bohr^-3)",
-            "Qrot",
-            "log(Qvib*N)",
-            "S/hbar",
-            "S1/hbar",
-            "S2/hbar",
-        )
-    )
-    print(
-        "{:8.3f} ( {:8.3f} ) | {:11.3f} | {:11.3f} | {:11.3f} | {:8.3f} ( {:8.3f} {:8.3f} ) |".format(
-            BN,
-            BN * nbeads,
-            Qtras,
-            Qrot,
-            logQvib,
-            (action1 + action2),
-            action1,
-            action2,
-        )
-    )
-    print("\n\n")
 
 compute_instanton_rate()

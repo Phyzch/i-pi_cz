@@ -227,6 +227,15 @@ class GPRForceMapper(object):
         ab_initio_V_shift = np.copy(self.gpr_model.train_cartesian_targets[:,0])
         ab_initio_forces = np.copy(-self.gpr_model.train_cartesian_targets[:,1:])
         
+        # for debug.
+        _, predicted_grad_q, _, _ = (
+            self.gpr_model.predict_latent_function(train_x)
+        )
+        ab_initio_grad_q = - self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+            train_x,
+            ab_initio_forces 
+        )
+
         print("\n")
         print(
             "@initial gpr training info: check the overfitting and underfitting of kernel length scale"

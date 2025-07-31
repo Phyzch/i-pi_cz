@@ -2307,6 +2307,7 @@ class RP_MAP(object):
 
         x_list, v_list, t_list, r_list, v_r_list, pot_list = (data_lists[key] for key in ["x", "v", "t", "r", "v_r", "pot"])
 
+        print(f"final r at the end of dynamical evolution: {r_list[-1]}")
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)
 
         end_time = timer()
