@@ -1027,7 +1027,7 @@ class GPRHessianMapper(object):
 
         gpr_data = (train_x, train_V, train_forces, 
                     hessian_index_list, hessian_data_list, 
-                    None, None)
+                    None)
 
         self._initialize_gpr_hessian_model(gpr_data)
 
