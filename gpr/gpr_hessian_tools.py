@@ -480,7 +480,6 @@ class FixInternalDofs(object):
             self.free_moving_dofs_2d_index = np.meshgrid(
                 self.free_moving_dofs, self.free_moving_dofs, indexing="ij"
             )
-            self.grads_for_fixed_dofs = np.array([])
 
 
     def linear_regression_fit_grad(
@@ -752,13 +751,6 @@ class FixInternalDofs(object):
         :param: zero_bool: whether to set gradient and hessian var along the fixed & rigid dof to 0.
         """
         test_data_num = test_moving_grads.shape[0]
-
-        # the graidents in fixed dofs in testing data is the mean value of fixed dofs for gradients in training data
-        test_grads_fixed_dofs = np.repeat(
-            [self.grads_for_fixed_dofs], 
-            test_data_num, 
-            axis=0
-        )
 
         # the prediction of the gradient data in all dofs
         test_grads = np.zeros([test_data_num, self.input_dim])
