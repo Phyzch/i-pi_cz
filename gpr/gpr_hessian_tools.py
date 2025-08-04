@@ -359,7 +359,7 @@ class FixInternalDofs(object):
         self.input_dim = grads.shape[1]
 
         # code that use the change in inputs to choose relevant dofs in GPR model.
-        """
+        
         # check whether coordinate alng certain internal dofs need to be fixed.
         # the change along internal coordinate will be computed using Wilson's B matrix. 
         # This is to fix the problem for the planar molecule
@@ -391,37 +391,32 @@ class FixInternalDofs(object):
         self.train_inputs_change = train_inputs_change 
 
         # output information for selecting fix internal dofs value.
-        print(f"@For Fixing internal dofs: for reference, train_inputs_change: {train_inputs_change}.")
+        print(f"@For selecting internal dofs to include in the GPR model: for reference, train_inputs_change: {train_inputs_change}.")
 
-        if np.min(train_inputs_change) < 1e-5 and (not gpr_rigid_internal_dofs_bool):
-            print(f"the minimum change of internal dofs inputs: {np.min(train_inputs_change)}")
-            raise(RuntimeError, "Certain internal dofs of input data is fixed.\
-                   Should turn gpr_fix_internal_dofs_bool on.")
-    
+        rigid_internal_dofs_with_coord_criterion = np.array(
+            [
+                i for i in range(self.input_dim)
+                if (train_inputs_change[i] < rigid_internal_dofs_cutoff)
+            ]
+        ).astype(int)
 
-        if gpr_rigid_internal_dofs_bool:
-            if gpr_rigid_internal_dofs is None:
-                self.rigid_internal_dofs = np.array(
-                    [
-                        i for i in range(self.input_dim)
-                        if (train_inputs_change[i] < rigid_internal_dofs_cutoff)
-                    ]
-                ).astype(int)
-            else:
-                self.rigid_internal_dofs = gpr_rigid_internal_dofs
-                print("@gpr_hessian_model: load rigid internal dofs")
 
-            print(f"@gpr_hessian_model: rigid internal dofs {self.rigid_internal_dofs}")
-        else:
-            self.rigid_internal_dofs = np.array(
-                []
-            ).astype(int)
-        """
-
+        # Need to provide choice for using change in the internal coordinate / force as criterion for selecting free moving dofs.
         # code that use the change in forces as criterion to select dofs to include in GPR model.
+        grads_change_cutoff_ratio = 0.1
         grads_change = np.max(grads, axis= 0) - np.min(grads, axis= 0)
-        grads_change_cutoff = np.max(grads_change) / np.power(10.0, 2)
-        self.rigid_internal_dofs = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
+        grads_change_cutoff = np.max(grads_change) * grads_change_cutoff_ratio  # this cutoff value may need to be tuned for different molecules.
+        rigid_internal_dofs_with_force_criterion = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
+
+        self.rigid_internal_dofs = np.array(list(
+                                            set(
+                                                np.concatenate([rigid_internal_dofs_with_coord_criterion, 
+                                                       rigid_internal_dofs_with_force_criterion]
+                                                       )
+                                                )
+                                                )
+                                            )
+        
         if gpr_rigid_internal_dofs is not None:
             self.rigid_internal_dofs = gpr_rigid_internal_dofs
             print("@gpr_hessian_model: load rigid internal dofs")
