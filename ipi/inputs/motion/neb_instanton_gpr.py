@@ -351,6 +351,16 @@ class InputNebInstGPR(InputDictionary):
                 "help": "Bool variable. if True, compute hessians of all beads ab initio. If false, use GPR to predict hessians.",
             },
         ),
+        "Hessian_interpolation":(
+            InputValue,
+            {
+                "dtype": str,
+                "options": ["GPR", "CubicSpline"],
+                "default": "GPR",
+                "help": "Method used to interpolate Hessians of ring polymers along the instanton path."
+            }
+        ),
+
         "alt_out": (
             InputValue,
             {
@@ -737,6 +747,7 @@ class InputNebInstGPR(InputDictionary):
         self.prefix.store(options["prefix"])
         self.final_hessian_bool.store(options["final_hessian_bool"])
         self.ab_initio_hessian_bool.store(options["ab_initio_hessian_bool"])
+        self.Hessian_interpolation.store(options["Hessian_interpolation"])
         # options for GPR kernel
         self.gpr_SE_kernel_number.store(options["gpr_SE_kernel_number"])
         self.read_initial_gpr_training_data.store(

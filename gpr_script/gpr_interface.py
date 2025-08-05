@@ -49,17 +49,18 @@ class ActiveLearning(object):
                     self.optimize_GPR_model_for_dynamics_evolution()
             else:
                 if self.motion.rp_map.final_hessian_bool:
-                    # need to compute hessian for ring polymer beads. Either use GPR or do it ab-initio
-                    self.bind_gpr_hessian_mapper()
-                    # create gpr hessian model either reading data from input file or using training data from gpr model.
-                    self.construct_gpr_hessian_model()
-                    # bind the gpr hessian model.
-                    self.motion.bind_gpr_hessian_model(self.gprHessianMapper.gpr_hessian_model)
-                    # add new hessian data into GPR model.
-                    # the location of new hessian data is given by self.new_hessian_data_point_index.
-                    # candidate_hessian_point_x spaced with equal distance along the path.
-                    self.add_new_hessian_and_grad_data()
-                    pass 
+                    if (not self.motion.options["ab_initio_hessian_bool"]) and (self.motion.options["Hessian_interpolation"] == "GPR"):
+                        # need to compute hessian for ring polymer beads. Either use GPR or do it ab-initio
+                        self.bind_gpr_hessian_mapper()
+                        # create gpr hessian model either reading data from input file or using training data from gpr model.
+                        self.construct_gpr_hessian_model()
+                        # bind the gpr hessian model.
+                        self.motion.bind_gpr_hessian_model(self.gprHessianMapper.gpr_hessian_model)
+                        # add new hessian data into GPR model.
+                        # the location of new hessian data is given by self.new_hessian_data_point_index.
+                        # candidate_hessian_point_x spaced with equal distance along the path.
+                        self.add_new_hessian_and_grad_data()
+                        pass 
             
             self.sim.run(steps= 1, write_outputs= write_outputs) 
         elif self.motion.options["stage"] == "converged":

@@ -117,6 +117,7 @@ class MAPNEBGPRMover(Motion):
         test_gpr_model_along_instanton_path= False,
         final_hessian_bool=False,
         ab_initio_hessian_bool=False,
+        Hessian_interpolation= "GPR",
         read_gpr_hessian_folder="None",
         train_grad_model_bool= True, 
         train_hessian_model_bool= True, 
@@ -165,6 +166,7 @@ class MAPNEBGPRMover(Motion):
         self.options["prefix"] = prefix
         self.options["final_hessian_bool"] = final_hessian_bool
         self.options["ab_initio_hessian_bool"] = ab_initio_hessian_bool
+        self.options["Hessian_interpolation"] = Hessian_interpolation
         self.options["read_initial_gpr_training_data"] = read_initial_gpr_training_data
         # for testing gpr prediction along lineb path.
         self.options["test_gpr_model_along_instanton_path"] = test_gpr_model_along_instanton_path
@@ -2151,6 +2153,7 @@ class RP_MAP(object):
         self.prefix = nebmover.options["prefix"]
         self.final_hessian_bool = nebmover.options["final_hessian_bool"]
         self.ab_initio_hessian_bool = nebmover.options["ab_initio_hessian_bool"]
+        self.Hessian_interpolation = nebmover.options["Hessian_interpolation"]
 
         self.energy_shift = nebmover.optarrays["energy_shift"]
         self.output_maker = nebmover.output_maker
@@ -2486,6 +2489,10 @@ class RP_MAP(object):
             np.transpose(hessians, (1, 0, 2)), [3 * natoms, nbeads * 3 * natoms]
         )
 
+    def predict_ring_polymer_hessians_using_cubic_spline(self):
+        """
+        Predict ring polymer hessians using the cubic spline method.
+        """
 
     def generate_hessian_along_instanton_path(self):
         """
@@ -2498,9 +2505,14 @@ class RP_MAP(object):
                 self.compute_ring_polymer_hessian()
 
             else:
-                # predict hessians of ring polymer beads using Gaussian Process Regression.
-                # The result is stored in self.rp_hessians, which will be stored in RESTART file for post-processing.
-                self.predict_ring_polymer_hessians_using_gpr()
+                if self.Hessian_interpolation == "GPR":
+                    # predict hessians of ring polymer beads using Gaussian Process Regression.
+                    # The result is stored in self.rp_hessians, which will be stored in RESTART file for post-processing.
+                    self.predict_ring_polymer_hessians_using_gpr()
+                elif self.Hessian_interpolation == "CubicSpline":
+                    # use cubic spline method to interpolate ring polymer Hessians.
+                    # The result is stored in self.rp_hessians, which will be stored in RESTART file for post-processing.
+                    self.predict_ring_polymer_hessians_using_cubic_spline()
 
 
 
