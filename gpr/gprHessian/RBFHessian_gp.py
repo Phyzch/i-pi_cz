@@ -5,7 +5,7 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 """
 
 from .RBFHessianKernel import RBFKernelHessian
-from .RBFHessianMean import ConstantMeanHessian, MeanWithPotGradHessian
+from .RBFHessianMean import ConstantMeanHessian, MeanTaylorExpansion
 from .RBFHessian_prediction_strategy import RBFHessianPredictionStrategy
 from .RBFHessian_gaussian_likelihood import RBFHessianGaussianLikelihood
 from .RBFHessian_marginal_log_likelihood import CustomMarginalLogLikelihood
@@ -193,7 +193,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             assert ref_mean_hessian.shape[0] == self.hessian_triu_size
             self.ref_mean_coordinate = ref_mean_coordinate
             # set the mean function as Taylor expansion around the reference point.
-            self.mean_module = MeanWithPotGradHessian(
+            self.mean_module = MeanTaylorExpansion(
                 ref_mean_coordinate,
                 ref_mean_pot,
                 ref_mean_grad,
@@ -447,7 +447,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         """
         nactive = self.ard_num_dims - len(self.hessian_fixdofs)
         mean_x = self.mean_module(
-            x, hessian_data_point_index=inputs_hessian_data_point_index, nactive=nactive
+            x, 
+            hessian_data_point_index=inputs_hessian_data_point_index, 
+            nactive=nactive
         )
 
         with settings.lazily_evaluate_kernels(False):
