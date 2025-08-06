@@ -166,7 +166,9 @@ def path_equal_distance_interpolation(neb_bead_q, interpolation_bead_number):
     bead_path_r = np.concatenate(
         [[0], np.cumsum(bead_distance)]
     )  # distance from initial beads.
-
+    
+    # rescale r to range[0, 1].
+    bead_path_r = bead_path_r / bead_path_r[-1] 
     return bead_path_q, bead_path_r
 
 
@@ -175,6 +177,8 @@ def interpolate_ring_polymer_beads(
     t_list, 
     x_list, 
     v_list, 
+    r_list,
+    v_r_list,
     instanton_bead_number,
     cal_type= "rate"
 ):
@@ -211,7 +215,7 @@ def interpolate_ring_polymer_beads(
     t_list_len = len(t_list)
 
     rp_x_list = []
-
+    rp_r_list = [] # coordinate r along ring polymer beads.
     # interpolate the internal beads
     t_index_start = 0
     for i in range(instanton_bead_number):
@@ -231,12 +235,20 @@ def interpolate_ring_polymer_beads(
                 rp_x = x_list[t_index] + rp_dx
                 rp_x_list.append(rp_x)
 
+                dr = r_list[t_index + 1] - r_list[t_index]
+                rp_dr = v_r_list[t_index] * rp_dt + np.power(rp_dt / dt, 2) * (
+                    dr - v_r_list[t_index] * dt 
+                )
+                rp_r = r_list[t_index] + rp_dr 
+                rp_r_list.append(rp_r)
+
                 t_index_start = t_index
                 break
 
     rp_x_list = np.array(rp_x_list)
+    rp_r_list = np.array(rp_r_list)
 
-    return rp_t_list, rp_x_list
+    return rp_t_list, rp_x_list, rp_r_list
 
 
 def RK4(y, t, dydt, param, h):

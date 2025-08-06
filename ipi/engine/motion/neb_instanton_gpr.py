@@ -33,6 +33,7 @@ import os
 from timeit import default_timer as timer
 import threading 
 import ipi.utils.hessfasttools
+from scipy.interpolate import CubicSpline
 
 np.set_printoptions(threshold=10000, linewidth=1000)  # Remove in cleanup
 
@@ -513,7 +514,7 @@ class MAPNEBGPRMover(Motion):
             # set temperature available = True to enable follow up Hessian prediction.
             self.instanton_temperature_avail = True 
         else:
-            # use GPR to predict hessians for ring polymer beads or compute it ab-initio way.
+            # use GPR/cubic spline to predict hessians for ring polymer beads or compute it ab-initio way.
             self.rp_map.generate_hessian_along_instanton_path()
             # save the potential, q, temperature, hessian of instanton beads for RESTART.
             self.save_instanton_ring_polymer()
@@ -2209,6 +2210,8 @@ class RP_MAP(object):
 
         # bind the file that we use to read hessian data
         self.read_gpr_hessian_folder = nebmover.options["read_gpr_hessian_folder"]
+        # we use the same folder & data structure to read & store hessians for cubic spline interpolation.
+        self.read_cubic_spline_interpolation_hessian_folder = self.read_gpr_hessian_folder
 
         # options about which ab-initio data point we will add to existing training data
         self.add_new_hessian_data_bool = nebmover.options["add_new_hessian_data_bool"]
@@ -2319,7 +2322,7 @@ class RP_MAP(object):
         ) / 60  # time elapsed in minutes
         print("the running time for the constrained dynamics along the path is: " + str(time_elapsed) + " min.")
 
-        return t_list, v_list, x_list
+        return t_list, v_list, x_list, r_list, v_r_list
 
     def classical_dynamics_step(self, t, r_distance, v_r):
         """
@@ -2398,17 +2401,19 @@ class RP_MAP(object):
             f.write("temperature for instanton path : (K) \n")
             f.write(str(temp_kelvin) + "\n")
 
-    def interpolate_ring_polymer_beads(self, t_list, v_list, x_list, step):
+    def interpolate_ring_polymer_beads(self, t_list, v_list, x_list, r_list, v_r_list, step):
         """
         interpolate ring polymer beads from the imaginary time trajectory along Minimum Action Path (MAP).
         t_list , v_list, x_list: list of time / velocity / trajectory from MD simulation along path.
         """
         # interpolate to get ring polymer position.
-        rp_t_list, rp_x_list = ipi.utils.nebinstool.interpolate_ring_polymer_beads(
+        rp_t_list, rp_x_list, rp_r_list = ipi.utils.nebinstool.interpolate_ring_polymer_beads(
             self.imag_time_period, 
             t_list, 
             x_list, 
-            v_list, 
+            v_list,
+            r_list,
+            v_r_list, 
             self.rp_bead_number,
             self.cal_type
         )
@@ -2418,6 +2423,7 @@ class RP_MAP(object):
         )
 
         self.rp_beads.q = rp_x_list
+        self.rp_r_list = rp_r_list 
 
         # print ring polymer instanton geometry.
         shifted_pots, _, _, _ = self.gpr_model.predict_latent_function(rp_x_list)
@@ -2443,10 +2449,10 @@ class RP_MAP(object):
         Main function that compute ring-polymer beads from nudged elastic band Minimum action path.
         """
         # start classical dynamics along minimum action path (MAP) on the inverted potential.
-        t_list, v_list, x_list = self.classical_dynamics_along_MAP(neb_beads)
+        t_list, v_list, x_list, r_list, v_r_list = self.classical_dynamics_along_MAP(neb_beads)
 
         # interpolate the ring polymer beads from the generated trajectory.
-        self.interpolate_ring_polymer_beads(t_list, v_list, x_list, step)
+        self.interpolate_ring_polymer_beads(t_list, v_list, x_list, r_list, v_r_list, step)
 
 # -------- for generating ring polymer beads along the instanton path END-------
 
@@ -2489,10 +2495,104 @@ class RP_MAP(object):
             np.transpose(hessians, (1, 0, 2)), [3 * natoms, nbeads * 3 * natoms]
         )
 
+    def add_new_hessian_data(self, hessian_index_in_candidate_list = []):
+        """
+        add new hessian data for cubic spline interpolation.
+        """
+        if hessian_index_in_candidate_list != []:
+            common_index = np.intersect1d(
+                hessian_index_in_candidate_list,
+                self.new_hessian_data_index
+            )
+            assert (len(common_index) == 0), "At least one data point in newly added hessian index  \
+                coincide with the one point that we have already computed hessian."
+
+        candidate_hessian_point_x, _ = (
+            ipi.utils.nebinstool.path_equal_distance_interpolation(
+                np.copy(self.neb_beads.q), self.candidate_hessian_data_number
+            )
+        )
+        if len(self.new_hessian_data_index) == 0:
+            raise ValueError("new hessian index should not be empty.")
+        
+        new_hessian_point_x = candidate_hessian_point_x[self.new_hessian_data_index]
+        new_hessian_data_num = len(new_hessian_point_x)
+        natoms = self.neb_beads.natoms
+        new_beads = Beads(natoms, new_hessian_data_num)
+        new_forces = self.rp_forces.copy(new_beads, self.dcell)
+        new_beads.q = new_hessian_point_x
+
+        new_hessians = ipi.utils.nebinstool.get_hessian(
+            new_beads,
+            new_forces,
+            np.copy(new_beads.q),
+            natoms,
+            new_hessian_data_num
+        )
+
+        return candidate_hessian_point_x, self.new_hessian_data_index, new_hessians 
+
+    def generate_hessian_data_for_cubic_spline_interpolation(self):
+        """
+        generate fitting data for the ring polymer interpolation.
+        """
+        if self.read_cubic_spline_interpolation_hessian_folder is not None:
+            (candidate_hessian_point_x, 
+            hessian_index_in_candidate_list, 
+            hessian_data_list) = ipi.utils.nebinstgprtool.read_cubic_spline_hessian_data(
+                self.read_cubic_spline_interpolation_hessian_folder
+                )
+
+            # add_new_hessian_data.
+            if self.add_new_hessian_data_bool:
+                _, new_hessian_index_in_candidate_list, new_hessian_data_list = self.add_new_hessian_data(
+                    hessian_index_in_candidate_list
+                )
+                hessian_index_in_candidate_list = np.concatenate([hessian_index_in_candidate_list,
+                                                                new_hessian_index_in_candidate_list])
+                hessian_data_list = np.concatenate([hessian_data_list,
+                                                    new_hessian_data_list], axis= 0)
+        else:
+            # compute hessian from ab initio 
+            if not self.add_new_hessian_data_bool:
+                raise ValueError("Must provide hessian data index for " \
+                "cubic spline interpolation if no hessian data is loaded.")
+            else:
+                (candidate_hessian_point_x, 
+                 hessian_index_in_candidate_list,
+                 hessian_data_list) = self.add_new_hessian_data()
+
+        return (candidate_hessian_point_x, hessian_index_in_candidate_list, hessian_data_list)
+
     def predict_ring_polymer_hessians_using_cubic_spline(self):
         """
         Predict ring polymer hessians using the cubic spline method.
         """
+        (candidate_hessian_point_x, 
+         hessian_index_in_candidate_list, 
+         hessian_data_list) = self.generate_hessian_data_for_cubic_spline_interpolation()
+
+        # sort hessian data 
+        hessian_data_list = hessian_data_list[np.argsort(hessian_index_in_candidate_list), :]
+        hessian_index_in_candidate_list = np.sort(hessian_index_in_candidate_list)       
+
+        # compute r (path distance, range[0,1]) for beads.
+        candidate_hessian_data_number = candidate_hessian_point_x.shape[0]
+        _, candidate_hessian_point_r = ipi.utils.nebinstool.path_equal_distance_interpolation(np.copy(self.neb_beads.q),
+                                                               candidate_hessian_data_number)
+        hessian_point_r = candidate_hessian_point_r[hessian_index_in_candidate_list]
+
+        # cubic spline interpolation with hessian data point along the instanton path.
+        hessian_cs = CubicSpline(hessian_point_r, hessian_data_list, axis= 0)
+        hessians = hessian_cs(self.rp_r_list)
+
+        # reshape hessians ([nbeads, 3 * natoms, 3 * natoms])
+        # to fit the shape of self.rp_hessian: [3 * natoms, nbeads * 3 * natoms]
+        nbeads = self.rp_beads.nbeads
+        natoms = self.rp_beads.natoms
+        self.rp_hessian = np.reshape(
+            np.transpose(hessians, (1, 0, 2)), [3 * natoms, nbeads * 3 * natoms]
+        )
 
     def generate_hessian_along_instanton_path(self):
         """

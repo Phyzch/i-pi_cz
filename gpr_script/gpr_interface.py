@@ -884,7 +884,7 @@ class GPRHessianMapper(object):
 
         if self.selective_hessian_bool:
             # initialize the selective hessian calculator to compute hessian along rigid modes.
-            self.rp_map.construct_selective_hessian_calculator(candidate_hessian_point_x)
+            self.construct_selective_hessian_calculator(candidate_hessian_point_x)
             # update the hessian along the rigid mode.
             hessian_data_list = self.rp_map.selective_hessian_calculator.update_hessian_rigid_modes(
                 cartesian_coordinate_x[hessian_index_list],

@@ -556,7 +556,11 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": str,
                 "default": "None",
-                "help": "Provide the name of folder. Read coordinate, potential, gradient & hessians for the gpr_hessian model from a given folder.",
+                "help": """
+                Provide the name of folder. Read coordinate, potential, 
+                gradient & hessians for the gpr_hessian model from a given folder. 
+                The data can also be used for the cubic spline interpolation of Hessians. 
+                """,
             },
         ),
         "add_new_hessian_data_bool": (

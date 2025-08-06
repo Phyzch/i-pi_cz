@@ -17,6 +17,12 @@ import shutil
 from collections import namedtuple
 import h5py
 
+def extract_number_from_line(line):
+    line = re.split(" ", line.strip())
+    line = [ele for ele in line if ele != ""]
+
+    return line
+
 def check_neb_early_stop(
     beads_x,
     trust_region_distance,
@@ -232,6 +238,68 @@ def store_training_data(cartesian_coordinate_x, V, forces, prefix):
     
     print(f"Training data successfully stored in {h5_file_path}")
 
+def read_cubic_spline_hessian_data(prefix):
+    """
+    read x, hessian for cubic spline interpolation.
+    The data storage format is compatible with hessian data used in gpr modeling.
+    """
+    assert os.path.exists(prefix), f"the prefix folder: {prefix} should have already been created."
+    
+    # read hessians.
+    hessian_file_path = os.path.join(prefix, "training_data.h5")
+    assert os.path.exists(hessian_file_path), "hessian data file does not exist."
+    with h5py.File(hessian_file_path, "r") as h5f:
+        hessian_data_list = np.array(h5f["hessians"])
+
+    # read candidate hessian data points' coordinate.
+    candidate_x_file_path = os.path.join(prefix, "candidate_hessian_data_info.h5")
+    assert os.path.exists(candidate_x_file_path), "candidate hessian data point file does not exist."
+    with h5py.File(candidate_x_file_path, "r") as h5f:
+        candidate_hessian_point_x = np.array(h5f["candidate_hessian_point_x"])
+    
+    # read the index of hessian data point in candidate list.
+    hessian_index_file_name = os.path.join(
+        prefix, "hessian_index_in_candidate_point_list.txt"
+    )
+    assert os.path.exists(hessian_index_file_name), "hessian index file does not exist."
+    with open(hessian_index_file_name, "r") as f:
+        lines = f.readlines()
+        line = extract_number_from_line(lines[1])
+        hessian_index_in_candidate_list = np.array(list(map(int, line)))
+
+    return candidate_hessian_point_x, hessian_index_in_candidate_list, hessian_data_list
+
+def store_cubic_spline_hessian_data(prefix,
+                                    candidate_hessian_point_x,
+                                    hessian_index_in_candidate_list,
+                                    hessian_data_list):
+    """
+    store x, hessian for cubic spline interpolation.
+    The data storage format is compatible with hessian data used in gpr modeling.
+    """
+    if not os.path.exists(prefix):
+        os.makedirs(prefix)
+    # store hessians.
+    hessian_file_path = os.path.join(prefix, "training_data.h5")
+    with h5py.File(hessian_file_path, "w") as h5f:
+        h5f.create_dataset("hessians", data= hessian_data_list)
+    
+    # store candidate hessian data points' coordinate.
+    candidate_x_file_path = os.path.join(prefix, "candidate_hessian_data_info.h5")
+    with h5py.File(candidate_x_file_path, "w") as h5f:
+        h5f.create_dataset("candidate_hessian_point_x", data= candidate_hessian_point_x)
+    
+    # write the index of data point that we have already computed hessian information.
+    # we want this data in human readable format
+    hessian_index_file_name = os.path.join(
+        prefix, "hessian_index_in_candidate_point_list.txt"
+    )
+    hessian_data_number = len(hessian_index_in_candidate_list)
+    with open(hessian_index_file_name, "w") as f:
+        f.write("Index for data point that we have computed hessians. \n")
+        indices = [str(int(hessian_index_in_candidate_list[i])) for i in range(hessian_data_number)]
+        f.write(" ".join(indices) + "\n")
+    
 
 def dydt_inverted_pot_gpr(y, t, param):
     """
