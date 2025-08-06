@@ -2499,7 +2499,7 @@ class RP_MAP(object):
         """
         add new hessian data for cubic spline interpolation.
         """
-        if hessian_index_in_candidate_list != []:
+        if len(hessian_index_in_candidate_list) != 0:
             common_index = np.intersect1d(
                 hessian_index_in_candidate_list,
                 self.new_hessian_data_index
@@ -2529,6 +2529,13 @@ class RP_MAP(object):
             natoms,
             new_hessian_data_num
         )
+
+        new_hessians = np.transpose(
+                        np.reshape(
+                            new_hessians, [3 * natoms, new_hessian_data_num, 3 * natoms]
+                        ),
+                        (1, 0, 2),
+                    )
 
         return candidate_hessian_point_x, self.new_hessian_data_index, new_hessians 
 
@@ -2561,6 +2568,17 @@ class RP_MAP(object):
                 (candidate_hessian_point_x, 
                  hessian_index_in_candidate_list,
                  hessian_data_list) = self.add_new_hessian_data()
+
+        # store hessian data.
+        if self.add_new_hessian_data_bool:
+            hessian_number = len(hessian_index_in_candidate_list)
+            prefix = "hessian# " + str(hessian_number)
+            ipi.utils.nebinstgprtool.store_cubic_spline_hessian_data(
+                prefix,
+                candidate_hessian_point_x,
+                hessian_index_in_candidate_list,
+                hessian_data_list
+            )
 
         return (candidate_hessian_point_x, hessian_index_in_candidate_list, hessian_data_list)
 
@@ -2613,7 +2631,8 @@ class RP_MAP(object):
                     # use cubic spline method to interpolate ring polymer Hessians.
                     # The result is stored in self.rp_hessians, which will be stored in RESTART file for post-processing.
                     self.predict_ring_polymer_hessians_using_cubic_spline()
-
+                else:
+                    raise ValueError(f"unrecognized Hessian interpolation method: {self.Hessian_interpolation}")
 
 
 
