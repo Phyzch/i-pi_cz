@@ -318,7 +318,10 @@ class FixInternalDofs(object):
         # load the fixed internal dofs from the folder.
         if gpr_fixed_internal_dofs is not None:
             self.fixed_internal_dofs = gpr_fixed_internal_dofs
-            self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
+            if len(self.fixed_internal_dofs) > 0:
+                self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
+            else:
+                self.free_moving_dofs = np.arange(self.input_dim)
 
         print(f"@gpr_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
         print(f"@gpr_model: free moving dofs: {self.free_moving_dofs}")
