@@ -2303,16 +2303,18 @@ class RP_MAP(object):
                 print(f"step number: {step_num}")
                 print(f"r_distance: {r_distance},  v_r: {v_r}")
 
-            if r_distance > 1:
-                print("Warning: r_distance > 0.")
-                print(f"r_distance: {r_distance},  v_r: {v_r}")
-                break 
+            # if r_distance > 1:
+            #     print("Warning: r_distance > 0.")
+            #     print(f"r_distance: {r_distance},  v_r: {v_r}")
+            #     break 
 
         for key in data_lists.keys():
             data_lists[key] = np.array(data_lists[key])
 
         x_list, v_list, t_list, r_list, v_r_list, pot_list = (data_lists[key] for key in ["x", "v", "t", "r", "v_r", "pot"])
 
+        r_list = r_list / r_list[-1]
+        
         print(f"final r at the end of dynamical evolution: {r_list[-1]}")
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)
 
