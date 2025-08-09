@@ -98,7 +98,7 @@ class MAPNEBGPRMover(Motion):
         end_bead_energy_converge_value = 1e-3,
         alt_out=5,
         gpr_relative_force_error_criterion=0.05,
-        gpr_absolute_force_error_criterion=0.002,
+        gpr_absolute_force_error_criterion=0.001,
         gpr_force_uncertainty_criterion = 0.001,
         gpr_trust_region=0.1,
         minimum_trust_region= 0.1,
@@ -2240,6 +2240,9 @@ class RP_MAP(object):
         self.ridge_regularization_alpha = nebmover.optarrays["ridge_regularization_alpha"]
         self.gpr_covar_inverse_nugget = nebmover.optarrays["gpr_covar_inverse_nugget"]
 
+        # absolute force error tolerance for gpr model.
+        self.gpr_absolute_force_error_criterion = nebmover.optarrays["gpr_absolute_force_error_criterion"]
+
 # -------   for generating the ring polymer beads along the instanton path -------
     def classical_dynamics_along_MAP(self, neb_beads):
         """
@@ -2259,6 +2262,11 @@ class RP_MAP(object):
         )
 
         print("use cubic interpolation to generate MAP path")
+
+        # prediction the force using gpr or tylor expansion around reactant minimum.
+        self.force_predictor = ipi.utils.nebinstgprtool.force_predictor(self.gpr_model,
+                                                                        self.cal_type,
+                                                                        self.gpr_absolute_force_error_criterion)
 
         start_time = timer()
         
@@ -2303,19 +2311,15 @@ class RP_MAP(object):
                 print(f"step number: {step_num}")
                 print(f"r_distance: {r_distance},  v_r: {v_r}")
 
-            # if r_distance > 1:
-            #     print("Warning: r_distance > 0.")
-            #     print(f"r_distance: {r_distance},  v_r: {v_r}")
-            #     break 
-
         for key in data_lists.keys():
             data_lists[key] = np.array(data_lists[key])
 
         x_list, v_list, t_list, r_list, v_r_list, pot_list = (data_lists[key] for key in ["x", "v", "t", "r", "v_r", "pot"])
-
-        r_list = r_list / r_list[-1]
         
         print(f"final r at the end of dynamical evolution: {r_list[-1]}")
+        
+        r_list = r_list / r_list[-1]
+        
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)
 
         end_time = timer()
@@ -2341,7 +2345,7 @@ class RP_MAP(object):
         """
         # parameter for Runge Kutta 4th order algorithm
         m3_matrix = np.diag(self.m3)
-        param = [self.gpr_model, m3_matrix, self.cubic_spline]
+        param = [self.force_predictor, m3_matrix, self.cubic_spline]
         dt = self.time_step
 
         y = np.array([r_distance, v_r])
@@ -2545,7 +2549,7 @@ class RP_MAP(object):
         """
         generate fitting data for the ring polymer interpolation.
         """
-        if self.read_cubic_spline_interpolation_hessian_folder is not None:
+        if self.read_cubic_spline_interpolation_hessian_folder != "None":
             (candidate_hessian_point_x, 
             hessian_index_in_candidate_list, 
             hessian_data_list) = ipi.utils.nebinstgprtool.read_cubic_spline_hessian_data(

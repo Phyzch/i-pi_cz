@@ -189,6 +189,16 @@ class DynMatrixMover(Motion):
             outfile.write(" ".join(map(str, eigmode[i])) + "\n")
         outfile.close_stream()
 
+        # prints forces.
+        f = dstrip(self.forces.f)[0]
+        outfile = self.output_maker.get_output(self.prefix + ".forces", "w")
+        outfile.write(
+            "Forces: \n"
+        )
+        for i in range(3 * self.beads.natoms):
+            outfile.write(str(f[i]) + " ")
+        outfile.close_stream() 
+
     def apply_asr(self, dm):
         """
         Removes the translations and/or rotations depending on the asr mode.

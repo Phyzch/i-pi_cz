@@ -17,6 +17,61 @@ import shutil
 from collections import namedtuple
 import h5py
 
+class force_predictor():
+    def __init__(self,
+                 gpr_model: GPModelWithDerivativesWrapper,
+                 calc_type,
+                 fc):
+        """
+        :param: gpr_model: gaussian process regression model.
+        :param: calc_type: rate or tunneling splitting.
+        :param: fc: cutoff value for force. if |f| < fc, use tylor expansion around reactant minimum.
+        """
+        self.gpr_model = gpr_model 
+        self.calc_type = calc_type 
+        self.fc = fc 
+
+        if calc_type == "splitting":
+            reactant1_file = "reactant1_data.h5"
+            reactant2_file = "reactant2_data.h5"
+            self.q_r1, self.f_r1, self.h_r1 = read_reactant_data(reactant1_file)
+            self.q_r2, self.f_r2, self.h_r2 = read_reactant_data(reactant2_file) 
+        
+    def predict_force(self, q, r):
+        """
+        q: cartesian coordinate of beads. shape: [1, 3 * natoms]
+        r: distance along the instanton path. 
+        """
+        if self.calc_type == "rate":
+            _, grads, _, _ = self.gpr_model.predict_latent_function(q)
+            f = - grads[0]
+            return f 
+        elif self.calc_type == "splitting":
+            if (r >= 0.1) and (r <= 0.9):
+                # predict force with GPR.
+                _, grads, _, _ = self.gpr_model.predict_latent_function(q)
+                f = - grads[0]
+                return f 
+            elif r < 0.1:
+                # use Tylor expansion around reactant 1.
+                diff = np.squeeze(q - self.q_r1, axis= 0)
+                f = - self.h_r1 @ diff + self.f_r1
+            else:
+                # use Tylor expansion around reactant 2
+                diff = np.squeeze(q - self.q_r2, axis= 0)
+                f = - self.h_r2 @ diff + self.f_r2      
+            f_amplitude = np.linalg.norm(f)
+            if f_amplitude < self.fc:
+                # when amplitude is small enough, use Tylor expansion.
+                return f 
+            else:
+                # amplitude is large enough. use GPR model.
+                _, grads, _, _ = self.gpr_model.predict_latent_function(q)
+                f = - grads[0]
+                return f  
+        else:
+            raise ValueError(f"Unrecognized calc_type: {self.calc_type}. Need to be rate or splitting.")
+
 def extract_number_from_line(line):
     line = re.split(" ", line.strip())
     line = [ele for ele in line if ele != ""]
@@ -206,6 +261,20 @@ def read_training_data(prefix):
 
     return cartesian_coordinate_x, training_V, training_forces
 
+def read_reactant_data(file):
+    """
+    read coordinate (in au.) and Hessian for the reactant well.
+    """
+    if not os.path.exists(file):
+        raise ValueError(f"reactant file: {file} does not exist. Check input.")
+    
+    with h5py.File(file, "r") as f:
+        x = np.array(f["cartesian_coordinate_x"])
+        forces = np.array(f['forces'])
+        hessians = np.array(f["hessians"])
+
+    return x, forces, hessians 
+
 def store_training_data(cartesian_coordinate_x, V, forces, prefix):
     """
     store the initial training data for training of GPR model.
@@ -317,7 +386,7 @@ def dydt_inverted_pot_gpr(y, t, param):
     r_distance = y[0]
     v_r = y[1]
 
-    gpr_model = param[0]
+    force_predictor = param[0]
     m3_matrix = param[1]
     cubic_spline = param[2]
 
@@ -334,9 +403,8 @@ def dydt_inverted_pot_gpr(y, t, param):
     )  # d(dx/dr)/dt: rate of change for the jacobian (vector)
 
     # compute the negative force in upside down potential.
-    _, grad_V, _, _ = gpr_model.predict_latent_function(np.array([x]))
-    negative_f = grad_V[0]
-
+    f = force_predictor.predict_force(np.array([x]), r_distance)
+    negative_f = - f
     # compute the acceleration of r.
     a_r = ipi.utils.nebinstool.compute_r_acceleration_along_path(
         negative_f, dx_dr, dx_dr_rate, m3_matrix, v_r
