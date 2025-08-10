@@ -146,7 +146,7 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
     neb_beads = simulation.syslist[0].motion.beads.copy()
     m = simulation.syslist[0].motion.beads.m.copy()
 
-    nbeads = simulation.syslist[0].motion.optarrays["instanton_bead_number"]  # number of half ring polymer beads.
+    nbeads = simulation.syslist[0].motion.optarrays["instanton_bead_number"]  # number of half ring polymer beads / linear ring polymer beads.
     natoms = simulation.syslist[0].motion.beads.natoms
 
     hessian = simulation.syslist[0].motion.optarrays["instanton_hessian"]
@@ -396,7 +396,7 @@ def print_instanton_path(nbeads, natoms, names, bead_q ,pots, filename = "instan
                         )  # coordinate
 
 
-def compute_instanton_rate():
+def compute_instanton_rate_or_splitting():
     args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros, input_freq = parse_input()
 
     (neb_beads, m, nbeads, natoms, temp2, 
@@ -590,4 +590,4 @@ def compute_instanton_rate():
         sys.exit()
 
 
-compute_instanton_rate()
+compute_instanton_rate_or_splitting()
