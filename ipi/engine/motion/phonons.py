@@ -199,6 +199,13 @@ class DynMatrixMover(Motion):
             outfile.write(str(f[i]) + " ")
         outfile.close_stream() 
 
+        # prints pots:
+        pots = dstrip(self.forces.pots)
+        outfile = self.output_maker.get_output(self.prefix + ".pot", "w")
+        outfile.write("Pots: \n")
+        outfile.write(str(pots[0]))
+        outfile.close_stream() 
+
     def apply_asr(self, dm):
         """
         Removes the translations and/or rotations depending on the asr mode.

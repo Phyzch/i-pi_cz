@@ -34,8 +34,8 @@ class force_predictor():
         if calc_type == "splitting":
             reactant1_file = "reactant1_data.h5"
             reactant2_file = "reactant2_data.h5"
-            self.q_r1, self.f_r1, self.h_r1 = read_reactant_data(reactant1_file)
-            self.q_r2, self.f_r2, self.h_r2 = read_reactant_data(reactant2_file) 
+            self.q_r1, self.V1, self.f_r1, self.h_r1 = read_reactant_data(reactant1_file)
+            self.q_r2, self.V2, self.f_r2, self.h_r2 = read_reactant_data(reactant2_file) 
         
     def predict_force(self, q, r):
         """
@@ -270,10 +270,11 @@ def read_reactant_data(file):
     
     with h5py.File(file, "r") as f:
         x = np.array(f["cartesian_coordinate_x"])
+        pot = np.array(f["V"])[0]
         forces = np.array(f['forces'])
         hessians = np.array(f["hessians"])
 
-    return x, forces, hessians 
+    return x, pot, forces, hessians 
 
 def store_training_data(cartesian_coordinate_x, V, forces, prefix):
     """

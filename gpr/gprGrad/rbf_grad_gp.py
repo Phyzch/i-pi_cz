@@ -468,6 +468,6 @@ def train_gpr(model: GPModelWithDerivatives,
                         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
     
     if output_training_info:
-        print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
+        print("Iter %d - Loss: %.3f" % (train_counts, loss.detach().item()))
 
     pass

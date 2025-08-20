@@ -1343,6 +1343,8 @@ class GradientMapper(object):
         self.gpr_model = None 
         self.coordinate_transformer = None
 
+        # coordinate of the reactant. For the tunneling splitting calculation.
+        self.q_r1 = self.q_r2 = None 
 
     def bind(self, ens: MAPNEBGPRMover):
         """
@@ -1380,6 +1382,19 @@ class GradientMapper(object):
         self.ab_initio_force = np.zeros([self.dbeads.nbeads, 3 * self.dbeads.natoms])
 
         self.ENO_order = ens.optarrays["ENO_order"]
+    
+    def read_reactant_info(self):
+        if self.cal_type == "splitting":
+            # read end point reactant potential, force and hessians.
+            reactant1_file = "reactant1_data.h5"
+            reactant2_file = "reactant2_data.h5"
+            self.q_r1, self.V1, self.f_r1, self.h_r1 = ipi.utils.nebinstgprtool.read_reactant_data(reactant1_file)
+            self.q_r2, self.V2, self.f_r2, self.h_r2 = ipi.utils.nebinstgprtool.read_reactant_data(reactant2_file) 
+
+            self.q_r1 = self.q_r1[0]
+            self.q_r2 = self.q_r2[0]
+            self.pot_cutoff = 0.01 * units.unit_to_internal("energy", "electronvolt", 1)
+            self.force_cutoff = 0.001
 
     def initialize_force(self, q):
         """
@@ -1408,6 +1423,11 @@ class GradientMapper(object):
         When there is ab-initio potential and force available, we use the ab initio value.
         return: potential for all beads.
         """
+        if self.cal_type == "splitting":
+            if self.q_r1 is None:
+                # read reactant coord, pot, force & hessians from the file.
+                self.read_reactant_info()
+
         test_x = np.copy(self.rbeads.q)
         beads_potential_shift, beads_potential_grad_x, _, _ = (
             self.gpr_model.predict_latent_function(test_x)
@@ -1416,6 +1436,26 @@ class GradientMapper(object):
         beads_forces = - beads_potential_grad_x
         # the predicted potential is the one relative to the energy shift.
         beads_potential = beads_potential_shift + self.energy_shift
+
+        # for the tunneling splitting calculation. The bead close to reaction minimum. 
+        if self.cal_type == "splitting":
+            beads_potential[0] = self.V1 
+            beads_forces[0] = self.f_r1 
+
+            beads_potential[-1] = self.V2 
+            beads_forces[-1] = self.f_r2 
+
+            # internal beads. in case if they are close to the reactant minimum.
+            for i in range(1, self.dbeads.nbeads - 1):
+                if beads_potential_shift[i] < self.pot_cutoff:
+                    r1_distance = np.linalg.norm(test_x[i] - self.q_r1)
+                    r2_distance = np.linalg.norm(test_x[i] - self.q_r2)
+                    if (r1_distance < r2_distance):
+                        beads_potential[i] = self.V1 + (-self.f_r1) @ (test_x[i] - self.q_r1).T + (test_x[i] - self.q_r1) @ self.h_r1 @ (test_x[i] - self.q_r1).T
+                        beads_forces[i] = self.f_r1 + (-self.h_r1) @ (test_x[i] - self.q_r1)
+                    else:
+                        beads_potential[i] = self.V2 + (-self.f_r2) @ (test_x[i] - self.q_r2).T + (test_x[i] - self.q_r2) @ self.h_r2 @ (test_x[i] - self.q_r2).T 
+                        beads_forces[i] = self.f_r2 + (-self.h_r2) @ (test_x[i] - self.q_r2)
 
         # check if ab_initio potential and forces are available.
         # If so, use it and then reset it to zero, so we do not re-use it after we move the bead.
@@ -1427,6 +1467,8 @@ class GradientMapper(object):
                 beads_forces[i] = self.ab_initio_force[i]
                 self.ab_initio_force[i] = np.zeros([3 * self.dbeads.natoms])
         
+
+
         beads_forces = ipi.utils.nebinstool.fixing_dofs(beads_forces, self.fix_dofs)
         
         # For using Simpson's rule to compute action W.  
