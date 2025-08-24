@@ -23,7 +23,8 @@ class force_predictor():
                  calc_type,
                  fc,
                  Vc, 
-                 energy_shift):
+                 energy_shift,
+                reverse_bool= False):
         """
         :param: gpr_model: gaussian process regression model.
         :param: calc_type: rate or tunneling splitting.
@@ -37,8 +38,13 @@ class force_predictor():
         self.Vc = Vc
         self.energy_shift = energy_shift
         if calc_type == "splitting":
-            reactant1_file = "reactant1_data.h5"
-            reactant2_file = "reactant2_data.h5"
+            if not reverse_bool:
+                reactant1_file = "reactant1_data.h5"
+                reactant2_file = "reactant2_data.h5"
+            else:
+                # revert the two end point. 
+                reactant1_file = "reactant2_data.h5"
+                reactant2_file = "reactant1_data.h5"
             self.q_r1, self.V1, self.f_r1, self.h_r1 = read_reactant_data(reactant1_file)
             self.q_r2, self.V2, self.f_r2, self.h_r2 = read_reactant_data(reactant2_file) 
 
@@ -81,6 +87,42 @@ class force_predictor():
                 _, grads, _, _ = self.gpr_model.predict_latent_function(q)
                 f = - grads[0]
                 return f  
+        else:
+            raise ValueError(f"Unrecognized calc_type: {self.calc_type}. Need to be rate or splitting.")
+
+    def predict_V(self, q_list, r_list):
+        if self.calc_type == "rate":
+            V_list, _, _, _ = self.gpr_model.predict_latent_function(q_list)
+            return V_list 
+        elif self.calc_type == "splitting":
+            V_list = []
+            for index, r in enumerate(r_list):
+                q = q_list[index]
+                if(r >= 0.2) and (r<= 0.8):
+                    V, _, _, _ = self.gpr_model.predict_latent_function(np.array([q]))
+                    V_list.append(V[0])
+                    continue 
+                elif r < 0.2:
+                    # use Tylor expansion around reactant 1.
+                    diff = q - self.q_r1[0]
+                    f = - self.h_r1 @ diff + self.f_r1
+                    V = self.V1 + (-self.f_r1) @ diff + diff @ self.h_r1 @ diff.T
+                    V_shift = V - self.V1
+                else:
+                    diff = q - self.q_r2[0]
+                    f = - self.h_r2 @ diff + self.f_r2
+                    V = self.V2 + (-self.f_r2) @ diff + diff @ self.h_r2 @ diff.T    
+                    V_shift = V - self.V2
+                f_amplitude = np.linalg.norm(f)
+
+                if f_amplitude < self.fc and V_shift < self.Vc:
+                    V_list.append(V) 
+                else:
+                    V, _, _, _ = self.gpr_model.predict_latent_function(np.array([q]))
+                    V_list.append(V[0])
+            
+            V_list = np.array(V_list)
+            return V_list
         else:
             raise ValueError(f"Unrecognized calc_type: {self.calc_type}. Need to be rate or splitting.")
 
