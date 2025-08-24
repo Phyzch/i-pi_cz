@@ -99,6 +99,7 @@ class MAPNEBGPRMover(Motion):
         alt_out=5,
         gpr_relative_force_error_criterion=0.05,
         gpr_absolute_force_error_criterion=0.001,
+        gpr_absolute_potential_error_criterion= 1e-4,
         gpr_force_uncertainty_criterion = 0.001,
         gpr_trust_region=0.1,
         minimum_trust_region= 0.1,
@@ -289,6 +290,9 @@ class MAPNEBGPRMover(Motion):
         )
         self.optarrays["gpr_absolute_force_error_criterion"] = (
             gpr_absolute_force_error_criterion  # criterion to stop the outer loop when absolute value of gpr force error is small enough
+        )
+        self.optarrays["gpr_absolute_potential_error_criterion"] = (
+            gpr_absolute_potential_error_criterion
         )
         self.optarrays["gpr_force_uncertainty_criterion"] = (
             gpr_force_uncertainty_criterion
@@ -1357,6 +1361,10 @@ class GradientMapper(object):
         # type of calculation: rate or tunneling_splitting.
         self.cal_type = ens.options["cal_type"]
         
+        # use it for force evaluation near the potential minima for tunneling splitting calculation.
+        self.gpr_absolute_force_error_criterion = ens.optarrays["gpr_absolute_force_error_criterion"]
+        self.gpr_absolute_potential_error_criterion = ens.optarrays["gpr_absolute_potential_error_criterion"]
+
         self.instanton_path_energy = ens.optarrays[
             "instanton_path_energy"
         ]  # bind the instanton path energy from NEB mover.
@@ -1393,8 +1401,8 @@ class GradientMapper(object):
 
             self.q_r1 = self.q_r1[0]
             self.q_r2 = self.q_r2[0]
-            self.pot_cutoff = 0.01 * units.unit_to_internal("energy", "electronvolt", 1)
-            self.force_cutoff = 0.001
+            self.pot_cutoff = self.gpr_absolute_potential_error_criterion
+            self.force_cutoff = self.gpr_absolute_force_error_criterion
 
     def initialize_force(self, q):
         """
@@ -1447,7 +1455,7 @@ class GradientMapper(object):
 
             # internal beads. in case if they are close to the reactant minimum.
             for i in range(1, self.dbeads.nbeads - 1):
-                if beads_potential_shift[i] < self.pot_cutoff:
+                if beads_potential_shift[i] < self.pot_cutoff and np.linalg.norm(beads_forces[i]) < self.force_cutoff:
                     r1_distance = np.linalg.norm(test_x[i] - self.q_r1)
                     r2_distance = np.linalg.norm(test_x[i] - self.q_r2)
                     if (r1_distance < r2_distance):
@@ -2285,6 +2293,9 @@ class RP_MAP(object):
         # absolute force error tolerance for gpr model.
         self.gpr_absolute_force_error_criterion = nebmover.optarrays["gpr_absolute_force_error_criterion"]
 
+        # absolute potential error tolerance for gpr model.
+        self.gpr_absolute_potential_error_criterion = nebmover.optarrays["gpr_absolute_potential_error_criterion"]
+
 # -------   for generating the ring polymer beads along the instanton path -------
     def classical_dynamics_along_MAP(self, neb_beads):
         """
@@ -2308,7 +2319,9 @@ class RP_MAP(object):
         # prediction the force using gpr or tylor expansion around reactant minimum.
         self.force_predictor = ipi.utils.nebinstgprtool.force_predictor(self.gpr_model,
                                                                         self.cal_type,
-                                                                        self.gpr_absolute_force_error_criterion)
+                                                                        self.gpr_absolute_force_error_criterion,
+                                                                        self.gpr_absolute_potential_error_criterion,
+                                                                        self.energy_shift)
 
         start_time = timer()
         
@@ -2335,12 +2348,29 @@ class RP_MAP(object):
         dr = 1000
 
         step_num = 0
+        
+        # shift to move to potential minimum in case the potential is flat in the beginning.
+        r_shift = 1e-4
+
+        total_energy_list = []
         while dr > 0:
             old_r_distance = r_distance
             # r is normalized distance along path, in the range of [0, 1]
             t, r_distance, v_r, x, v = self.classical_dynamics_step(t, r_distance, v_r)
 
             dr = r_distance - old_r_distance
+
+            if dr < 0 and r_distance < 0.01:
+                # small error in force cause simulation fails.
+                # simply move particle along the path and set t = 0.
+                t = 0 
+                r_distance = old_r_distance + r_shift
+                dr = - dr
+                v_r = 0 
+                x = self.cubic_spline(r_distance,nu= 0)
+                v = np.zeros([3 * self.neb_beads.natoms])
+                
+
             # check energy conservation
             shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
             pot = shifted_V[0] + self.energy_shift
@@ -2352,6 +2382,10 @@ class RP_MAP(object):
             if step_num % 100 == 0:
                 print(f"step number: {step_num}")
                 print(f"r_distance: {r_distance},  v_r: {v_r}")
+                kinetic_energy = 0.5 * np.sum(self.m3 * np.power(v, 2))
+                total_energy = kinetic_energy - shifted_V[0]
+                print(f"total energy: {total_energy}") 
+                total_energy_list.append(total_energy)
 
         for key in data_lists.keys():
             data_lists[key] = np.array(data_lists[key])
@@ -2360,6 +2394,8 @@ class RP_MAP(object):
         
         print(f"final r at the end of dynamical evolution: {r_list[-1]}")
         
+        print(f"total energy during evolution: {total_energy_list}")
+
         r_list = r_list / r_list[-1]
         
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)

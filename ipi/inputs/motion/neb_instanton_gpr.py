@@ -387,7 +387,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.002,
+                "default": 0.001,
                 "help": """
                 convergence criterion for gpr outer loop. 
                 When |f^GPR - f| < gpr_absolute_force_error_criterion, 
@@ -396,6 +396,19 @@ class InputNebInstGPR(InputDictionary):
                 here d is degrees of freedom in the model.
                 """,
             },
+        ),
+        "gpr_absolute_potential_error_criterion":(
+            InputValue,
+            {
+                "dtype": float,
+                "default":1e-4,
+                "dimension": "energy",
+                "help":"""
+                The error of potential prediction.
+                For tunneling splitting calculation. The low energy region near the potential 
+                minimum is approximated by the Taylor expansion.
+                """
+            }
         ),
         "gpr_force_uncertainty_criterion":(
             InputValue,
@@ -831,6 +844,9 @@ class InputNebInstGPR(InputDictionary):
         )
         self.gpr_absolute_force_error_criterion.store(
             optarrays["gpr_absolute_force_error_criterion"]
+        )
+        self.gpr_absolute_potential_error_criterion.store(
+            optarrays["gpr_absolute_potential_error_criterion"]
         )
         self.gpr_force_uncertainty_criterion.store(
             optarrays["gpr_force_uncertainty_criterion"]

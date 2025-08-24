@@ -21,48 +21,60 @@ class force_predictor():
     def __init__(self,
                  gpr_model: GPModelWithDerivativesWrapper,
                  calc_type,
-                 fc):
+                 fc,
+                 Vc, 
+                 energy_shift):
         """
         :param: gpr_model: gaussian process regression model.
         :param: calc_type: rate or tunneling splitting.
-        :param: fc: cutoff value for force. if |f| < fc, use tylor expansion around reactant minimum.
+        :param: fc: cutoff value for force.
+        :param: Vc: cutoff value for potential. 
+        if |f| < fc and |V| < Vc, use tylor expansion around reactant minimum.
         """
         self.gpr_model = gpr_model 
         self.calc_type = calc_type 
         self.fc = fc 
-
+        self.Vc = Vc
+        self.energy_shift = energy_shift
         if calc_type == "splitting":
             reactant1_file = "reactant1_data.h5"
             reactant2_file = "reactant2_data.h5"
             self.q_r1, self.V1, self.f_r1, self.h_r1 = read_reactant_data(reactant1_file)
             self.q_r2, self.V2, self.f_r2, self.h_r2 = read_reactant_data(reactant2_file) 
-        
+
+            self.V1 = self.V1 - energy_shift
+            self.V2 = self.V2 - energy_shift
+
     def predict_force(self, q, r):
         """
         q: cartesian coordinate of beads. shape: [1, 3 * natoms]
         r: distance along the instanton path. 
         """
         if self.calc_type == "rate":
-            _, grads, _, _ = self.gpr_model.predict_latent_function(q)
+            V, grads, _, _ = self.gpr_model.predict_latent_function(q)
             f = - grads[0]
             return f 
         elif self.calc_type == "splitting":
-            if (r >= 0.1) and (r <= 0.9):
+            if (r >= 0.2) and (r <= 0.8):
                 # predict force with GPR.
-                _, grads, _, _ = self.gpr_model.predict_latent_function(q)
+                V, grads, _, _ = self.gpr_model.predict_latent_function(q)
                 f = - grads[0]
                 return f 
-            elif r < 0.1:
+            elif r < 0.2:
                 # use Tylor expansion around reactant 1.
                 diff = np.squeeze(q - self.q_r1, axis= 0)
                 f = - self.h_r1 @ diff + self.f_r1
+                V = self.V1 + (-self.f_r1) @ diff + diff @ self.h_r1 @ diff.T
+                V_shift = V - self.V1 
             else:
                 # use Tylor expansion around reactant 2
                 diff = np.squeeze(q - self.q_r2, axis= 0)
-                f = - self.h_r2 @ diff + self.f_r2      
+                f = - self.h_r2 @ diff + self.f_r2
+                V = self.V2 + (-self.f_r2) @ diff + diff @ self.h_r2 @ diff.T    
+                V_shift = V - self.V2   
             f_amplitude = np.linalg.norm(f)
-            if f_amplitude < self.fc:
-                # when amplitude is small enough, use Tylor expansion.
+            if f_amplitude < self.fc and V_shift < self.Vc:
+                # when force amplitude and potential is small enough, use Tylor expansion.
                 return f 
             else:
                 # amplitude is large enough. use GPR model.
