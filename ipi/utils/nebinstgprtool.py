@@ -16,6 +16,7 @@ import gpr.internal.ZmatrixInternal
 import shutil
 from collections import namedtuple
 import h5py
+from pyquaternion import Quaternion
 
 class force_predictor():
     def __init__(self,
@@ -490,3 +491,69 @@ def compute_path_tangent_vector(bead_path: np.ndarray, fixed_dofs):
         tangent_vector[index] = tangent_vector[index] / np.linalg.norm(tangent_vector[index])
     
     return tangent_vector
+
+def horn_quaternion_matrix(C):
+    """
+    construct Horn's 4 * 4 matrix from covariance C. 
+    """
+    sigma = np.trace(C)
+    delta = np.array([
+        C[1, 2] - C[2, 1],
+        C[2, 0] - C[0, 2],
+        C[0, 1] - C[1, 0]
+    ])
+
+    M = np.zeros((4, 4))
+    M[0, 0] = sigma
+    M[0, 1:] = delta
+    M[1:, 0] = delta
+    M[1:, 1:] = C + C.T - np.eye(3) * sigma
+
+    return M
+
+def align_molecules_quaternion(X, Y, weight= []):
+    """
+    align molecule Y onto molecule X using least square quaternion fit.
+    weight is the mass of the atom.
+    Returns rotated Y and the RMSD.
+    """
+    if len(weight) == 0:
+        weight = np.ones([len(X)])
+    # Ensure arrays
+    X = np.array(X, dtype=float)
+    Y = np.array(Y, dtype=float)
+    weight = np.array(weight, dtype= float)
+
+    X = X.reshape((-1, 3))
+    Y = Y.reshape((-1, 3))
+    # Step 1: Center both to centroid
+    X_centroid = np.average(X, axis=0, weights= weight)
+    Y_centroid = np.average(Y, axis=0, weights= weight)
+    Xc = X - X_centroid
+    Yc = Y - Y_centroid
+
+    # Step 2: Covariance matrix
+    C = np.zeros((3, 3))
+    for i in range(len(weight)):
+        C += weight[i] * np.outer(Yc[i], Xc[i])
+
+    # Step 3: Build 4x4 quaternion matrix (Horn’s method)
+    M = horn_quaternion_matrix(C)
+
+    # Step 4: Eigen decomposition → best quaternion
+    eigvals, eigvecs = np.linalg.eigh(M)
+    q = eigvecs[:, np.argmax(eigvals)]  # largest eigenvalue
+    quat = Quaternion(q)  # pyquaternion expects [w, x, y, z]
+
+    # Step 5: Rotate Yc
+    Y_rot = np.array([quat.rotate(v) for v in Yc])
+
+    # Step 6: Translate back
+    Y_aligned = Y_rot + X_centroid
+
+    # Step 7: Compute RMSD
+    rmsd = np.sqrt(np.sum(weight * np.sum((X - Y_aligned)**2, axis=1)))
+
+    # revert it back to.
+    Y_aligned = np.array(Y_aligned.flatten())
+    return Y_aligned

@@ -217,6 +217,10 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
         m3 = np.tile(m3_one_bead, (nbeads , 1))
 
         h0 = red2comp(hessian, nbeads, natoms)
+        
+        # modify the tunneling splitting calculation by replacing Hessians at reactant. 
+        
+        
         spring= SpringMapper.spring_hessian(
             natoms, nbeads, m3_one_bead, omega2, mode="splitting"
         )

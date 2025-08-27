@@ -746,6 +746,8 @@ class DummyMethod(object):
         self.options["asr"] = ens.options["asr"]
         self.time_step = ens.optarrays["time_step"]
 
+        self.options["cal_type"] = ens.options["cal_type"]
+
         # optimization method (FIRE / CG/ Quick-Min)
         self.options["mode"]  = ens.options["mode"]
         # for FIRE algorithm.
@@ -956,11 +958,21 @@ class DummyMethod(object):
                 message="Only projected velocity verlet (verlet), conjugate gradient (cg) and FIRE are currently implemented. set mode == 'verlet/cg/FIRE' ",
             )
 
+
         self.f_mscaled = -self.grad_mscaled
         # update new position
         self.x = x_mscaled / np.sqrt(
             self.beads.m3[:, self.fixatoms_mask]
         )
+
+        # if cal_type == 'splitting', realign two end beads with respect to the bead it connects to.
+        # See J. Chem. Theory Comput. 2016, 12, 787−803
+        if self.options["cal_type"] == "splitting":
+            m = dstrip(self.beads.m)
+            # re-orient bead 0 to align with bead 1.
+            self.x[0] = ipi.utils.nebinstgprtool.align_molecules_quaternion(self.x[1], self.x[0], weight= m)
+            # re-orient bead -1 to align with bead -2.
+            self.x[-1] = ipi.utils.nebinstgprtool.align_molecules_quaternion(self.x[-2], self.x[-1], weight= m)
 
         self.project_out_asr_mode(old_x)
 
