@@ -2243,9 +2243,15 @@ class RP_MAP(object):
         self.rp_bead_number = nebmover.optarrays[
             "instanton_bead_number"
         ]  # bead number for instanton ring polymer
-        self.rp_beads = Beads(
-            self.neb_beads.natoms, self.rp_bead_number
-        )  # bead object for instanton ring polymer
+        
+        # bead object for instanton ring polymer
+        if self.cal_type == "splitting":
+            self.rp_beads = Beads(self.neb_beads.natoms, int(self.rp_bead_number / 2))
+        else:
+            self.rp_beads = Beads(
+                self.neb_beads.natoms, self.rp_bead_number
+            )  
+        
         self.rp_forces = nebmover.forces.copy(self.rp_beads, self.dcell)
         self.rp_hessian = np.eye(0, 0, 0, float)
 
@@ -2367,6 +2373,7 @@ class RP_MAP(object):
         total_energy_list = []
         while dr > 0:
             old_r_distance = r_distance
+            old_pot = pot 
             # r is normalized distance along path, in the range of [0, 1]
             t, r_distance, v_r, x, v = self.classical_dynamics_step(t, r_distance, v_r)
 
@@ -2385,6 +2392,11 @@ class RP_MAP(object):
             shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
             pot = shifted_V[0] + self.energy_shift
 
+            # only evolve half of the trajectory for tunneling splitting calculation.
+            if self.cal_type == "splitting":
+                 if pot <= old_pot and r_distance > 0.4:
+                     break 
+
             for key, value in zip(data_lists.keys(), [x, v, t, r_distance, v_r, pot]):
                 data_lists[key].append(value)
             
@@ -2396,28 +2408,20 @@ class RP_MAP(object):
                 total_energy = kinetic_energy - shifted_V[0]
                 print(f"total energy: {total_energy}") 
                 total_energy_list.append(total_energy)
+            
+
 
         for key in data_lists.keys():
             data_lists[key] = np.array(data_lists[key])
 
         r_list = data_lists["r"]
         t_list = data_lists["t"]
+        print("Type of calculation: " + self.cal_type)
         print(f"final r at the end of dynamical evolution: {r_list[-1]}")
 
         print(f"total energy during evolution: {total_energy_list}")
 
-        # reverse dynamics from another end. 
-        if self.cal_type == "splitting":
-            # constrained dynamics from another end.
-            reverse_r_end = 1 - r_list[-1]
-            start_t_reverse_dynamics = t_list[-1]
-            data_list_reverse_dynamics = self.reverse_classical_dynamics_along_MAP(neb_beads, reverse_r_end, start_t_reverse_dynamics)
-            for key in ["x", "v", "t", "r", "v_r", "pot"]:
-                data_lists[key] = np.concatenate([data_lists[key], data_list_reverse_dynamics[key]], axis= 0)
-
         x_list, v_list, t_list, r_list, v_r_list, pot_list = (data_lists[key] for key in ["x", "v", "t", "r", "v_r", "pot"])
-        
-        print(f"final r at the end of dynamical evolution (after reverse dynamics): {r_list[-1]}")
         
         self.analyze_classical_dynamics_along_MAP(v_list, t_list, pot_list)
 
@@ -2459,125 +2463,6 @@ class RP_MAP(object):
 
         return t, r_distance, v_r, x, v
 
-    def reverse_classical_dynamics_along_MAP(self, neb_beads, r_end, start_t):
-        """
-        evolve dynamics backward from another end.
-        :param: neb_beads: beads representing instanton path. 
-        :param: r_end: end distance for the evolution.
-        """
-        reverse_neb_beads_q = np.flip(neb_beads.q, axis= 0) 
-        self.reverse_cubic_spline = ipi.utils.nebinstool.path_cubic_spline_function(reverse_neb_beads_q,
-                                                                                    reverse_neb_beads_q)
-        # the force near end point is approximated using the Hessian at reactant. 
-        self.reverse_force_predictor = ipi.utils.nebinstgprtool.force_predictor(self.gpr_model,
-                                                                                self.cal_type,
-                                                                                self.gpr_absolute_force_error_criterion,
-                                                                                self.gpr_absolute_potential_error_criterion,
-                                                                                self.energy_shift,
-                                                                                reverse_bool= True)
-        
-        print("evolve from another end of the path to compute the temperature")
-        
-        t, r_distance = 0, 0  # time & normalized distance along path.
-        x = np.copy(self.neb_beads.q[-1])  # coordinate
-        v = np.zeros([3 * self.neb_beads.natoms])  # velocity
-        v_r = 0  # dr/dt. rate of change for r.
-
-        shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
-        pot = shifted_V[0] + self.energy_shift
-
-        x_list, v_list, t_list, r_list, v_r_list, pot_list = ([] for _ in range(6))
-        data_lists = {
-            "x": x_list,
-            "v": v_list,
-            "t": t_list,
-            "r": r_list,
-            "v_r": v_r_list,
-            "pot": pot_list
-        }
-        for key, value in zip(data_lists.keys(), [x, v, t, r_distance, v_r, pot]):
-            data_lists[key].append(value)
-
-        dr = 1000 
-        step_num = 0
-        total_energy_list = [] 
-        # shift to move to the potential minimum in case the potential is flat at the beginning.
-        r_shift = 1e-4 
-
-        while dr > 0 and r_distance < r_end:
-            old_r_distance = r_distance 
-            t, r_distance, v_r, x, v = self.reverse_classical_dynamics_step(t, r_distance, v_r)
-
-            dr = r_distance - old_r_distance
-            if dr <= 0 and r_distance < 0.01:
-               # small error in force cause simulation fails.
-               # simply shift r.
-               t = 0
-               r_distance = old_r_distance + r_shift 
-               dr = 1e-8 
-               v_r = 0
-               continue
-            
-            # check energy conservation. 
-            shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
-            pot = shifted_V[0] + self.energy_shift
-
-            for key, value in zip(data_lists.keys(), [x, v, t, r_distance, v_r, pot]):
-                data_lists[key].append(value)
-            
-            step_num = step_num + 1 
-            if step_num % 100 == 0:
-                print(f"step number: {step_num}")
-                print(f"r_distance: {r_distance},  v_r: {v_r}")
-                kinetic_energy = 0.5 * np.sum(self.m3 * np.power(v, 2))
-                total_energy = kinetic_energy - shifted_V[0]
-                print(f"total energy: {total_energy}") 
-                total_energy_list.append(total_energy)
-        
-        for key in data_lists.keys():
-            data_lists[key] = np.array(data_lists[key])
-
-        x_list, v_list, t_list, r_list, v_r_list, pot_list = (data_lists[key] for key in ["x", "v", "t", "r", "v_r", "pot"])
-        # flip the trajectory.
-        x_list = np.flip(x_list, axis= 0)
-        v_list = -np.flip(v_list, axis= 0)
-        t_list = t_list[-1] - np.flip(t_list, axis= 0) + start_t
-        r_list = 1 - np.flip(r_list, axis= 0)
-        v_r_list = np.flip(v_r_list, axis= 0)
-        pot_list = np.flip(pot_list, axis= 0)
-
-        data_lists = {
-            "x": x_list,
-            "v": v_list,
-            "t": t_list,
-            "r": r_list,
-            "v_r": v_r_list,
-            "pot": pot_list
-        }
-
-        return data_lists
-
-    def reverse_classical_dynamics_step(self, t, r_distance, v_r):
-        """
-        evolve dynamics for one time step from another end. dt= self.time_step.
-        """
-        # parameter for Runge Kuttta 4th order algorithm.
-        m3_matrix = np.diag(self.m3)
-        param = [self.reverse_force_predictor, m3_matrix, self.reverse_cubic_spline]
-        dt = self.time_step 
-
-        y = np.array([r_distance, v_r])
-
-        new_y = RK4(y, t, ipi.utils.nebinstgprtool.dydt_inverted_pot_gpr, param, dt)
-        r_distance = new_y[0]
-        v_r = new_y[1]
-
-        t = t + dt 
-        x = self.reverse_cubic_spline(r_distance)
-        v = self.reverse_cubic_spline(r_distance, nu= 1) * v_r 
-
-        return t, r_distance, v_r, x, v    
-
     def analyze_classical_dynamics_along_MAP(self, v_list, t_list, pot_list):
         """
         compute the temperature of the instanton path from period of motion.
@@ -2601,9 +2486,13 @@ class RP_MAP(object):
         )
 
         # compute the temperature from imaginary time.
-        self.imag_time_period = (
-            2 * t_list[-1]
-        )  # the period of periodic motion is twice the time move from one end to another end.
+        if self.cal_type == "rate":
+            self.imag_time_period = (
+                2 * t_list[-1]
+            )  # the period of periodic motion is twice the time move from one end to another end.
+        else:
+            self.imag_time_period = 4 * t_list[-1]
+
         self.instanton_temp = 1 / self.imag_time_period
 
         info(

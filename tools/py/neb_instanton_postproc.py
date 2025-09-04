@@ -217,12 +217,13 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
 
         omega2 = (effective_temp * nbeads * kb / hbar) ** 2
         
-        m3 = np.tile(m3_one_bead, (nbeads , 1))
+        m3 = np.tile(m3_one_bead, ( int(nbeads / 2) , 1))
 
-        h0 = red2comp(hessian, nbeads, natoms)
+        h0 = red2comp(hessian, int(nbeads / 2), natoms)
         
-        # modify the tunneling splitting calculation by replacing Hessians at reactant. 
-        
+        # double the hessian for tunneling splitting calculation.
+        _, _, h0 = get_double(pos, int(nbeads / 2), natoms, h0)
+
         spring= SpringMapper.spring_hessian(
             natoms, nbeads, m3_one_bead, omega2, mode="splitting"
         )
@@ -430,7 +431,8 @@ def compute_instanton_rate_or_splitting():
     if not quiet:
         print("Diagonalization ... \n\n")
         # d: eigvalue for mass weighted hessian after deleting trans & rot dof. w: eigenvector, detI: determinant of momentum of inertia
-        hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3, asr, mofi=True)  # remove the  translational and rotational modes.
+        m3_for_hessian = np.repeat(m3, repeats= 2, axis= 0)
+        hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi=True)  # remove the  translational and rotational modes.
         print("Final lowest 10 frequencies (cm^-1)")
         d10 = np.array2string(
             np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au,
@@ -444,7 +446,7 @@ def compute_instanton_rate_or_splitting():
     if cal_type == "rate":
         nbeads_to_print = int(nbeads / 2)
     else:
-        nbeads_to_print = nbeads 
+        nbeads_to_print = int(nbeads/2) 
     print_instanton_path(nbeads_to_print, natoms, neb_beads.names, pos, pots)
 
     if  cal_type == "rate":
@@ -543,8 +545,14 @@ def compute_instanton_rate_or_splitting():
         ww = get_rp_freq(d_min, nbeads, effective_temp, mode="splitting")
         react = np.sum(np.log(ww))
 
-        action1 = (pots.sum() - nbeads * V0) * 1 / (effective_temp * nbeads * kb) 
-        action2 = spring_pot(nbeads, pos, omega2, m3) / (effective_temp * nbeads * kb)
+        assert len(pots) == int(nbeads / 2)
+        
+        action1 = (pots.sum() - int(nbeads / 2) * V0) * 1 / (effective_temp * nbeads * kb) 
+        action1 = action1 * 2 
+
+        action2 = spring_pot(int(nbeads/2), pos, omega2, m3) / (effective_temp * nbeads * kb)
+        action2 = action2 * 2
+
         action = action1 + action2
         if action / hbar > 5.0:
             print(
@@ -552,6 +560,7 @@ def compute_instanton_rate_or_splitting():
             )
         
         BN = np.sum(m3[1:, :] * (pos[1:, :] - pos[:-1, :]) ** 2)
+        BN = BN * 2
 
         if not quiet:
             inst = np.sum(np.log(np.sqrt(np.absolute(np.delete(hess_eigval, [1])))))

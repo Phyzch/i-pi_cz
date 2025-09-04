@@ -207,6 +207,9 @@ def interpolate_ring_polymer_beads(
         # linear ring polymer with fixed two end points.
         rp_t_list = np.linspace(0, period/ 2, instanton_bead_number + 2, endpoint= True)
         rp_t_list = rp_t_list[1:-1]
+        
+        # for tunneling splitting calculation, we only include half of the ring polymer trajectory.
+        rp_t_list = rp_t_list[: int(instanton_bead_number / 2)]
     else:
         raise ValueError("unrecognized cal_type. Must be rate or splitting.")
 
@@ -216,9 +219,16 @@ def interpolate_ring_polymer_beads(
 
     rp_x_list = []
     rp_r_list = [] # coordinate r along ring polymer beads.
+
     # interpolate the internal beads
+    if cal_type == "splitting":
+        # Due to symmetry, we only include half of the ring polymer.
+        rp_bead_number = int(instanton_bead_number / 2)
+    else:
+        rp_bead_number = instanton_bead_number
+
     t_index_start = 0
-    for i in range(instanton_bead_number):
+    for i in range(rp_bead_number):
         rp_t = rp_t_list[i]
 
         for t_index in range(t_index_start, t_list_len - 1):
