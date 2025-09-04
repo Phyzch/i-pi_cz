@@ -2407,7 +2407,7 @@ class RP_MAP(object):
         print(f"total energy during evolution: {total_energy_list}")
 
         # reverse dynamics from another end. 
-        if r_list[-1] < 0.95:
+        if self.cal_type == "splitting":
             # constrained dynamics from another end.
             reverse_r_end = 1 - r_list[-1]
             start_t_reverse_dynamics = t_list[-1]

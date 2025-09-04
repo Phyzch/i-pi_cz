@@ -212,14 +212,16 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
         
         print(f"Linear ring polymer for splitting calculation. Has {nbeads} beads.")
 
-        omega2 = (temp * nbeads * kb / hbar) ** 2
+        # effective temperature for linear ring polymer beads:
+        effective_temp = temp * 2
+
+        omega2 = (effective_temp * nbeads * kb / hbar) ** 2
         
         m3 = np.tile(m3_one_bead, (nbeads , 1))
 
         h0 = red2comp(hessian, nbeads, natoms)
         
         # modify the tunneling splitting calculation by replacing Hessians at reactant. 
-        
         
         spring= SpringMapper.spring_hessian(
             natoms, nbeads, m3_one_bead, omega2, mode="splitting"
@@ -412,8 +414,12 @@ def compute_instanton_rate_or_splitting():
                                                          asr,
                                                          input_freq)
 
-    beta = 1.0 / (kb * temp)
-    betaP = 1.0 / (kb * (nbeads) * temp)
+    if cal_type == "rate":
+        beta = 1.0 / (kb * temp)
+        betaP = 1.0 / (kb * (nbeads) * temp)
+    else:
+        beta = 1.0 / (kb * temp)  
+        betaP = beta / (2 * nbeads) # the linear ring polymer.
 
     print(("\nTemperature: {} K".format(temp / K2au)))
     print(("NBEADS: {}".format(nbeads)))
@@ -530,11 +536,15 @@ def compute_instanton_rate_or_splitting():
             d_min[i] = float(aux[i])
         d_min = d_min.reshape((natoms * 3))
         out.close()
-        ww = get_rp_freq(d_min, nbeads, temp, mode="splitting")
+
+        # effective temperature for splitting calculation.
+        effective_temp = temp * 2
+
+        ww = get_rp_freq(d_min, nbeads, effective_temp, mode="splitting")
         react = np.sum(np.log(ww))
 
-        action1 = (pots.sum() - nbeads * V0) * 1 / (temp * nbeads * kb) 
-        action2 = spring_pot(nbeads, pos, omega2, m3) / (temp * nbeads * kb)
+        action1 = (pots.sum() - nbeads * V0) * 1 / (effective_temp * nbeads * kb) 
+        action2 = spring_pot(nbeads, pos, omega2, m3) / (effective_temp * nbeads * kb)
         action = action1 + action2
         if action / hbar > 5.0:
             print(
