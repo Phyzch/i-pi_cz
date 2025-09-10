@@ -221,8 +221,9 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
 
         h0 = red2comp(hessian, int(nbeads / 2), natoms)
         
-        # double the hessian for tunneling splitting calculation.
-        _, _, h0 = get_double(pos, int(nbeads / 2), natoms, h0)
+        # TODO: Rewrite the code that output Hessian of the reflected beads. 
+        permute_index_list = read_atom_permute_index(natoms)
+        h0 = hessian_reflect(int(nbeads / 2), natoms, h0, permute_index_list)
 
         spring= SpringMapper.spring_hessian(
             natoms, nbeads, m3_one_bead, omega2, mode="splitting"
@@ -272,6 +273,70 @@ def get_double(q0, nbeads0, natoms, h0):
 
     return q, nbeads, h
 
+def read_atom_permute_index(natoms):
+    pairs = []
+    with open("atom_permute_index.txt", "r") as f:   # replace with your filename
+        for line in f:
+            # strip whitespace, skip empty lines
+            parts = line.strip().split()
+            if not parts:
+                continue
+            # convert to integers and store as tuple
+            pair = tuple(map(int, parts))
+            pairs.append(pair)
+            first, second = pair 
+            if (first >= natoms or second >= natoms):
+                raise ValueError(f"the atom index exceeds natoms {pair}")
+    
+    return pairs 
+
+
+def hessian_reflect(nbeads0, natoms, h0, permute_index_list):
+    """
+    For the tunneling splitting calculation. 
+    Take zero temperature instanton path at one side of the barrier, 
+    use the hessian at one side to generate hessian at another side. 
+    :param: nbeads0: number of beads for instanton path at one side.
+    :param: natoms: number of atoms in the system for each bead.
+    :param: h0: hessian matrix for beads at one side.
+    :param: permute_index_list: index for atoms to perform the permutation.
+            example: [[0, 1], [2, 5], [3, 4], [8, 9]]
+    """
+    nbeads = nbeads0 * 2 
+    ii = 3 * natoms 
+    iii = 3 * natoms * nbeads0 
+
+    h = np.zeros((iii * 2, iii * 2)) # hessian matrix for beads at both ends.
+    h[0: iii, 0: iii] = h0 
+
+    h_bead = np.zeros((3 * natoms, 3 * natoms))
+    h_bead_permute = np.zeros((3 * natoms, 3 * natoms))
+    for bead_index in range(nbeads0):
+        h_bead = np.copy(h0[bead_index * ii : (bead_index + 1) * ii,
+                            bead_index * ii : (bead_index + 1) * ii])
+        # permute the atom 
+        h_bead_permute = np.copy(h_bead)
+        for pair in permute_index_list:
+            first, second = pair 
+            h_bead_permute[first * 3 : (first + 1) * 3, :] = h_bead[second * 3: (second + 1) * 3, :]
+            h_bead_permute[second * 3 : (second + 1) * 3, :] = h_bead[first * 3 : (first + 1) * 3, :]
+        h_bead_row_permuted = np.copy(h_bead_permute)
+        for pair in permute_index_list:
+            first, second = pair 
+            h_bead_permute[:, first * 3 : (first + 1) * 3] = h_bead_row_permuted[:, second * 3 : (second + 1) * 3]
+            h_bead_permute[:, second * 3 : (second + 1) * 3] = h_bead_row_permuted[:, first * 3: (first + 1) * 3]
+        
+        h_bead = np.copy(h_bead_permute)
+
+        # reflect the x axis. Assume the the instanton is symmetric along x axis.
+        for i in range(natoms):
+            h_bead[i * 3, :] = - h_bead[i * 3, :]
+            h_bead[:, i * 3] = - h_bead[:, i * 3]
+        
+        h[ii * nbeads - (bead_index + 1) * ii : ii * nbeads - bead_index * ii, 
+          ii * nbeads - (bead_index + 1) * ii : ii * nbeads - bead_index * ii] = h_bead
+
+    return h 
 
 def spring_pot(nbeads, q, omega2, m3):
     '''
