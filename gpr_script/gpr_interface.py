@@ -197,6 +197,14 @@ class GPRForceMapper(object):
         else:
             gpr_model.train_gpr()
 
+        train_V_to_store = train_V + self.energy_shift
+        train_f_to_store = -train_grad 
+        # store the training data.
+        gpr_util.store_training_data(
+            train_x, train_V_to_store, train_f_to_store,
+            prefix= neb_final_gpr_folder
+        )       
+        
         # store internal dofs in the gpr model        
         gpr_util.store_fixed_internal_dofs_gpr_model(
             gpr_model,
@@ -208,6 +216,7 @@ class GPRForceMapper(object):
             gpr_model,
             neb_final_gpr_folder
         )
+ 
 
         return gpr_model
 

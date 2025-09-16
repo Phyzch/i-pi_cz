@@ -1391,6 +1391,7 @@ class GradientMapper(object):
         # Create reduced bead and force object (excluding the fixed atoms. But including the beads at two ends that also moves)
         self.rbeads = Beads(ens.beads.natoms, ens.beads.nbeads)
         self.rbeads.q[:] = ens.beads.q[:]
+        self.forces = ens.forces.copy(self.rbeads, self.dcell)
 
         self.kappa = ens.optarrays[
             "kappa"
@@ -1646,6 +1647,9 @@ class GradientMapper(object):
                 warning("the energy of bead " + str(j) + " is  " + str(beads_energy[j]) + \
                          " which is smaller than the end bead energy we choose: " + \
                               str(self.instanton_path_energy) )
+            elif beads_energy[j] - self.instanton_path_energy < self.gpr_absolute_potential_error_criterion:
+                # the gj_force_component will be unstable, set it to zero to avoid instability.
+                gj_force_component = 0
             else:
                 gj_force_component = 0.5 * (1/action_each_bead[j] * (dj1 + dj2) * fj)
 
