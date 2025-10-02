@@ -373,6 +373,7 @@ class GPRForceMapper(object):
             outrange_bead_x =  np.copy(beads_q[outrange_bead_index_list])
             _, _, _, var_grad_x_trace_list = self.gpr_model.predict_latent_function(outrange_bead_x)
             bead_index_for_update = outrange_bead_index_list[np.argmax(var_grad_x_trace_list)]
+            print(f"@update GPR model. Bead index: {bead_index_for_update}")
             new_training_x = np.array([beads_q[bead_index_for_update]])
         else:
             # select the data point with the force uncertainty estimate larger than the cutoff value 
@@ -385,7 +386,7 @@ class GPRForceMapper(object):
 
             large_uncertainty_bool = (force_uncertainty > force_uncertainty_cutoff)
             large_uncertainty_bead_index = np.arange(nbeads)[large_uncertainty_bool]
-
+            print(f"@update GPR model. Bead index: {large_uncertainty_bead_index}")
             new_training_x = dstrip(beads_q[large_uncertainty_bead_index]).copy()
         
         return new_training_x

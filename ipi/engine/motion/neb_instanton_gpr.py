@@ -408,6 +408,7 @@ class MAPNEBGPRMover(Motion):
         """
         initial step set up.
         """
+        beads_pots, _, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
         # print initial geometry and energy of neb path.
         ipi.utils.nebinstool.print_neb_instanton_geo(
             self.options["prefix"] + "_initial_",
@@ -416,7 +417,7 @@ class MAPNEBGPRMover(Motion):
             self.beads.natoms,
             self.beads.names,
             self.beads.q,
-            self.forces.pots,
+            beads_pots,
             self.cell,
             self.optarrays["energy_shift"],
             self.output_maker,
@@ -645,8 +646,7 @@ class MAPNEBGPRMover(Motion):
         self.action_info_file.close()
         self.action_outloop_info_file.close() 
 
-        beads_pots, _, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
-        beads_pots = beads_pots + self.optarrays["energy_shift"]
+        beads_pots = self.gm.beads_energy
         # print neb beads geometry and energy.
         ipi.utils.nebinstool.print_neb_instanton_geo(
             self.options["prefix"] + "_neb_FINAL",
@@ -2352,7 +2352,9 @@ class RP_MAP(object):
         v = np.zeros([3 * self.neb_beads.natoms])  # velocity
         v_r = 0  # dr/dt. rate of change for r.
 
-        shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+        # shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+        # pot = shifted_V[0] + self.energy_shift
+        shifted_V = self.force_predictor.predict_V(np.array([x]), np.array([0]))
         pot = shifted_V[0] + self.energy_shift
 
         x_list, v_list, t_list, r_list, v_r_list, pot_list = ([] for _ in range(6))
@@ -2383,7 +2385,7 @@ class RP_MAP(object):
 
             dr = r_distance - old_r_distance
 
-            if dr < 0 and r_distance < 0.01:
+            if dr < 0 and r_distance < 0.1:
                 # small error in force cause simulation fails.
                 # simply move particle along the path and set t = 0.
                 t = 0 
@@ -2393,7 +2395,9 @@ class RP_MAP(object):
                 continue 
 
             # check energy conservation
-            shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+            # shifted_V, _, _, _ = self.gpr_model.predict_latent_function(np.array([x]))
+            # pot = shifted_V[0] + self.energy_shift
+            shifted_V = self.force_predictor.predict_V(np.array([x]), np.array([r_distance]))
             pot = shifted_V[0] + self.energy_shift
 
             # only evolve half of the trajectory for tunneling splitting calculation.
@@ -2713,8 +2717,11 @@ class RP_MAP(object):
 
         # compute r (path distance, range[0,1]) for beads.
         candidate_hessian_data_number = candidate_hessian_point_x.shape[0]
-        _, candidate_hessian_point_r = ipi.utils.nebinstool.path_equal_distance_interpolation(np.copy(self.neb_beads.q),
-                                                               candidate_hessian_data_number)
+        _, candidate_hessian_point_r = ipi.utils.nebinstool.path_equal_distance_interpolation(
+                                                                np.copy(self.neb_beads.q),
+                                                               candidate_hessian_data_number
+                                                               )
+        
         hessian_point_r = candidate_hessian_point_r[hessian_index_in_candidate_list]
 
         # cubic spline interpolation with hessian data point along the instanton path.

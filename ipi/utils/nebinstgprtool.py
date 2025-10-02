@@ -71,13 +71,13 @@ class force_predictor():
                 # use Tylor expansion around reactant 1.
                 diff = np.squeeze(q - self.q_r1, axis= 0)
                 f = - self.h_r1 @ diff + self.f_r1
-                V = self.V1 + (-self.f_r1) @ diff + diff @ self.h_r1 @ diff.T
+                V = self.V1 + (-self.f_r1) @ diff + 0.5 * diff @ self.h_r1 @ diff.T
                 V_shift = V - self.V1 
             else:
                 # use Tylor expansion around reactant 2
                 diff = np.squeeze(q - self.q_r2, axis= 0)
                 f = - self.h_r2 @ diff + self.f_r2
-                V = self.V2 + (-self.f_r2) @ diff + diff @ self.h_r2 @ diff.T    
+                V = self.V2 + (-self.f_r2) @ diff + 0.5 * diff @ self.h_r2 @ diff.T    
                 V_shift = V - self.V2   
             f_amplitude = np.linalg.norm(f)
             if f_amplitude < self.fc and V_shift < self.Vc:
@@ -107,12 +107,12 @@ class force_predictor():
                     # use Tylor expansion around reactant 1.
                     diff = q - self.q_r1[0]
                     f = - self.h_r1 @ diff + self.f_r1
-                    V = self.V1 + (-self.f_r1) @ diff + diff @ self.h_r1 @ diff.T
+                    V = self.V1 + (-self.f_r1) @ diff + 0.5 * diff @ self.h_r1 @ diff.T
                     V_shift = V - self.V1
                 else:
                     diff = q - self.q_r2[0]
                     f = - self.h_r2 @ diff + self.f_r2
-                    V = self.V2 + (-self.f_r2) @ diff + diff @ self.h_r2 @ diff.T    
+                    V = self.V2 + (-self.f_r2) @ diff + 0.5 * diff @ self.h_r2 @ diff.T    
                     V_shift = V - self.V2
                 f_amplitude = np.linalg.norm(f)
 
