@@ -495,8 +495,10 @@ def compute_instanton_rate_or_splitting():
 
     if not quiet:
         print("Diagonalization ... \n\n")
-        # d: eigvalue for mass weighted hessian after deleting trans & rot dof. w: eigenvector, detI: determinant of momentum of inertia
-        m3_for_hessian = np.repeat(m3, repeats= 2, axis= 0)
+        if cal_type == "rate":
+            m3_for_hessian = m3
+        else:
+            m3_for_hessian = np.repeat(m3, repeats= 2, axis= 0) 
         hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi=True)  # remove the  translational and rotational modes.
         print("Final lowest 10 frequencies (cm^-1)")
         d10 = np.array2string(
@@ -506,12 +508,11 @@ def compute_instanton_rate_or_splitting():
             formatter={"float_kind": lambda x: "%.2f" % x},
         )
         print(("{}".format(d10)))
+
+        # print conditional number
     
     # print instanton path for half ring polymer
-    if cal_type == "rate":
-        nbeads_to_print = int(nbeads / 2)
-    else:
-        nbeads_to_print = int(nbeads/2) 
+    nbeads_to_print = int(nbeads/2) 
     print_instanton_path(nbeads_to_print, natoms, neb_beads.names, pos, pots)
 
     if  cal_type == "rate":

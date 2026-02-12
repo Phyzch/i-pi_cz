@@ -795,7 +795,7 @@ class GPRHessianMapper(object):
         self.gpr_covar_inverse_nugget = nebmover.optarrays["gpr_covar_inverse_nugget"]
 
 # ------- construct gpr hessian model --------------------
-    def construct_selective_hessian_calculator(self, candidate_hessian_point_x):
+    def construct_selective_hessian_calculator(self, candidate_hessian_point_x, grads_x):
         """
         initialize SelectiveHessianCalculation class.
         Use this function to only compute a few number of beads along rigid mode 
@@ -806,6 +806,7 @@ class GPRHessianMapper(object):
         """
         self.selective_hessian_calculator = ipi.utils.hessfasttools.SelectiveHessianCalculation(
             candidate_hessian_point_x,
+            grads_x,
             self.coordinate_transformer,
             self.gpr_rigid_internal_dofs_cutoff,
             self.cross_validation_bool
@@ -894,9 +895,11 @@ class GPRHessianMapper(object):
 
         if self.selective_hessian_bool:
             # initialize the selective hessian calculator to compute hessian along rigid modes.
-            self.construct_selective_hessian_calculator(candidate_hessian_point_x)
+            grads_x = -training_forces
+            self.construct_selective_hessian_calculator(candidate_hessian_point_x,
+                                                        grads_x)
             # update the hessian along the rigid mode.
-            hessian_data_list = self.rp_map.selective_hessian_calculator.update_hessian_rigid_modes(
+            hessian_data_list = self.selective_hessian_calculator.update_hessian_rigid_modes(
                 cartesian_coordinate_x[hessian_index_list],
                 training_forces[hessian_index_list],
                 hessian_data_list
@@ -1007,9 +1010,9 @@ class GPRHessianMapper(object):
 
         if self.selective_hessian_bool:
             # initialize the selective_hessian_calculator.
-            self.rp_map.construct_selective_hessian_calculator(candidate_hessian_point_x)
+            self.construct_selective_hessian_calculator(candidate_hessian_point_x, train_grads)
 
-            ref_hessians = self.rp_map.selective_hessian_calculator.get_hessian(
+            ref_hessians = self.selective_hessian_calculator.get_hessian(
                 new_beads,
                 new_forces,
                 np.copy(new_beads.q)
@@ -1202,7 +1205,7 @@ class GPRHessianMapper(object):
 
                 # compute ab initio hessians of new data points.
                 if self.selective_hessian_bool:
-                    new_hessians = self.rp_map.selective_hessian_calculator.get_hessian(
+                    new_hessians = self.selective_hessian_calculator.get_hessian(
                         new_beads,
                         new_forces,
                         np.copy(new_beads.q)

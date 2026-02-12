@@ -25,6 +25,7 @@ class SelectiveHessianCalculation:
     """
     def __init__(self,
                  train_x: np.ndarray,
+                 grad_x: np.ndarray,
                  coordinate_transformer: non_redundant_coordinate_transformer,
                  rigid_internal_dofs_cutoff: np.ndarray,
                  cross_validation_bool
@@ -56,11 +57,14 @@ class SelectiveHessianCalculation:
         input_dim = train_inputs.shape[1]
         self.input_dim = input_dim 
 
-        # compute the change of training input. 
-        # To be safe, we compute it using two approaches and choose the smaller one among two:
-        train_inputs_change1 = np.abs(sq * (vh @ train_x_change))
-        train_inputs_change2 = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
-        train_inputs_change = np.min([train_inputs_change1, train_inputs_change2], axis= 0)
+        internal_coord_type = coordinate_transformer.internal_coord_type
+        if internal_coord_type == "Coulomb":
+            train_inputs_change = np.abs(sq * (vh @ train_x_change))
+        elif internal_coord_type == "bond":
+            train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
+        else:
+            print("Warning: internal coord type unrecognized.")
+            train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
 
         self.train_inputs_change = train_inputs_change 
 
@@ -75,8 +79,29 @@ class SelectiveHessianCalculation:
                 i for i in range(input_dim)
                 if train_inputs_change[i] < rigid_internal_dofs_cutoff
             ]
-        )
+        ).astype(int)
 
+        # choose rigid dofs according to grad criterion.
+        grad_q = (
+            self.coordinate_transformer.transform_cartesian_gradient_to_internal_gradient(
+                train_x, grad_x
+            )
+        )
+        grads_change_cutoff_ratio = 0.1
+        grads_change = np.max(grad_q, axis= 0) - np.min(grad_q, axis= 0)
+        grads_change_cutoff = np.max(grads_change) * grads_change_cutoff_ratio
+        rigid_internal_dofs_with_force_criterion = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
+
+        self.rigid_internal_dofs = np.array(list(
+                                    set(
+                                        np.concatenate([
+                                                self.rigid_internal_dofs, 
+                                                rigid_internal_dofs_with_force_criterion]
+                                                )
+                                        )
+                                        )
+                                    )
+        
         print(f"@hessian calculation: rigid internal dofs: {self.rigid_internal_dofs}")
 
         if len(self.rigid_internal_dofs) != 0:

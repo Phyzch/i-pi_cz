@@ -409,6 +409,7 @@ class MAPNEBGPRMover(Motion):
         initial step set up.
         """
         beads_pots, _, _, _ = self.gpr_model.predict_latent_function(self.beads.q)
+        beads_pots = beads_pots + self.optarrays["energy_shift"]
         # print initial geometry and energy of neb path.
         ipi.utils.nebinstool.print_neb_instanton_geo(
             self.options["prefix"] + "_initial_",
@@ -1412,8 +1413,15 @@ class GradientMapper(object):
             self.q_r1, self.V1, self.f_r1, self.h_r1 = ipi.utils.nebinstgprtool.read_reactant_data(reactant1_file)
             self.q_r2, self.V2, self.f_r2, self.h_r2 = ipi.utils.nebinstgprtool.read_reactant_data(reactant2_file) 
 
-            self.q_r1 = self.q_r1[0]
-            self.q_r2 = self.q_r2[0]
+            coord_transformer = self.gpr_model.coordinate_transformer
+            self.q_r1_internal = coord_transformer.get_internal_coordinate_q(self.q_r1)
+            self.f_r1_internal = coord_transformer.transform_cartesian_gradient_to_internal_gradient(self.q_r1, self.f_r1[np.newaxis, :]).squeeze(0)
+            self.h_r1_internal = coord_transformer.transform_cartesian_hessian_to_internal_hessian(self.q_r1, self.f_r1[np.newaxis, :], self.h_r1[np.newaxis,:]).squeeze(0)
+
+            self.q_r2_internal = coord_transformer.get_internal_coordinate_q(self.q_r2)
+            self.f_r2_internal = coord_transformer.transform_cartesian_gradient_to_internal_gradient(self.q_r2, self.f_r2[np.newaxis, :]).squeeze(0)
+            self.h_r2_internal = coord_transformer.transform_cartesian_hessian_to_internal_hessian(self.q_r2, self.f_r2[np.newaxis, :], self.h_r2[np.newaxis, :]).squeeze(0)
+
             self.pot_cutoff = self.gpr_absolute_potential_error_criterion
             self.force_cutoff = self.gpr_absolute_force_error_criterion
 
@@ -1472,11 +1480,30 @@ class GradientMapper(object):
                     r1_distance = np.linalg.norm(test_x[i] - self.q_r1)
                     r2_distance = np.linalg.norm(test_x[i] - self.q_r2)
                     if (r1_distance < r2_distance):
-                        beads_potential[i] = self.V1 + (-self.f_r1) @ (test_x[i] - self.q_r1).T + (test_x[i] - self.q_r1) @ self.h_r1 @ (test_x[i] - self.q_r1).T
-                        beads_forces[i] = self.f_r1 + (-self.h_r1) @ (test_x[i] - self.q_r1)
+                        # Taylor expansion in the internal coordinate.
+                        f, V_shift = ipi.utils.nebinstgprtool.taylor_expansion_subroutine(self.coordinate_transformer,
+                                                                                          test_x[i][np.newaxis, :],
+                                                                                          self.q_r1_internal,
+                                                                                          self.f_r1_internal,
+                                                                                          self.h_r1_internal
+                                                                                          ) 
+                        beads_potential[i] = self.V1 + V_shift 
+                        beads_forces[i] = f 
+                        
+                        # beads_potential[i] = self.V1 + (-self.f_r1) @ (test_x[i] - self.q_r1).T + (test_x[i] - self.q_r1) @ self.h_r1 @ (test_x[i] - self.q_r1).T
+                        # beads_forces[i] = self.f_r1 + (-self.h_r1) @ (test_x[i] - self.q_r1)
                     else:
-                        beads_potential[i] = self.V2 + (-self.f_r2) @ (test_x[i] - self.q_r2).T + (test_x[i] - self.q_r2) @ self.h_r2 @ (test_x[i] - self.q_r2).T 
-                        beads_forces[i] = self.f_r2 + (-self.h_r2) @ (test_x[i] - self.q_r2)
+                        # Taylor expansion in the internal coordinate.
+                        f, V_shift = ipi.utils.nebinstgprtool.taylor_expansion_subroutine(self.coordinate_transformer,
+                                                                    test_x[i][np.newaxis, :],
+                                                                    self.q_r2_internal,
+                                                                    self.f_r2_internal,
+                                                                    self.h_r2_internal
+                                                                    ) 
+                        # beads_potential[i] = self.V2 + (-self.f_r2) @ (test_x[i] - self.q_r2).T + (test_x[i] - self.q_r2) @ self.h_r2 @ (test_x[i] - self.q_r2).T 
+                        # beads_forces[i] = self.f_r2 + (-self.h_r2) @ (test_x[i] - self.q_r2)
+                        beads_potential[i] = self.V2 + V_shift 
+                        beads_forces[i] = f 
 
         # check if ab_initio potential and forces are available.
         # If so, use it and then reset it to zero, so we do not re-use it after we move the bead.
@@ -2374,7 +2401,7 @@ class RP_MAP(object):
         step_num = 0
         
         # shift to move to potential minimum in case the potential is flat in the beginning.
-        r_shift = 1e-4
+        r_shift = 1e-3
 
         total_energy_list = []
         while dr > 0:
@@ -2392,6 +2419,10 @@ class RP_MAP(object):
                 r_distance = old_r_distance + r_shift
                 dr = - dr
                 v_r = 0 
+                # change the initial point.
+                for key, value in zip(data_lists.keys(), [x, v, t, 0, v_r, pot]):
+                    data_lists[key].clear()
+                    data_lists[key].append(value)
                 continue 
 
             # check energy conservation

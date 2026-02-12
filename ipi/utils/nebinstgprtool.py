@@ -5,6 +5,7 @@ Written by Chenghao Zhang & Niri Govind, Pacific Northwest National Laboratory (
 
 import numpy as np
 from gpr.gprtools import GPModelWithDerivativesWrapper
+from gpr.internal.CoulombInternal import non_redundant_coordinate_transformer
 import re
 import os
 from ipi.utils.nebinstool import RK4
@@ -17,6 +18,26 @@ import shutil
 from collections import namedtuple
 import h5py
 from pyquaternion import Quaternion
+
+def taylor_expansion_subroutine(coord_transformer:non_redundant_coordinate_transformer, q, 
+                                q_r_internal, 
+                                f_r_internal, 
+                                h_r_internal):
+    """
+    use taylor expansion in the internal coordinate to compute force at q and potential at q. 
+    q: cartesian coordinate of point. [1, 3 * natoms]
+    q_r: cartesian coordinate of reactant. [1, 3 * natoms]
+    V_r, f_r, h_r : potential, force and hessian. all in cartesian coordinate.
+    """
+    q_internal = coord_transformer.get_internal_coordinate_q(q)
+
+    diff_internal = np.squeeze(q_internal - q_r_internal, axis= 0)
+    f_internal = - h_r_internal @ diff_internal + f_r_internal
+
+    f = coord_transformer.transform_internal_gradient_to_cartesian_gradient(q, f_internal[np.newaxis, :]).squeeze(0)
+    V_shift = (-f_r_internal) @ diff_internal + 0.5 * diff_internal @ h_r_internal @ diff_internal.T
+
+    return f, V_shift 
 
 class force_predictor():
     def __init__(self,
@@ -52,6 +73,15 @@ class force_predictor():
             self.V1 = self.V1 - energy_shift
             self.V2 = self.V2 - energy_shift
 
+            coord_transformer = self.gpr_model.coordinate_transformer
+            self.q_r1_internal = coord_transformer.get_internal_coordinate_q(self.q_r1)
+            self.f_r1_internal = coord_transformer.transform_cartesian_gradient_to_internal_gradient(self.q_r1, self.f_r1[np.newaxis, :]).squeeze(0)
+            self.h_r1_internal = coord_transformer.transform_cartesian_hessian_to_internal_hessian(self.q_r1, self.f_r1[np.newaxis, :], self.h_r1[np.newaxis,:]).squeeze(0)
+
+            self.q_r2_internal = coord_transformer.get_internal_coordinate_q(self.q_r2)
+            self.f_r2_internal = coord_transformer.transform_cartesian_gradient_to_internal_gradient(self.q_r2, self.f_r2[np.newaxis, :]).squeeze(0)
+            self.h_r2_internal = coord_transformer.transform_cartesian_hessian_to_internal_hessian(self.q_r2, self.f_r2[np.newaxis, :], self.h_r2[np.newaxis, :]).squeeze(0)
+
     def predict_force(self, q, r):
         """
         q: cartesian coordinate of beads. shape: [1, 3 * natoms]
@@ -69,16 +99,29 @@ class force_predictor():
                 return f 
             elif r < 0.2:
                 # use Tylor expansion around reactant 1.
-                diff = np.squeeze(q - self.q_r1, axis= 0)
-                f = - self.h_r1 @ diff + self.f_r1
-                V = self.V1 + (-self.f_r1) @ diff + 0.5 * diff @ self.h_r1 @ diff.T
-                V_shift = V - self.V1 
+                # diff = np.squeeze(q - self.q_r1, axis= 0)
+                # f = - self.h_r1 @ diff + self.f_r1
+                # V = self.V1 + (-self.f_r1) @ diff + 0.5 * diff @ self.h_r1 @ diff.T
+                # V_shift = V - self.V1 
+
+                f, V_shift = taylor_expansion_subroutine(self.gpr_model.coordinate_transformer, 
+                                                         q, 
+                                                         self.q_r1_internal, 
+                                                         self.f_r1_internal, 
+                                                         self.h_r1_internal)
             else:
                 # use Tylor expansion around reactant 2
-                diff = np.squeeze(q - self.q_r2, axis= 0)
-                f = - self.h_r2 @ diff + self.f_r2
-                V = self.V2 + (-self.f_r2) @ diff + 0.5 * diff @ self.h_r2 @ diff.T    
-                V_shift = V - self.V2   
+                # diff = np.squeeze(q - self.q_r2, axis= 0)
+                # f = - self.h_r2 @ diff + self.f_r2
+                # V = self.V2 + (-self.f_r2) @ diff + 0.5 * diff @ self.h_r2 @ diff.T    
+                # V_shift = V - self.V2   
+
+                f, V_shift = taylor_expansion_subroutine(self.gpr_model.coordinate_transformer, 
+                                                         q, 
+                                                         self.q_r2_internal, 
+                                                         self.f_r2_internal, 
+                                                         self.h_r2_internal)
+
             f_amplitude = np.linalg.norm(f)
             if f_amplitude < self.fc and V_shift < self.Vc:
                 # when force amplitude and potential is small enough, use Tylor expansion.
@@ -105,15 +148,30 @@ class force_predictor():
                     continue 
                 elif r < 0.2:
                     # use Tylor expansion around reactant 1.
-                    diff = q - self.q_r1[0]
-                    f = - self.h_r1 @ diff + self.f_r1
-                    V = self.V1 + (-self.f_r1) @ diff + 0.5 * diff @ self.h_r1 @ diff.T
-                    V_shift = V - self.V1
+                    # diff = q - self.q_r1[0]
+                    # f = - self.h_r1 @ diff + self.f_r1
+                    # V = self.V1 + (-self.f_r1) @ diff + 0.5 * diff @ self.h_r1 @ diff.T
+                    # V_shift = V - self.V1
+
+                    f, V_shift = taylor_expansion_subroutine(self.gpr_model.coordinate_transformer,
+                                                             np.array([q]), 
+                                                             self.q_r1_internal, 
+                                                             self.f_r1_internal, 
+                                                             self.h_r1_internal)
+                    V = V_shift + self.V1
                 else:
-                    diff = q - self.q_r2[0]
-                    f = - self.h_r2 @ diff + self.f_r2
-                    V = self.V2 + (-self.f_r2) @ diff + 0.5 * diff @ self.h_r2 @ diff.T    
-                    V_shift = V - self.V2
+                    # diff = q - self.q_r2[0]
+                    # f = - self.h_r2 @ diff + self.f_r2
+                    # V = self.V2 + (-self.f_r2) @ diff + 0.5 * diff @ self.h_r2 @ diff.T    
+                    # V_shift = V - self.V2
+
+                    f, V_shift = taylor_expansion_subroutine(self.gpr_model.coordinate_transformer,
+                                                             np.array([q]), 
+                                                             self.q_r2_internal, 
+                                                             self.f_r2_internal, 
+                                                             self.h_r2_internal)
+                    V = V_shift + self.V2 
+
                 f_amplitude = np.linalg.norm(f)
 
                 if f_amplitude < self.fc and V_shift < self.Vc:
