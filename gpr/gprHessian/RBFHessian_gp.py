@@ -251,10 +251,13 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             )
 
             # add lengthscale constraint
-            length_scale_ratio_cutoff = 0.1
-            length_scale_cutoff = length_scale_ratio_cutoff * train_inputs_range
-            lengthscale_constraint = gpytorch.constraints.GreaterThan(
-                length_scale_cutoff
+            length_scale_ratio_min_cutoff = 0.5
+            length_scale_ratio_max_cutoff = 5.0
+            length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
+            length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
+
+            lengthscale_constraint = gpytorch.constraints.Interval(
+                length_scale_min_cutoff, length_scale_max_cutoff
             )
 
             # set Squared exponential kernel function which also includes hessian data.
