@@ -11,10 +11,10 @@ class non_redundant_coordinate_transformer:
     def __init__(self, 
                  natoms: int,
                  ref_x_list: np.ndarray,
-                 inverse_distance: bool = False,
                  elem: list = None, 
                  load: bool= False,
-                 load_file_path= None
+                 load_file_path= None,
+                 inverse_distance: bool = False,
                  ):
         """
         :param: natoms: number of atoms in molecule
