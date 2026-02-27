@@ -56,6 +56,16 @@ def create_coordinate_transformer(motion:Motion, ref_x_list, load):
                 load,
                 load_file_path= neb_final_gpr_folder
         )
+    elif internal_coord == "IRZ":
+        # This is for internal coordinate that include bond angles and bond distance
+        coordinate_transformer = gpr.internal.ZmatrixInternal.non_redundant_coordinate_transformer(
+                motion.beads.natoms,
+                ref_x_list,
+                names,
+                load,
+                load_file_path= neb_final_gpr_folder,
+                inverse_distance= True
+        )
     else:
         raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
 

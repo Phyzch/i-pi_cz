@@ -686,15 +686,17 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": str,
                 "default": "bond",
-                "options": ["bond", "Coulomb"],
+                "options": ["bond", "Coulomb", "IRZ"],
                 "help": """
                 The option to construct primitive internal coordinate.
-                We provide two choices: bond and Coulomb. 
+                We provide three choices: bond, Coulomb and IRZ. 
                 For Coulomb choice, we build redundant internal coordinate as 1/|ri - rj|. 
                 This is for hydrogen extract reaction, including CH4 + H.
                 For bond choice, we build redundant internal coordinate by building connectivity graph 
                 between atoms in the molecule, then add angle, distance & dihedral angle as redundant internal coordinate.
                 This is for intra-molecular proton transfer reaction like malonaldehyde and aminopropenal.
+                For IRZ, it stands for inverse radial Z matrix coordinates. It replace the bond length with inverse bond length
+                in the redundant internal coordinate.
                 """
             }
         ),

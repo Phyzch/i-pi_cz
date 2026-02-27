@@ -11,6 +11,7 @@ class non_redundant_coordinate_transformer:
     def __init__(self, 
                  natoms: int,
                  ref_x_list: np.ndarray,
+                 inverse_distance: bool = False,
                  elem: list = None, 
                  load: bool= False,
                  load_file_path= None
@@ -45,7 +46,7 @@ class non_redundant_coordinate_transformer:
         )
 
         # create delocalized internal coordinate object
-        self.dlc_coord = DelocalizedInternalCoordinates(molecule, connect= True, addcart= False)
+        self.dlc_coord = DelocalizedInternalCoordinates(molecule, connect= True, addcart= False, inverse_distance= inverse_distance)
 
         # record unitary matrix U and singular value matrix S for the reference point.
         self.ref_U = self.dlc_coord.ref_U 

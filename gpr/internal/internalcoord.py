@@ -28,6 +28,73 @@ def convert_bohrs_degrees(prims, values):
         converted[ic] *= factor
     return converted
 
+class InverseDistance(PrimitiveCoordinate):
+    """
+    Inverse distance between two atoms a and b.
+    The value of this internal coordinate is 1/r, where r is the distance between two atoms a and b. 
+    The derivative of this internal coordinate with respect to Cartesian coordinate is -1/r^2 * dr/dx, where dr/dx is the derivative of distance with respect to Cartesian coordinate.
+    """
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+        if a == b:
+            raise RuntimeError('a and b must be different')
+        self.isAngular = False
+        self.isPeriodic = False
+        self.distance_object = Distance(a, b)
+
+    def __repr__(self):
+        return "Distance %i-%i" % (self.a+1, self.b+1)
+        
+    def __eq__(self, other):
+        if type(self) is not type(other): return False
+        if self.a == other.a:
+            if self.b == other.b:
+                return True
+        if self.a == other.b:
+            if self.b == other.a:
+                return True
+        return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+        
+    def value(self, xyz):
+        xyz = xyz.reshape(-1,3)
+        a = self.a
+        b = self.b
+        r = np.sqrt(np.sum((xyz[a]-xyz[b])**2))
+        return 1/r 
+    
+    def derivative(self, xyz):
+        xyz = xyz.reshape(-1,3)
+        derivatives = np.zeros_like(xyz)
+        m = self.a
+        n = self.b
+        u = - (xyz[m] - xyz[n]) / np.power(np.linalg.norm(xyz[m] - xyz[n]), 3)
+        derivatives[m, :] = u
+        derivatives[n, :] = -u
+        return derivatives
+
+    def second_derivative(self, xyz):
+        a, b = self.a, self.b
+        xyz = xyz.reshape(-1,3)
+        deriv2 = np.zeros((xyz.shape[0], xyz.shape[1], xyz.shape[0], xyz.shape[1]))
+        
+        r_second_deriv = self.distance_object.second_derivative(xyz)
+        r_deriv = self.distance_object.derivative(xyz)
+
+        r = np.linalg.norm(xyz[a] - xyz[b])
+
+        mtx = 2 / np.power(r, 3) * np.outer(r_deriv[a, :], r_deriv[a, :]) - 1 / np.power(r, 2) * r_second_deriv[a, :, a, :]
+        deriv2[a, :, a, :] = mtx 
+        deriv2[a, :, b, :] = -mtx 
+        deriv2[b, :, a, :] = -mtx 
+        deriv2[b, :, b, :] = mtx 
+
+        return deriv2 
+    
+
 class PrimitiveInternalCoordinates(InternalCoordinates):
     """
     Primitive Redundant Internal Coordinate.
@@ -36,13 +103,14 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
     We do not implement TRIC and constraint in the current class. 
     This is to simplify the implementation.
     """
-    def __init__(self, molecule: Molecule, connect=True, addcart=False, **kwargs):
+    def __init__(self, molecule: Molecule, connect=True, addcart=False, inverse_distance= False, **kwargs):
         super(PrimitiveInternalCoordinates, self).__init__()
         # connect = True corresponds to "traditional" internal coordinates with minimum spanning bonds
         # connect = False, addcart = True corresponds to HDLC
         # connect = False, addcart = False corresponds to TRIC
         self.connect = connect
         self.addcart = addcart
+        self.inverse_distance = inverse_distance
 
         self.Internals = []  # List of Primitive Internal coordinates.
 
@@ -76,8 +144,12 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         noncov = self.add_noncov(molecule, D)
 
         # Add an internal coordinate for bonded atom pairs. (Distance between bonded atom pairs)
-        for (a,b) in molecule.topology.edges():
-            self.add(Distance(a,b))
+        if self.inverse_distance:
+            for (a,b) in molecule.topology.edges():
+                self.add(InverseDistance(a,b))
+        else:
+            for (a,b) in molecule.topology.edges():
+                self.add(Distance(a,b))
         
         # Linear Angle threshold -- corresponds about 162 degrees.
         self.LinThre = 0.95
@@ -383,7 +455,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
     This code is based on geometric.internal.DelocalizedInternalCoordinates
     I need a simplier version, so I write this one.
     """
-    def __init__(self, molecule: NewMolecule,  connect= True, addcart=False):
+    def __init__(self, molecule: NewMolecule,  connect= True, addcart=False, inverse_distance= False, **kwargs):
         super(DelocalizedInternalCoordinates, self).__init__()
         # HDLC is given by (connect = False, addcart = True)
         # Standard DLC is given by (connect = True, addcart = False)
@@ -394,7 +466,7 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
 
         self.molecule = molecule
         # The DLC contains an instance of primitive internal coordinates.
-        self.Prims = PrimitiveInternalCoordinates(molecule, connect=connect, addcart=addcart)
+        self.Prims = PrimitiveInternalCoordinates(molecule, connect=connect, addcart=addcart, inverse_distance= inverse_distance)
         self.na = molecule.na
         # Atomic mass array
         self.mass = np.repeat([PeriodicTable[i] for i in molecule.elem], 3)
