@@ -238,7 +238,6 @@ class FixInternalDofs(object):
         self.output_dim = np.shape(train_targets)[1]
 
         # code that use the change in inputs to choose relevant dofs in GPR model.
-        """
         self.fix_internal_dofs_cutoff = gpr_fix_internal_dofs_cutoff
         # check whether coordinate along certain internal dofs need to be fixed.
         # the change along internal coordinate will be computed using Wilson's B matrix. (any coordinate should be fine.)
@@ -260,7 +259,7 @@ class FixInternalDofs(object):
 
         if internal_coord_type == "Coulomb":
             train_inputs_change = np.abs(sq * (vh @ train_x_change))
-        elif internal_coord_type == "bond":
+        elif internal_coord_type == "bond" or internal_coord_type == "IRZ":
             train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
         else:
             print("Warning: internal coord type unrecognized.")
@@ -277,51 +276,34 @@ class FixInternalDofs(object):
             raise(RuntimeError, "Certain internal dofs of input data is fixed.\
                    Should turn gpr_fix_internal_dofs_bool on.")
 
-        if gpr_fix_internal_dofs_bool:
-            if gpr_fixed_internal_dofs is None:
-                self.fixed_internal_dofs = np.array(
-                    [
-                        i
-                        for i in range(self.input_dim)
-                        if train_inputs_change[i] < self.fix_internal_dofs_cutoff
-                    ]
-                )
-            else:
-                self.fixed_internal_dofs = gpr_fixed_internal_dofs
-                print("@gpr_model: load fixed internal dofs.")
-            
-            print(f"@gpr_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
-        else:
-            self.fixed_internal_dofs =  np.array(
-                []
-            )
+        fixed_internal_dofs_inputs_change_criterion = np.array(
+            [
+                i
+                for i in range(self.input_dim)
+                if train_inputs_change[i] < self.fix_internal_dofs_cutoff
+            ]
+        )
 
-        if len(self.fixed_internal_dofs) != 0:
-            self.free_moving_dofs = np.delete(
-                np.arange(self.input_dim), self.fixed_internal_dofs
-            )
-            self.targets_fixed_dofs = np.mean(train_targets, axis=0)[
-                self.fixed_internal_dofs + 1
-            ]  # the first column of the target is the potential V.
-        else:
-            self.free_moving_dofs = np.arange(self.input_dim)
-            self.targets_fixed_dofs = np.array([])
-        """
         
         # code that use the change in forces as criterion to select dofs to include in GPR model.
-        grad_q = train_targets[:, 1:]
-        grad_q_change = np.max(grad_q, axis = 0) - np.min(grad_q, axis= 0)
-        grad_q_change_cutoff = np.max(grad_q_change) / np.power(10.0, 3)
+        # grad_q = train_targets[:, 1:]
+        # grad_q_change = np.max(grad_q, axis = 0) - np.min(grad_q, axis= 0)
+        # grad_q_change_cutoff = np.max(grad_q_change) / np.power(10.0, 3)
 
-        self.free_moving_dofs = np.arange(self.input_dim)[ grad_q_change > grad_q_change_cutoff ]
-        self.fixed_internal_dofs = np.arange(self.input_dim)[ grad_q_change <= grad_q_change_cutoff ]
+        # fixed_internal_dofs_grad_criterion = np.arange(self.input_dim)[ grad_q_change <= grad_q_change_cutoff ]
+        
+        # self.fixed_internal_dofs = np.union1d(fixed_internal_dofs_inputs_change_criterion, fixed_internal_dofs_grad_criterion).astype(int)
+        self.fixed_internal_dofs = fixed_internal_dofs_inputs_change_criterion.astype(int)
+
         # load the fixed internal dofs from the folder.
         if gpr_fixed_internal_dofs is not None:
             self.fixed_internal_dofs = gpr_fixed_internal_dofs
-            if len(self.fixed_internal_dofs) > 0:
-                self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
-            else:
-                self.free_moving_dofs = np.arange(self.input_dim)
+            print("@gpr_model: load fixed internal dofs.")
+
+        if len(self.fixed_internal_dofs) > 0:
+            self.free_moving_dofs = np.delete(np.arange(self.input_dim), self.fixed_internal_dofs)
+        else:
+            self.free_moving_dofs = np.arange(self.input_dim)
 
         print(f"@gpr_model: For Fixing internal dofs: fixed_internal_dofs: {self.fixed_internal_dofs}")
         print(f"@gpr_model: free moving dofs: {self.free_moving_dofs}")
