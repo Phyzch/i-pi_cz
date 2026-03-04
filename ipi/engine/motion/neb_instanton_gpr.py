@@ -1688,6 +1688,17 @@ class GradientMapper(object):
 
             action_force[j] = gj
 
+        # smoothed action forces. 
+        action_force_amplitude = np.linalg.norm(action_force, axis= 1)
+        smoothed_action_forces = np.zeros(action_force.shape)
+        average_range = 3 
+        k = int( (average_range - 1) / 2) 
+        for i in range(1, nimage - 1):
+            smoothed_action_force_amplitude = np.mean(action_force_amplitude[max(i-k, 1) : min(i + k + 1, nimage - 1)])
+            smoothed_action_forces[i] = action_force[i] / action_force_amplitude[i] * smoothed_action_force_amplitude   
+
+        self.smoothed_action_forces = smoothed_action_forces
+
         return action_force
 
 # -------- The code below implement method to compute tangent vector / action / action gradient with higher accuracy ----- 
@@ -1930,7 +1941,6 @@ class LINEBGradientMapper(GradientMapper):
 
 
 
-
     def compute_spring_force(self, nimage, natom, mscaled_q, mscaled_f, btau):
         """ """
         beads_energy = self.beads_energy
@@ -1954,10 +1964,14 @@ class LINEBGradientMapper(GradientMapper):
         # spring_force_bead0 = (
         #     unit_vec_1 * np.sqrt(2 * (self.beads_energy[1] - self.instanton_path_energy))
         # )
+        # spring_force_bead0 = (
+        #     unit_vec_1 * np.linalg.norm(self.action_forces[1])
+        # )
 
         spring_force_bead0 = (
-            unit_vec_1 * np.linalg.norm(self.action_forces[1])
+            unit_vec_1 * np.linalg.norm(self.smoothed_action_forces[1])
         )
+
         # unit vector along force at beads: 0
         f0 = mscaled_f[0] / npnorm(mscaled_f[0]) 
         # spring force component transverse to the gradient of potential.
@@ -1969,14 +1983,17 @@ class LINEBGradientMapper(GradientMapper):
         unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(
             mscaled_q[nimage - 2] - mscaled_q[nimage - 1]
         )
-
         # spring_force_bead1 = (
         #     unit_vec_2 * np.sqrt(2 * (self.beads_energy[nimage -2] - self.instanton_path_energy))
         # )
+        # spring_force_bead1 = (
+        #     unit_vec_2 * np.linalg.norm(self.action_forces[-2])
+        # )
 
         spring_force_bead1 = (
-            unit_vec_2 * np.linalg.norm(self.action_forces[-2])
+            unit_vec_2 * np.linalg.norm(self.smoothed_action_forces[-2])
         )
+
         # unit vector along force at beads: nimage - 1
         f1 = mscaled_f[nimage - 1] / npnorm(
             mscaled_f[nimage - 1]
@@ -2007,6 +2024,7 @@ class LINEBGradientMapper(GradientMapper):
         right_kappa = self.kappa["right"]  # kappa for the right end beads.
 
         neb_optimization_force = np.zeros([nimage, 3 * natom])
+        self.transverse_force = np.zeros(neb_optimization_force.shape)
 
         spring_force = self.compute_spring_force(
             nimage, natom, mscaled_q, mscaled_f, btau
@@ -2031,16 +2049,24 @@ class LINEBGradientMapper(GradientMapper):
         self.end_beads_energy_constraint_forces = end_beads_energy_constraint_force  # store energy constraint force for end beads.
 
         # for internal beads, transverse force from negative gradient of action.
+        # for ii in range(1, nimage - 1):
+        #     neb_optimization_force[ii] = (
+        #         self.action_forces[ii]
+        #         - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
+        #     )
+        
+        # for internal beads, transverse force from negative gradient of action. 
         for ii in range(1, nimage - 1):
             neb_optimization_force[ii] = (
+                self.smoothed_action_forces[ii]
+                - np.dot(self.smoothed_action_forces[ii], btau[ii]) * btau[ii]
+            )
+
+            # transverse gradient for interior neb beads.
+            self.transverse_force[ii] = (
                 self.action_forces[ii]
                 - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
             )
-
-        # transverse gradient for interior neb beads.
-        self.transverse_force = (
-            np.copy(neb_optimization_force)  
-        )
 
         # add energy constraint force for two end beads.
         neb_optimization_force[0] = end_beads_energy_constraint_force[0]
@@ -2156,6 +2182,7 @@ class StringGradientMapper(GradientMapper):
         right_kappa = self.kappa["right"]  # kappa for the right end beads.
 
         neb_optimization_force = np.zeros([nimage, 3 * natoms])
+        self.transverse_force = np.zeros(neb_optimization_force.shape)
 
         # end_beads_energy_constraint_force: force to draw end beads back to isoenergy contours.
         # unit vector along force at beads: 0
@@ -2177,12 +2204,23 @@ class StringGradientMapper(GradientMapper):
         self.end_beads_energy_constraint_forces = end_beads_energy_constraint_force
 
         # for internal beads, transverse force from negative gradient of action. 
+        # for ii in range(1, nimage - 1):
+        #     neb_optimization_force[ii] = (
+        #         self.action_forces[ii]
+        #         - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
+        #     )
+
+        # for internal beads, transverse force from negative gradient of action. 
         for ii in range(1, nimage - 1):
             neb_optimization_force[ii] = (
+                self.smoothed_action_forces[ii]
+                - np.dot(self.smoothed_action_forces[ii], btau[ii]) * btau[ii]
+            )
+
+            self.transverse_force[ii] = (
                 self.action_forces[ii]
                 - np.dot(self.action_forces[ii], btau[ii]) * btau[ii]
             )
-        self.transverse_force = np.copy(neb_optimization_force)
 
         # for two end beads.
         if self.cal_type == "rate":
@@ -2195,9 +2233,14 @@ class StringGradientMapper(GradientMapper):
             unit_vec_1 = (mscaled_q[1] - mscaled_q[0]) / npnorm(
                 mscaled_q[1] - mscaled_q[0]
             )
+            # spring_force_bead0 = (
+            #     unit_vec_1 * np.linalg.norm(self.action_forces[1])
+            # )
+
             spring_force_bead0 = (
-                unit_vec_1 * np.linalg.norm(self.action_forces[1])
+                unit_vec_1 * np.linalg.norm(self.smoothed_action_forces[1])
             )
+
             neb_optimization_force[0] = neb_optimization_force[0] + (
                 spring_force_bead0 - np.dot(spring_force_bead0, f0) * f0
             )
@@ -2206,12 +2249,17 @@ class StringGradientMapper(GradientMapper):
             unit_vec_2 = (mscaled_q[nimage - 2] - mscaled_q[nimage - 1]) / npnorm(
                 mscaled_q[nimage - 2] - mscaled_q[nimage - 1]
             )
+            # spring_force_bead1 = (
+            #     unit_vec_2 * np.linalg.norm(self.action_forces[-2])
+            # )
+
             spring_force_bead1 = (
-                unit_vec_2 * np.linalg.norm(self.action_forces[-2])
+                unit_vec_2 * np.linalg.norm(self.smoothed_action_forces[-2])
             )
             neb_optimization_force[nimage -1] = neb_optimization_force[nimage -1] + (
                 spring_force_bead1 - np.dot(spring_force_bead1, f1) * f1
             )
+
         elif self.cal_type == "splitting":
             neb_optimization_force[0] = np.zeros([3 * natoms])
             neb_optimization_force[nimage - 1] = np.zeros([3 * natoms])
