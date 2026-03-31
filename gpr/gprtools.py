@@ -1142,6 +1142,7 @@ class GPModelWithDerivativesWrapper:
             os.rename(file_path, file_path + "#")
         torch.save(state_dict, file_path)
     
+
     def load_model(self, file_path):
         """
         load the hyper-parameter of the gpr model
@@ -1152,6 +1153,9 @@ class GPModelWithDerivativesWrapper:
                 state_dict = torch.load(file_path, map_location= torch.device('cpu'))
             else:
                 state_dict = torch.load(file_path, map_location= torch.device('cuda:0'))
+
+            # the length scale constraint can be inconsistent. We directly load the calculated lengthscale.
+
             self.gpr_model.load_state_dict(state_dict)
             print("successfully load the gpr model in gprtools.py")
         else:

@@ -108,6 +108,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         # connect = True corresponds to "traditional" internal coordinates with minimum spanning bonds
         # connect = False, addcart = True corresponds to HDLC
         # connect = False, addcart = False corresponds to TRIC
+        # inverse_distance = True corresponds to using inverse distance on top of distance for bonded atom pairs.
         self.connect = connect
         self.addcart = addcart
         self.inverse_distance = inverse_distance
@@ -147,6 +148,7 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         if self.inverse_distance:
             for (a,b) in molecule.topology.edges():
                 self.add(InverseDistance(a,b))
+                self.add(Distance(a,b))
         else:
             for (a,b) in molecule.topology.edges():
                 self.add(Distance(a,b))
