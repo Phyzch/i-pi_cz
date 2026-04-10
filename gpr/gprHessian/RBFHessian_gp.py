@@ -672,11 +672,15 @@ def train_gpr_model(
     model: GPModelWithHessians,
     training_error_cutoff=np.power(10.0, -1),
     output_training_info=True,
+    without_hessian_weight = 0.0,
+    with_hessian_weight = 1.0
 ):
     """
     the function that train the GPR model.
     :param: model: GPR model with Hessian information.
     :param: training_error_cutoff: train until the change of loss function in one step is smaller than the cutoff.
+    :param: without_hessian_weight: the weight for the loss function (only include potential and gradient part).
+    :param with_hessian_weight: the weight for the loss function (include potential, gradient and hessian part).
     :return: None
     """
     cuda_available = torch.cuda.is_available()
@@ -730,22 +734,30 @@ def train_gpr_model(
         while loss_func_change > training_error_cutoff:
             # reset the gradients of all optimized torch.Tensor
             optimizer.zero_grad()
-            # output from model training data
-            output = model(train_inputs)
-            
-            # output from model with only potential and gradient part. 
-            output_without_hessian = model(train_inputs, include_hessian= False)
             
             # calculate the loss function. here only potential and gradient part is included in the training set.
-            loss_without_hessian = -mll(
-                output_without_hessian, train_targets_without_hessian, train_size, model.training_data_hessian_data_point_index,
-                include_hessian= False
-            )
+            if without_hessian_weight == 0.0:
+                loss_without_hessian = torch.tensor(0.0, device= model.device)
+            else:
+                # output from model with only potential and gradient part. 
+                output_without_hessian = model(train_inputs, include_hessian= False)
+                loss_without_hessian = -mll(
+                    output_without_hessian, train_targets_without_hessian, train_size, model.training_data_hessian_data_point_index,
+                    include_hessian= False
+                )
 
-            # calculate the loss function. here the returned loss is a torch.tensor.
-            loss = -mll(
-                output, train_targets, train_size, model.training_data_hessian_data_point_index
-            )
+            if with_hessian_weight == 0.0:
+                loss_with_hessian = torch.tensor(0.0, device= model.device)
+            else:
+                # output from model training data
+                output = model(train_inputs)
+                # calculate the loss function. here the returned loss is a torch.tensor.
+                loss_with_hessian = -mll(
+                    output, train_targets, train_size, model.training_data_hessian_data_point_index
+                )
+
+            loss = with_hessian_weight * loss_with_hessian + without_hessian_weight * loss_without_hessian
+
             loss_value = loss.item()
 
             # prior contribution to the loss function. This is the regularization term. 

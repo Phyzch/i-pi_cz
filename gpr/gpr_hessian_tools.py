@@ -1799,11 +1799,19 @@ class GPModelWithHessiansWrapper:
             retrain_bool=retrain_bool,
         )
     
-    def train_model(self):
+    def train_model(self, stagewise_training_bool= False):
         """
         function that trains the model
         """
-        train_gpr_model(self.gpr_model)
+        if stagewise_training_bool:
+            # first train the model with only potential and gradient information. 
+            train_gpr_model(self.gpr_model, without_hessian_weight= 1.0, with_hessian_weight= 0.0)
+
+            # then train the model that includes hessian information.
+            train_gpr_model(self.gpr_model, without_hessian_weight= 0.0, with_hessian_weight= 1.0)
+        else:
+            train_gpr_model(self.gpr_model) 
+
 
     def check_condition_number(self):
         """

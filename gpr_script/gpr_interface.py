@@ -834,7 +834,7 @@ class GPRHessianMapper(object):
                 ridge_regularization_alpha= self.ridge_regularization_alpha["hessian"]
             )
 
-    def train_gpr_hessian_model(self):
+    def train_gpr_hessian_model(self, stagewise_training_bool= False):
         """
         train the gpr hessian model:
         (1) train the model
@@ -846,7 +846,7 @@ class GPRHessianMapper(object):
                 This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
             start_t = timer()
 
-            self.gpr_hessian_model.train_model()
+            self.gpr_hessian_model.train_model(stagewise_training_bool= stagewise_training_bool)
 
             end_t = timer()
             time_elapsed = (end_t - start_t) / 60
@@ -970,7 +970,7 @@ class GPRHessianMapper(object):
         if (not model_hyperparameter_exists) | self.train_hessian_model_bool:
             # the hyper-parameter of the gpr hessian model does not exist.
             # or we want to train the model by setting train_hessian_model as true.
-            self.train_gpr_hessian_model()
+            self.train_gpr_hessian_model(stagewise_training_bool= True)
 
         gpr_util.analyze_train_error(self.gpr_hessian_model)
             
