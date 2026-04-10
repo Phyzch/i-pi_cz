@@ -10,7 +10,7 @@ torch.set_default_dtype(torch.float64)
 import numpy as np
 # from gpr.internalcoordtools import non_redundant_coordinate_transformer
 from gpr.internal.ZmatrixInternal import non_redundant_coordinate_transformer # type: ignore
-from .gprHessian.RBFHessian_gp import GPModelWithHessians, train_gpr_model
+from .gprHessian.RBFHessian_gp import GPModelWithHessians, train_gpr_model, check_cond_number
 from .gprHessian.RBFHessian_utils import (
     take_upper_triangular_part,
     transform_1d_train_targets_into_pots_grads_hessians,
@@ -1073,10 +1073,10 @@ class GPModelWithHessiansWrapper:
 
         if train_bool:
             # train the gaussian process regression model.
-            gpr.gprHessian.RBFHessian_gp.train_gpr_model(self.gpr_model)
+            self.train_model()
         else:
             # print the condition number of the covariance matrix.
-            gpr.gprHessian.RBFHessian_gp.check_cond_number(self.gpr_model)
+            self.check_condition_number()
 
     def transform_data_into_internal_coordinate(self, 
                                                 train_x, 
@@ -1804,6 +1804,12 @@ class GPModelWithHessiansWrapper:
         function that trains the model
         """
         train_gpr_model(self.gpr_model)
+
+    def check_condition_number(self):
+        """
+        check the condition number of covariance matrix of the GPR model.
+        """
+        return check_cond_number(self.gpr_model)
 
     def get_free_moving_internal_coordinate(self, beads_x):
         """

@@ -439,7 +439,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
 
         return likelihood
 
-    def forward(self, x, inputs_hessian_data_point_index=torch.tensor([]), **kwargs):
+    def forward(self, x, inputs_hessian_data_point_index=torch.tensor([]), include_hessian= True, **kwargs):
         """
         return the distribution of the training targets.
         The mean function will be given by mean module.
@@ -462,6 +462,18 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_data_point_index_1=inputs_hessian_data_point_index,
                 hessian_data_point_index_2=inputs_hessian_data_point_index,
             )
+
+        if not include_hessian:
+            # truncate the mean and covariance matrix to only include potential and gradient part.
+            # mean
+            train_size = x.shape[-2]
+            ndofs = x.shape[-1]
+            func_size = train_size
+            grad_size = train_size * ndofs 
+            mean_x = mean_x[..., :func_size + grad_size]
+
+            # covariance
+            covar_x = covar_x[..., :func_size + grad_size, :func_size + grad_size]
 
         mean_x = mean_x.to(dtype= torch.float64)
         covar_x = covar_x.to(dtype= torch.float64)
@@ -495,10 +507,13 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 ):
                     raise RuntimeError("You must train on the training inputs!")
 
+            include_hessian= kwargs.get('include_hessian', True)
+
             res = gpytorch.module.Module.__call__(
                 self,
                 *inputs,
-                inputs_hessian_data_point_index=self.training_data_hessian_data_point_index
+                inputs_hessian_data_point_index=self.training_data_hessian_data_point_index,
+                include_hessian= include_hessian
             )  # this will call the forward() function. hessian_data_point_index is in **kwargs.
             return res
 
@@ -521,6 +536,12 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 raise RuntimeError(
                     "The inputs_hessian_data_point_index must be a tensor."
                 )
+
+            include_hessian= kwargs.get('include_hessian', True)
+            if include_hessian == False:
+                print("Warning: you are calling the model with include_hessian = False, but the model is not in training mode. " \
+                "This is currently not allowed. We will still include hessian part in the prediction.")
+                include_hessian= True 
 
             full_output = gpytorch.module.Module.__call__(self, *full_inputs, **kwargs)
             if settings.debug().on():
@@ -553,6 +574,12 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                     "The input matches the stored training data. Did you forget to call model.train()?",
                     GPInputWarning,
                 )
+
+            include_hessian= kwargs.get('include_hessian', True)
+            if include_hessian == False:
+                print("Warning: you are calling the model with include_hessian = False, but the model is not in training mode. " \
+                "This is currently not allowed. We will still include hessian part in the prediction.")
+                include_hessian= True
 
             # make the prediction:
             # Get the terms that only depend on training data
@@ -668,7 +695,13 @@ def train_gpr_model(
     train_targets = train_targets.to(device= model.device)
 
     # number of total training data points : M.
-    M = train_inputs.shape[-2]
+    train_size = train_inputs.shape[-2]
+    # number of degrees of freedom.
+    ndofs = train_inputs.shape[-1]
+
+    # the training target includes only potential and gradient part. 
+    pot_grad_size = train_size * (1 + ndofs)
+    train_targets_without_hessian = train_targets[..., :pot_grad_size]
 
     # choose the optimizer for the training to train the parameter of models (raw_parameter)
     # https://pytorch.org/docs/stable/generated/torch.optim.Adam.html
@@ -699,14 +732,25 @@ def train_gpr_model(
             optimizer.zero_grad()
             # output from model training data
             output = model(train_inputs)
+            
+            # output from model with only potential and gradient part. 
+            output_without_hessian = model(train_inputs, include_hessian= False)
+            
+            # calculate the loss function. here only potential and gradient part is included in the training set.
+            loss_without_hessian = -mll(
+                output_without_hessian, train_targets_without_hessian, train_size, model.training_data_hessian_data_point_index,
+                include_hessian= False
+            )
+
             # calculate the loss function. here the returned loss is a torch.tensor.
             loss = -mll(
-                output, train_targets, M, model.training_data_hessian_data_point_index
+                output, train_targets, train_size, model.training_data_hessian_data_point_index
             )
             loss_value = loss.item()
 
+            # prior contribution to the loss function. This is the regularization term. 
             loss_prior = torch.tensor(0.0, device= model.device)
-            loss_prior = -mll._add_other_terms(loss_prior, []) / M
+            loss_prior = -mll._add_other_terms(loss_prior, []) / train_size
             loss_prior_list.append(loss_prior.item())
 
             # loss function from probability distribution. No contribution from prior. 
@@ -718,6 +762,7 @@ def train_gpr_model(
             old_loss_value = loss_value
 
             loss_value_list.append(loss_value)
+
             # back propagation the loss function to compute the gradient of each parameter
             loss.backward()
 
@@ -743,8 +788,8 @@ def check_cond_number(model: GPModelWithHessians):
     likelihood = model.likelihood
     train_inputs = model.train_inputs[0]
     # number of total training data points : M.
-    M = train_inputs.shape[-2]
-    covar = likelihood(model(train_inputs), M, model.training_data_hessian_data_point_index).lazy_covariance_matrix.to_dense()
+    train_size = train_inputs.shape[-2]
+    covar = likelihood(model(train_inputs), train_size, model.training_data_hessian_data_point_index).lazy_covariance_matrix.to_dense()
     cond = torch.linalg.cond(covar)
     print(f"conditional number for covariance matrix: {cond}")
 

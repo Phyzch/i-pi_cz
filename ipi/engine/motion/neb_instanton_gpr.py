@@ -104,8 +104,8 @@ class MAPNEBGPRMover(Motion):
         gpr_trust_region=0.1,
         minimum_trust_region= 0.1,
         distance_cutoff_for_training_data= 0.1,
-        gpr_kernel_outputscale=np.zeros(0, float),
-        gpr_kernel_lengthscale_ratio=np.zeros(0, float),
+        gpr_kernel_outputscale=np.ones(0, float),
+        gpr_kernel_lengthscale_ratio=np.ones(0, float),
         gpr_noise_std={
             "pot_noise_prior": 1e-6,
             "force_noise_prior": 1e-4,

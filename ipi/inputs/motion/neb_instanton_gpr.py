@@ -465,7 +465,7 @@ class InputNebInstGPR(InputDictionary):
             InputArray,
             {
                 "dtype": float,
-                "default": input_default(factory=np.zeros, args=(0,)),
+                "default": input_default(factory=np.ones, args=(0,)),
                 "help": "Gaussian Process Regression hyperparameter. \
                   Each element corresponds to one Squared Exponential kernel we use to construct covariance function. \
                   Mean value for output scale prior of Gaussian process regression kernel. \
@@ -476,7 +476,7 @@ class InputNebInstGPR(InputDictionary):
             InputArray,
             {
                 "dtype": float,
-                "default": input_default(factory=np.zeros, args=(0,)),
+                "default": input_default(factory=np.ones, args=(0,)),
                 "help": "Gaussian Process Regression hyperparameter. \
                   Each element corresponds to one Squared Exponential kernel we use to construct covariance function. \
                     Ratio of the mean value for the prior of the lengthscale of Gaussian Process regression model / length of bead in non-redundant internal coordinate. \

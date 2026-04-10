@@ -416,12 +416,21 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         if len(params) != 2:
             print("Must pass M & M_H into likelihood function.")
 
-        M = params[0]
+        train_size = params[0]
         hessian_data_point_index_array = params[1]
 
-        noise = self._shaped_noise_covar(M, hessian_data_point_index_array).diagonal(
+        noise = self._shaped_noise_covar(train_size, hessian_data_point_index_array).diagonal(
             dim1=-1, dim2=-2
         )  # take diagonal part of the matrix.
+
+        include_hessian = kwargs.get('include_hessian', True)
+        if include_hessian == False:
+            # we do not include hessian part in the likelihood function. 
+            pot_grad_size = train_size * (1 + self.ndof)
+            noise = noise[..., :pot_grad_size, :pot_grad_size]
+
+            assert(function_samples.shape[-1] == pot_grad_size), \
+            "the size of function_samples should fit the size of potential and gradient part in gpr model if include_hessian is False."
 
         return base_distributions.Independent(
             base_distributions.Normal(function_samples, noise.sqrt()), 1
@@ -440,7 +449,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         if len(params) != 2:
             print("Must pass M & M_H into likelihood function.")
 
-        M = params[0]
+        train_size = params[0]
         hessian_data_point_index_array = params[1]
         # covar: covariance matrix of the latent function.
         mean, covar = function_dist.mean, function_dist.lazy_covariance_matrix
@@ -449,13 +458,23 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
         if isinstance(covar, LazyEvaluatedKernelTensor):
             covar = covar.evaluate_kernel()
 
+
+        # compute the covariance matrix of the noise.
+        noise_covar = self._shaped_noise_covar(train_size, hessian_data_point_index_array)
+         
+        include_hessian = kwargs.get('include_hessian', True)
+        if include_hessian == False:
+            # we do not include hessian part in the likelihood function. 
+            pot_grad_size = train_size * (1 + self.ndof)
+            assert(covar.shape[-1] == pot_grad_size), \
+            "the size of covariance matrix of latent function should fit the size of potential and gradient part in gpr model if include_hessian is False."
+            noise_covar = noise_covar[..., :pot_grad_size, :pot_grad_size] 
+
         # compute the largest eigenval of covariance matrix.
         eigval_max = power_iteration(covar, num_iters= 20)
         diagonal_nugget = torch.diag(torch.ones(covar.shape[0])).to(device= covar.device) * self.nugget * eigval_max
-        # compute the covariance matrix of the noise.
-        noise_covar = self._shaped_noise_covar(M, hessian_data_point_index_array)
 
-        full_covar = covar + noise_covar + diagonal_nugget
+        full_covar = covar + noise_covar + diagonal_nugget 
 
         return function_dist.__class__(mean, full_covar)
     
