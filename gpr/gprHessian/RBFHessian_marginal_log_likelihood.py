@@ -55,8 +55,7 @@ class CustomMarginalLogLikelihood(ExactMarginalLogLikelihood):
         )  # add penality term from prior distribution of parameters. (See gpytorch.mlls.exact_marginal_log_likelihood.py)
 
         # Scale by the amount of data we have
-        num_data = params[0]
-        res = res.div(num_data)
+        res = res.div(train_size)
 
         return res
 

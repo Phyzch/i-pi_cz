@@ -102,6 +102,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self.train_max_cg_iteration = int(pow(10.0, 4))
         self.train_cg_tolerance = 1e-2
 
+        # constraint for output scale. max value.
+        self.outputscale_max = torch.tensor(0.2)
+
         # the data point index that contains the hessian information.
         self.training_data_hessian_data_point_index = (
             training_data_hessian_data_point_index
@@ -251,7 +254,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             )
 
             # add lengthscale constraint
-            length_scale_ratio_min_cutoff = 0.5
+            length_scale_ratio_min_cutoff = 1.0
             length_scale_ratio_max_cutoff = 5.0
             length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
             length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
@@ -269,8 +272,16 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_fixdofs= self.hessian_fixdofs,
             )
 
+            # Add constraint to outputscale. 
+            #FIXME: this is the new feature need to test.
+            outputscale_constraint = gpytorch.constraints.Interval(
+                0, self.outputscale_max
+            )
+
             covar_module = gpytorch.kernels.ScaleKernel(
-                base_kernel, outputscale_prior= outputscale_prior
+                base_kernel, 
+                outputscale_prior= outputscale_prior,
+                outputscale_constraint= outputscale_constraint
             )
 
             # Initialize lengthscale and outputscale to the mean of priors. Or use the value specified by users.
@@ -728,6 +739,14 @@ def train_gpr_model(
     loss_prior_list = []
     loss_mll_list = []
 
+    # FIXME: new feature. add loss function - log(log(outputscale_max ^2) - log(outputscale))
+    outputscale_prior_weight = 1.0 * (1 + ndofs)
+
+    def compute_outputscale_loss(model):
+        outputscale = model.covar_module.outputscale 
+        loss = -outputscale_prior_weight * torch.log(torch.log(torch.tensor(model.outputscale_max)) - torch.log(outputscale)) 
+        return loss 
+
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),
            gpytorch.settings.max_cg_iterations(model.train_max_cg_iteration),
            gpytorch.settings.cg_tolerance(model.train_cg_tolerance)):
@@ -758,15 +777,20 @@ def train_gpr_model(
 
             loss = with_hessian_weight * loss_with_hessian + without_hessian_weight * loss_without_hessian
 
+            # add additional prior 
+            outputscale_loss = compute_outputscale_loss(model)
+            loss  = loss + outputscale_loss
+
             loss_value = loss.item()
 
             # prior contribution to the loss function. This is the regularization term. 
             loss_prior = torch.tensor(0.0, device= model.device)
             loss_prior = -mll._add_other_terms(loss_prior, []) / train_size
+            loss_prior = loss_prior * (with_hessian_weight + without_hessian_weight) + outputscale_loss
             loss_prior_list.append(loss_prior.item())
 
             # loss function from probability distribution. No contribution from prior. 
-            loss_mll = loss_value - loss_prior
+            loss_mll = loss_value - loss_prior 
             loss_mll_list.append(loss_mll)
 
             # calculate the change of loss function to decide whether we will stop the loop.
@@ -783,9 +807,14 @@ def train_gpr_model(
 
             train_counts = train_counts + 1
 
-            if (not cuda_available) and output_training_info:
+            if output_training_info:
                 if train_counts % train_counts_output == 0:
-                    print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))
+                    loss_cpu = loss.detach().cpu() 
+                    loss_mll_cpu = loss_mll.detach().cpu()
+                    loss_prior_cpu = loss_prior.detach().cpu()
+                    outputscale_loss_cpu = outputscale_loss.detach().cpu()
+                    print("Iter %d - Loss: %.3f, mll: %.3f, prior: %.3f, outputscale_loss: %.3f" % (train_counts, loss_cpu.item(), 
+                                                                                                    loss_mll_cpu, loss_prior_cpu, outputscale_loss_cpu))
 
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))

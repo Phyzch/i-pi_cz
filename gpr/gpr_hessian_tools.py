@@ -1805,10 +1805,14 @@ class GPModelWithHessiansWrapper:
         """
         if stagewise_training_bool:
             # first train the model with only potential and gradient information. 
+            print("stagewise training for GPR model.")
+            print("first stage: train the model with only potential and gradient information:")
             train_gpr_model(self.gpr_model, without_hessian_weight= 1.0, with_hessian_weight= 0.0)
-
+            """
+            print("second stage: train the model with hessian information:")
             # then train the model that includes hessian information.
             train_gpr_model(self.gpr_model, without_hessian_weight= 0.0, with_hessian_weight= 1.0)
+            """
         else:
             train_gpr_model(self.gpr_model) 
 
