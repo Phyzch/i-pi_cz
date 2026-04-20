@@ -105,7 +105,15 @@ class MAPNEBGPRMover(Motion):
         minimum_trust_region= 0.1,
         distance_cutoff_for_training_data= 0.1,
         gpr_kernel_outputscale=np.ones(0, float),
+        gpr_kernel_outputscale_constraint = {
+            "min": 0.0,
+            "max": 1.0
+        },
         gpr_kernel_lengthscale_ratio=np.ones(0, float),
+        gpr_kernel_lengthscale_ratio_constraint = {
+            "min": 0.5,
+            "max": 5.0
+        },
         gpr_noise_std={
             "pot_noise_prior": 1e-6,
             "force_noise_prior": 1e-4,
@@ -303,9 +311,16 @@ class MAPNEBGPRMover(Motion):
         self.optarrays["gpr_kernel_outputscale"] = (
             gpr_kernel_outputscale  # output scale of the kernel
         )
+        self.optarrays["gpr_kernel_outputscale_constraint"] = (
+            gpr_kernel_outputscale_constraint
+        )
         self.optarrays["gpr_kernel_lengthscale_ratio"] = (
             gpr_kernel_lengthscale_ratio  # lengthscale of the gpr kernel.
         )
+        self.optarrays["gpr_kernel_lengthscale_ratio_constraint"] = (
+            gpr_kernel_lengthscale_ratio_constraint
+        )
+        
         self.optarrays["gpr_noise_std"] = gpr_noise_std
         self.options["gpr_SE_kernel_number"] = gpr_SE_kernel_number
 

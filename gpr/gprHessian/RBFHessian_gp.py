@@ -29,7 +29,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         hessian_fixdofs: torch.Tensor,
         gpr_SE_kernel_number: int,
         kernel_outputscale: np.ndarray,
+        kernel_outputscale_constraint: dict,
         kernel_lengthscale_ratio: np.ndarray,
+        kernel_lengthscale_ratio_constraint: dict,
         likelihood_pot_noise_var: np.ndarray,
         likelihood_force_noise_var: np.ndarray,
         likelihood_hessian_noise_var: np.ndarray,
@@ -37,8 +39,6 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         likelihood_hessian_noise_rank: int,
         noise_covar_factor_pot_grad_array: torch.Tensor,
         noise_covar_factor_with_hessian_array: torch.Tensor,
-        kernel_lengthscale_initio_value: np.ndarray = np.array([]),
-        kernel_outputscale_initio_value: np.ndarray = np.array([]),
         constant_mean_func_bool=True,
         ref_mean_coordinate: torch.Tensor = torch.Tensor([]),
         ref_mean_pot: torch.Tensor = torch.Tensor([]),
@@ -103,7 +103,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self.train_cg_tolerance = 1e-2
 
         # constraint for output scale. max value.
-        self.outputscale_max = torch.tensor(0.2)
+        self.outputscale_max = torch.tensor(kernel_outputscale_constraint['max'])
 
         # the data point index that contains the hessian information.
         self.training_data_hessian_data_point_index = (
@@ -162,9 +162,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             train_inputs,
             gpr_SE_kernel_number,
             kernel_outputscale,
+            kernel_outputscale_constraint,
             kernel_lengthscale_ratio,
-            kernel_lengthscale_initio_value,
-            kernel_outputscale_initio_value,
+            kernel_lengthscale_ratio_constraint
         )
 
     def _set_mean_function(
@@ -210,9 +210,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         train_inputs,
         gpr_SE_kernel_number,
         kernel_outputscale,
+        kernel_outputscale_constraint,
         kernel_lengthscale_ratio,
-        kernel_lengthscale_initio_value,
-        kernel_outputscale_initio_value,
+        kernel_lengthscale_ratio_constraint
     ):
         """
         set the kernel for the Gaussian Process Regression.
@@ -254,8 +254,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             )
 
             # add lengthscale constraint
-            length_scale_ratio_min_cutoff = 1.0
-            length_scale_ratio_max_cutoff = 5.0
+            length_scale_ratio_min_cutoff = kernel_lengthscale_ratio_constraint['min']
+            length_scale_ratio_max_cutoff = kernel_lengthscale_ratio_constraint['max']
             length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
             length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
 
@@ -272,10 +272,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_fixdofs= self.hessian_fixdofs,
             )
 
-            # Add constraint to outputscale. 
-            #FIXME: this is the new feature need to test.
             outputscale_constraint = gpytorch.constraints.Interval(
-                0, self.outputscale_max
+                kernel_outputscale_constraint['min'], 
+                kernel_outputscale_constraint['max']
             )
 
             covar_module = gpytorch.kernels.ScaleKernel(
@@ -285,31 +284,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             )
 
             # Initialize lengthscale and outputscale to the mean of priors. Or use the value specified by users.
-            if len(kernel_lengthscale_initio_value) == 0:
-                covar_module.base_kernel.lengthscale = lengthscale_prior.mean
-            else:
-                if len(kernel_lengthscale_initio_value[i]) == len(
-                    covar_module.base_kernel.lengthscale[0]
-                ):
-                    # the size of initio value chosen by users match the size of kernel in the model, we set the value
-                    covar_module.base_kernel.lengthscale[0] = torch.tensor(
-                        kernel_lengthscale_initio_value[i],
-                        device= self.device
-                    )
-                else:
-                    print(
-                        "@Warning: GPRHessian model: the initio length scale value (from previous GPR model) does not match the shape of the model, \
-                          we will still use the initio value set in the input file."
-                    )
-                    covar_module.base_kernel.lengthscale = lengthscale_prior.mean
-
-            if len(kernel_outputscale_initio_value) == 0:
-                covar_module.outputscale = outputscale_prior.mean
-            else:
-                covar_module.outputscale = torch.tensor(
-                    kernel_outputscale_initio_value[i],
-                    device= self.device
-                )
+            covar_module.base_kernel.lengthscale = lengthscale_prior.mean
+            covar_module.outputscale = outputscale_prior.mean
 
             base_kernel_component_list.append(base_kernel)
             covar_module_component_list.append(covar_module)
@@ -744,7 +720,7 @@ def train_gpr_model(
 
     def compute_outputscale_loss(model):
         outputscale = model.covar_module.outputscale 
-        loss = -outputscale_prior_weight * torch.log(torch.log(torch.tensor(model.outputscale_max)) - torch.log(outputscale)) 
+        loss = -outputscale_prior_weight * torch.log(torch.log(model.outputscale_max) - torch.log(outputscale)) 
         return loss 
 
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),

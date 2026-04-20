@@ -758,8 +758,12 @@ class GPRHessianMapper(object):
         # bind the gpr kernel condition
         self.gpr_SE_kernel_number = nebmover.options["gpr_SE_kernel_number"]
         self.gpr_kernel_outputscale = nebmover.optarrays["gpr_kernel_outputscale"]
+        self.gpr_kernel_outputscale_constraint = nebmover.optarrays["gpr_kernel_outputscale_constraint"]
         self.gpr_kernel_lengthscale_ratio = nebmover.optarrays[
             "gpr_kernel_lengthscale_ratio"
+        ]
+        self.gpr_kernel_lengthscale_ratio_constraint = nebmover.optarrays[
+            "gpr_kernel_lengthscale_ratio_constraint"
         ]
         self.gpr_noise_std = nebmover.optarrays["gpr_noise_std"]
 
@@ -947,7 +951,9 @@ class GPRHessianMapper(object):
                 self.fix_dofs,
                 self.gpr_SE_kernel_number,
                 self.gpr_kernel_outputscale,
+                self.gpr_kernel_outputscale_constraint, 
                 self.gpr_kernel_lengthscale_ratio,
+                self.gpr_kernel_lengthscale_ratio_constraint,
                 self.gpr_noise_std,
                 constant_mean_func_bool= False,
                 ref_mean_x=ref_x,

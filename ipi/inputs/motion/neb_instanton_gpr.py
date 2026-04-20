@@ -472,6 +472,24 @@ class InputNebInstGPR(InputDictionary):
                   Typically it is the variance of potential energy",
             },
         ),
+
+        "gpr_kernel_outputscale_constraint":(
+            InputDictionary,
+            {
+                "dtype": float,
+                "options" :[
+                    "min",
+                    "max"
+                ],
+                "default":[
+                    0.0,
+                    1.0
+                ],
+                "help": """constraint for the output scale of Gaussian Process regression kernel.
+                output_scale = min + (max - min) * sigmoid(output_scale_unconstrained)"""
+            }
+        ),
+
         "gpr_kernel_lengthscale_ratio": (
             InputArray,
             {
@@ -484,6 +502,24 @@ class InputNebInstGPR(InputDictionary):
                 "dimension": "length",
             },
         ),
+
+        "gpr_kernel_lengthscale_ratio_constraint":(
+            InputDictionary,
+            {
+                "dtype": float,
+                "options": [
+                    "min",
+                    "max"
+                ],
+                "default": [
+                    0.5,
+                    5.0
+                ],
+                "help": """constraint for the lengthscale of Gaussian Process regression kernel.
+                lengthscale = min + (max - min) * sigmoid(lengthscale_unconstrained)"""
+            }
+        ),
+
         "gpr_noise_std": (
             InputDictionary,
             {
@@ -855,8 +891,14 @@ class InputNebInstGPR(InputDictionary):
         )
         self.gpr_trust_region.store(optarrays["gpr_trust_region"])
         self.gpr_kernel_outputscale.store(optarrays["gpr_kernel_outputscale"])
+        self.gpr_kernel_outputscale_constraint.store(
+            optarrays["gpr_kernel_outputscale_constraint"]
+        )
         self.gpr_kernel_lengthscale_ratio.store(
             optarrays["gpr_kernel_lengthscale_ratio"]
+        )
+        self.gpr_kernel_lengthscale_ratio_constraint.store(
+            optarrays["gpr_kernel_lengthscale_ratio_constraint"]
         )
         self.gpr_noise_std.store(optarrays["gpr_noise_std"])
 

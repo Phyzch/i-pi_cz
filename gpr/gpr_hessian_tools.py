@@ -811,10 +811,10 @@ class GPModelWithHessiansWrapper:
         cartesian_fix_dofs: np.ndarray,
         gpr_SE_kernel_number: int,
         kernel_outputscale: np.ndarray,
+        kernel_outputscale_constraint: dict,
         kernel_lengthscale_ratio: np.ndarray,
+        kernel_lengthscale_ratio_constraint: dict,
         noise_std,
-        kernel_lengthscale_initio_value: np.ndarray = np.array([]),
-        kernel_outputscale_initio_value: np.ndarray = np.array([]),
         constant_mean_func_bool=True,
         ref_mean_x: np.ndarray = np.array([]),
         ref_mean_V: np.ndarray = np.array([]),
@@ -1051,7 +1051,9 @@ class GPModelWithHessiansWrapper:
             hessian_fixdofs_tensor,
             gpr_SE_kernel_number,
             kernel_outputscale,
+            kernel_outputscale_constraint,
             kernel_lengthscale_ratio,
+            kernel_lengthscale_ratio_constraint,
             pot_noise_var,
             grad_noise_var,
             hessian_noise_var,
@@ -1059,8 +1061,6 @@ class GPModelWithHessiansWrapper:
             hessian_noise_rank,
             noise_covar_factor_pot_grad_array,
             noise_covar_factor_with_hessian_array,
-            kernel_lengthscale_initio_value,
-            kernel_outputscale_initio_value,
             constant_mean_func_bool,
             ref_mean_q_tensor,
             ref_mean_V_tensor,
@@ -1808,11 +1808,11 @@ class GPModelWithHessiansWrapper:
             print("stagewise training for GPR model.")
             print("first stage: train the model with only potential and gradient information:")
             train_gpr_model(self.gpr_model, without_hessian_weight= 1.0, with_hessian_weight= 0.0)
-            """
+            
             print("second stage: train the model with hessian information:")
             # then train the model that includes hessian information.
             train_gpr_model(self.gpr_model, without_hessian_weight= 0.0, with_hessian_weight= 1.0)
-            """
+            
         else:
             train_gpr_model(self.gpr_model) 
 
