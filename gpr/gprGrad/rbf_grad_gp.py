@@ -22,7 +22,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         output_dims: int,
         gpr_SE_kernel_number: int,
         kernel_outputscale,
+        kernel_outputscale_constraint: dict,
         kernel_lengthscale_ratio,
+        kernel_lengthscale_ratio_constraint: dict,
         likelihood_noise_variance,
         nugget
     ):
@@ -65,7 +67,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             train_inputs,
             gpr_SE_kernel_number,
             kernel_outputscale,
+            kernel_outputscale_constraint,
             kernel_lengthscale_ratio,
+            kernel_lengthscale_ratio_constraint
         )
 
     def _set_likelihood_noise_prior(self, output_dims, likelihood_noise_variance):
@@ -137,7 +141,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         train_inputs,
         gpr_SE_kernel_number,
         kernel_outputscale,
+        kernel_outputscale_constraint,
         kernel_lengthscale_ratio,
+        kernel_lengthscale_ratio_constraint
     ):
         """
         set the kernel for the Gaussian Process Regression.
@@ -183,11 +189,14 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                 output_gamma_alpha, output_gamma_alpha / output_scale
             )
 
-            # also add length scale constraint: minimum cutoff to prevent over-fitting.
-            length_scale_ratio_cutoff = 0.1
-            length_scale_cutoff = length_scale_ratio_cutoff * train_inputs_range
-            lengthscale_constraint = gpytorch.constraints.GreaterThan(
-                length_scale_cutoff
+            # add lengthscale constraint. 
+            length_scale_ratio_min_cutoff = kernel_lengthscale_ratio_constraint['min']
+            length_scale_ratio_max_cutoff = kernel_lengthscale_ratio_constraint['max']
+            length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
+            length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
+
+            lengthscale_constraint = gpytorch.constraints.Interval(
+                length_scale_min_cutoff, length_scale_max_cutoff
             )
 
             # set Squared Exponential kernel function
@@ -197,8 +206,15 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                 lengthscale_constraint=lengthscale_constraint,
             ).to(device= self.device)
 
+            outputscale_constraint = gpytorch.constraints.Interval(
+                kernel_outputscale_constraint['min'], 
+                kernel_outputscale_constraint['max']
+            )
+
             covar_module = gpytorch.kernels.ScaleKernel(
-                base_kernel, outputscale_prior=outputscale_prior
+                base_kernel, 
+                outputscale_prior=outputscale_prior,
+                outputscale_constraint=outputscale_constraint
             ).to(device= self.device)
 
             # Initialize lengthscale and output scale to the mean of priors

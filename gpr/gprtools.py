@@ -538,7 +538,9 @@ class GPModelWithDerivativesWrapper:
         cartesian_fix_dofs: np.ndarray,
         gpr_SE_kernel_number: int,
         kernel_outputscale: np.ndarray,
+        kernel_outputscale_constraint: dict,
         kernel_lengthscale_ratio: np.ndarray,
+        kernel_lengthscale_ratio_constraint: dict,
         noise_std,
         train_bool= True,
         gpr_fix_internal_dofs_bool= False,
@@ -678,7 +680,9 @@ class GPModelWithDerivativesWrapper:
             self.moving_output_dim,
             gpr_SE_kernel_number,
             kernel_outputscale,
+            kernel_outputscale_constraint,
             kernel_lengthscale_ratio,
+            kernel_lengthscale_ratio_constraint,
             moving_likelihood_noise_variance,
             nugget= singular_value_cutoff 
         )

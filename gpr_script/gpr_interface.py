@@ -157,7 +157,9 @@ class GPRForceMapper(object):
         natoms = self.motion.beads.natoms 
         gpr_SE_kernel_number = self.motion.options["gpr_SE_kernel_number"]
         kernel_output_scale = self.motion.optarrays["gpr_kernel_outputscale"]
+        kernel_output_scale_constraint = self.motion.optarrays["gpr_kernel_outputscale_constraint"]
         kernel_lengthscale_ratio = self.motion.optarrays["gpr_kernel_lengthscale_ratio"]
+        kernel_lengthscale_ratio_constraint = self.motion.optarrays["gpr_kernel_lengthscale_ratio_constraint"]
         gpr_noise_std = self.motion.optarrays["gpr_noise_std"]
         gpr_fix_internal_dofs_bool = self.motion.options["gpr_fix_internal_dofs_bool"]
         gpr_fix_internal_dofs_cutoff = self.motion.options["gpr_fix_internal_dofs_cutoff"]
@@ -173,7 +175,9 @@ class GPRForceMapper(object):
             fix_dofs,
             gpr_SE_kernel_number,
             kernel_output_scale,
+            kernel_output_scale_constraint,
             kernel_lengthscale_ratio,
+            kernel_lengthscale_ratio_constraint,
             gpr_noise_std,
             train_bool= False,
             gpr_fix_internal_dofs_bool= gpr_fix_internal_dofs_bool,
