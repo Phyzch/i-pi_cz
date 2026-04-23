@@ -12,6 +12,32 @@ class dummy_non_redundant_coordinate_transformer:
         self.ref_S = None 
         self.ref_Vh = None 
     
+    def store_coordinate_transformer(self, file_path):
+        """
+        store internal_coord_type & ref_x_list for the coordinate transformer 
+        """
+        file_name = os.path.join(file_path, "coordinate_transformer.hdf5")
+        with h5py.File(file_name, "w") as f:
+            f.create_dataset("internal_coord_type", data= self.internal_coord_type)
+            f.create_dataset("ref_x_list", data= self.ref_x_list)
+            f.create_dataset("ref_x", data= self.ref_x)
+        
+        print("data for coordinate transformer successfully stored")
+
+    def load_coordinate_transformer(self, file_path):
+        """
+        load internal_coord_type & ref_x_list for coordinate transformer.
+        """
+        file_name = os.path.join(file_path, "coordinate_transformer.hdf5")
+        try:
+            with h5py.File(file_name, "r") as f:
+                self.internal_coord_type = f["internal_coord_type"][()].decode() 
+                self.ref_x_list = np.array(f["ref_x_list"])
+                self.ref_x = np.array(f["ref_x"])
+        except:
+            print("@Warning: Fails to load ref_x for coordinate transformer.")
+
+
     def compute_delocalized_wilson_matrix_Bq(self, x):
         """
         compute how changes in Cartesian coordinate x will affect delocalized non-redundant coordinate q.
@@ -24,7 +50,7 @@ class dummy_non_redundant_coordinate_transformer:
         Bq = []
         for i in range(nbatch):
             coord = x[i]
-            ders = self.dlc_coord.derivatives(coord).reshape((-1, 3 * self.natom))
+            ders = self.dlc_coord.wilsonB(coord)
             Bq.append(ders)
         
         Bq = np.array(Bq)

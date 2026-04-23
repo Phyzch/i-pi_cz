@@ -4,8 +4,9 @@ from dscribe.descriptors import SOAP
 import numpy as np 
 from collections import OrderedDict
 import warnings 
+from geometric.internal import InternalCoordinates
 
-class SOAPDescriptor():
+class SOAPDescriptor(InternalCoordinates):
     """
     Create SOAP descriptor.
     """
@@ -50,7 +51,8 @@ class SOAPDescriptor():
         # How to use soap descriptor:
         # feature_vectors = soap.create(molecule, n_jobs= 1)
         # derivatives, feature_vectors = soap.derivatives(molecule, return_descriptor= True, n_jobs= 1)
-    
+        self.CacheWarning = False 
+        self.stored_second_derivative = OrderedDict() # this is the hashmap to store the second derivative for different coordinate.
 
     # Return SOAP descriptor
     def calculate(self, xyz):
@@ -79,23 +81,6 @@ class SOAPDescriptor():
         
         derivatives = derivatives[0].transpose((-1, 0, 1)) # shape [feature_dim, natom, 3]
         return derivatives
-    
-    def wilsonB(self, xyz):
-        """
-        Return Wilson B matrix. This is the flattened version of the first derivative.
-        We also use hashmap to avoid repetitive computation."""
-        xhash = hash(xyz.tobytes())
-        if xhash in self.stored_wilsonB:
-            return self.stored_wilsonB[xhash]
-
-        WilsonB = [] 
-        Der = self.derivatives(xyz) 
-        for i in range(Der.shape[0]):
-            WilsonB.append(Der[i].flatten())
-        self.stored_wilsonB[xhash] = np.array(WilsonB)
-
-        ans = np.array(WilsonB)
-        return ans 
 
     def second_derivatives(self, xyz):
         """
@@ -108,6 +93,12 @@ class SOAPDescriptor():
         # 5) 3
         """
         # Can only do numerical second derivative. 
+        # use hashmap to avoid repetitive computation.
+        xhash = hash(xyz.tobytes())
+        if xhash in self.stored_second_derivative:
+            ans = self.stored_second_derivative[xhash]
+            return ans 
+
         second_derivatives = np.zeros((self.feature_dim, self.natom, 3, self.natom * 3))
         # loop over 3 * natom dimension to calculate the numrical second derivative
         for i in range(self.natom * 3):
@@ -125,18 +116,25 @@ class SOAPDescriptor():
             second_derivatives[:, :, :, i] = second_deriv
 
         second_derivatives = np.reshape(second_derivatives, (self.feature_dim, self.natom, 3, self.natom, 3))
+
+        self.stored_second_derivative[xhash] = second_derivatives
+        if len(self.stored_second_derivative) > 100 and not self.CacheWarning:
+            warnings.warn("The number of stored second derivative is larger than 100. This may cause memory issue.")
+            self.CacheWarning = True
+        
         return second_derivatives
     
 
-class DLC_SOAP():
+class DLC_SOAP(InternalCoordinates):
     """
     Create delocalized internal coordinate created from SOAP descriptor.
+    The class is built on InternalCoordinates class in geometric package. 
     """
     def __init__(self, 
                  ref_x_list,
                  molecule: ASEAtoms,
                  natom: int,
-                 r_cut: float = 5,
+                 r_cut: float = 5.0,
                  n_max: int = 8,
                  l_max: int = 8
                  ):
@@ -235,7 +233,7 @@ class DLC_SOAP():
 
         ders = np.tensordot(self.ref_U, PrimDers, axes= (0,0))
         return np.array(ders)
-    
+
     def second_derivatives(self, coords):
         """
         Calculate the second derivatives of DLCs with respect to the Cartesian coordinate.
@@ -278,6 +276,9 @@ class DLC_SOAP():
 
         return hessian_x_qq 
 
+    def GInverse(self, xyz):
+        return self.GInverse_SVD(xyz)
+
     def calcGradCart(self, xyz, gradq):
         """
         calculate the gradient in Cartesian coordinate. df/dx.
@@ -287,3 +288,4 @@ class DLC_SOAP():
         # Cartesian coordinate gradient.
         Gx = np.transpose(Bmat) @ gradq 
         return Gx 
+

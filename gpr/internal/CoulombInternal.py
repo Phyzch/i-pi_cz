@@ -51,6 +51,7 @@ class non_redundant_coordinate_transformer:
         file_name = os.path.join(file_path, "coordinate_transformer.hdf5")
         with h5py.File(file_name, "w") as f:
             f.create_dataset("internal_coord_type", data= self.internal_coord_type)
+            f.create_dataset("ref_x_list", data= self.ref_x_list)
             f.create_dataset("ref_x", data= self.ref_x)
         
         print("data for coordinate transformer successfully stored")
@@ -62,7 +63,8 @@ class non_redundant_coordinate_transformer:
         file_name = os.path.join(file_path, "coordinate_transformer.hdf5")
         try:
             with h5py.File(file_name, "r") as f:
-                self.internal_coord_type = f["internal_coord_type"][()].decode()
+                self.internal_coord_type = f["internal_coord_type"][()].decode() 
+                self.ref_x_list = np.array(f["ref_x_list"])
                 self.ref_x = np.array(f["ref_x"])
         except:
             print("@Warning: Fails to load ref_x for coordinate transformer.")
