@@ -15,7 +15,7 @@ class non_redundant_coordinate_transformer(dummy_non_redundant_coordinate_transf
                  ref_x_list: np.ndarray,
                  geometry_file_path: str,
                  r_cut: float= 5.0,
-                 nmax: int= 8,
+                 n_max: int= 8,
                  l_max: int= 8,
                  load: bool= False,
                  load_file_path= None,
@@ -45,7 +45,7 @@ class non_redundant_coordinate_transformer(dummy_non_redundant_coordinate_transf
         
         molecule.set_positions(ref_x.reshape((natom, 3)))
 
-        self.dlc_coord = DLC_SOAP(ref_x_list, molecule, natom, r_cut, nmax, l_max)
+        self.dlc_coord = DLC_SOAP(ref_x_list, molecule, natom, r_cut, n_max, l_max)
         # record unitary matrix U and singular value matrix S for the reference point.
         self.ref_U = self.dlc_coord.ref_U 
         self.ref_UT = self.ref_U.T 

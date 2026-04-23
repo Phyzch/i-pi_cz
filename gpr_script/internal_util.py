@@ -1,5 +1,6 @@
 import gpr.internal.CoulombInternal
 import gpr.internal.ZmatrixInternal
+import gpr.internal.SOAPInternal
 from ipi.engine.motion import Motion 
 from ipi.utils.depend import dstrip
 import numpy as np 
@@ -65,6 +66,22 @@ def create_coordinate_transformer(motion:Motion, ref_x_list, load):
                 load,
                 load_file_path= neb_final_gpr_folder,
                 inverse_distance= True
+        )
+    elif internal_coord == "SOAP":
+        # This is for internal coordinate that uses SOAP descriptor as redundant internal coordinate.
+        r_cut = 5.0
+        n_max = 8
+        l_max = 8
+        geometry_file_path = "init.xyz"
+        coordinate_transformer = gpr.internal.SOAPInternal.non_redundant_coordinate_transformer(
+            motion.beads.natoms,
+            ref_x_list,
+            geometry_file_path,
+            r_cut,
+            n_max,
+            l_max,
+            load,
+            load_file_path= neb_final_gpr_folder
         )
     else:
         raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
