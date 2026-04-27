@@ -514,7 +514,8 @@ elif case == "instanton":
             Qrot = 1.0
 
         if not quiet:
-            del_freq = np.sign(hess_eigval[1]) * np.absolute(hess_eigval[1]) ** 0.5 / cm2au
+            zero_mode_index = np.argmin(np.absolute(hess_eigval)) # zero mode is the one with the smallest absolute value of eigenvalue. it should be the second lowest mode, since the lowest one is the imaginary frequency (unstable mode).
+            del_freq = np.sign(hess_eigval[zero_mode_index]) * np.absolute(hess_eigval[zero_mode_index]) ** 0.5 / cm2au
             print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
 
             if asr != "poly":
@@ -526,7 +527,7 @@ elif case == "instanton":
                     "Please check that this you don't have any unwanted zero frequency"
                 )
             logQvib = (
-                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, 1)))))
+                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, zero_mode_index)))))
                 + nzeros * np.log(nbeads)
                 + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353 
             )
