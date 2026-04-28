@@ -628,31 +628,22 @@ class GPModelWithDerivativesWrapper:
         self.input_dim = input_dim
         self.output_dim = output_dim
 
+        self.gpr_input_dim = input_dim
+        self.gpr_output_dim = output_dim
+
         # ------- Normalize the training inputs, targets and noise -----------
         # decide normalization parameter. Here we normalize the potential as (V- <V>)/range(V). The force also needs to be scaled.
         self.Normalizer = NormalizeTrainingData(train_targets,
                                                 train_inputs
                                                 )
 
-        normalized_train_inputs, normalized_train_targets, likelihood_noise_variance = self.normalize_data(
-            train_inputs,
-            train_targets,
-            likelihood_noise_variance
-        )
-        # record normalized training input and normalized training targets. 
-        self.normalized_train_inputs = (
-            normalized_train_inputs  
-        )
-
-        # training outputs in internal coordinates q. (V, dV/dq)
-        self.normalized_train_targets = normalized_train_targets  
 
         # -------- Fixing certain dofs ----------------
         # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
         # To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
         self.FixingDofs = FixInternalDofs(train_x,
                                           train_inputs, 
-                                          normalized_train_targets,
+                                          train_targets,
                                           cartesian_fix_dofs,
                                           coordinate_transformer,
                                           gpr_fix_internal_dofs_bool,
@@ -661,30 +652,44 @@ class GPModelWithDerivativesWrapper:
                                           gpr_fixed_internal_dofs
                                           )
         
-        moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance = self.fix_internal_dofs(
-            normalized_train_inputs, normalized_train_targets, likelihood_noise_variance
+        train_inputs, train_targets, likelihood_noise_variance = self.normalize_data(
+            train_inputs,
+            train_targets,
+            likelihood_noise_variance
+        )
+        # record normalized training input and normalized training targets. 
+        self.normalized_train_inputs = (
+            train_inputs  
         )
 
+        # training outputs in internal coordinates q. (V, dV/dq)
+        self.normalized_train_targets = train_targets  
+
+        # train_inputs, train_targets, likelihood_noise_variance = self.fix_internal_dofs(
+        #     train_inputs, train_targets, likelihood_noise_variance
+        # )
+
         # ------- transform input from numpy array to torch.tensor -----------
-        (moving_train_inputs, moving_train_targets) = map(
-            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (moving_train_inputs, moving_train_targets)
+        (train_inputs, train_targets) = map(
+            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (train_inputs, train_targets)
         )
 
         # -------- fixing certain dofs. -----------------
 
         # initialize the gaussian process regression model with input training data.
         self.gpr_model = GPModelWithDerivatives(
-            moving_train_inputs,
-            moving_train_targets,
-            self.moving_input_dim,
-            self.moving_output_dim,
+            train_inputs,
+            train_targets,
+            self.gpr_input_dim,
+            self.gpr_output_dim,
             gpr_SE_kernel_number,
             kernel_outputscale,
             kernel_outputscale_constraint,
             kernel_lengthscale_ratio,
             kernel_lengthscale_ratio_constraint,
-            moving_likelihood_noise_variance,
-            nugget= singular_value_cutoff 
+            likelihood_noise_variance,
+            nugget= singular_value_cutoff,
+            FixingDofs= self.FixingDofs 
         )
         self.gpr_model = self.gpr_model.to(device= self.device)
 
@@ -750,8 +755,8 @@ class GPModelWithDerivativesWrapper:
             )
         )
 
-        self.moving_input_dim = self.input_dim - len(self.FixingDofs.fixed_internal_dofs)
-        self.moving_output_dim = self.output_dim - len(self.FixingDofs.fixed_internal_dofs)
+        self.gpr_input_dim = self.input_dim - len(self.FixingDofs.fixed_internal_dofs)
+        self.gpr_output_dim = self.output_dim - len(self.FixingDofs.fixed_internal_dofs)
 
         return moving_train_inputs, moving_train_targets, moving_likelihood_noise_variance
 
@@ -820,7 +825,7 @@ class GPModelWithDerivativesWrapper:
         moving_test_q = torch.from_numpy(moving_test_q).to(device= self.device, dtype=torch.float64)
 
         # use Gaussian process regression model to make prediction
-        moving_normalized_test_mean, moving_normalized_test_covar_matrix = (
+        test_mean, test_covar_matrix = (
             predict_latent_function_gp_with_derivative(
                 self.gpr_model, 
                 test_inputs= moving_test_q,
@@ -828,27 +833,27 @@ class GPModelWithDerivativesWrapper:
             )
         )
 
-        moving_normalized_test_mean = (
-            moving_normalized_test_mean.detach().cpu().numpy()
+        test_mean = (
+            test_mean.detach().cpu().numpy()
         )
-        moving_normalized_test_covar_matrix = (
-            moving_normalized_test_covar_matrix.detach().cpu().numpy()
+        test_covar_matrix = (
+            test_covar_matrix.detach().cpu().numpy()
         )
 
         # attach test_mean and test_var (0) of fixed dofs
-        normalized_test_mean, normalized_test_covar_matrix = (
-            self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
-                moving_normalized_test_mean, moving_normalized_test_covar_matrix
-            )
-        )
+        # test_mean, test_covar_matrix = (
+        #     self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
+        #         test_mean, test_covar_matrix
+        #     )
+        # )
 
         # inverse the normalization procedure for mean value and variance.
         test_covar_matrix_q = self.Normalizer.inverse_normalize_noise_covar_matrix(
-            normalized_test_covar_matrix
+            test_covar_matrix
         )
         
         test_mean = self.Normalizer.inverse_normalization_transform(
-            normalized_test_mean
+            test_mean
         )
 
         V = test_mean[:, 0]
@@ -931,28 +936,28 @@ class GPModelWithDerivativesWrapper:
         ), "train_grad_q for internal coordiante has wrong dimension"
 
         # normalize the new_train_targets
-        normalized_new_train_targets, normalized_new_train_inputs = self.Normalizer.normalization_transform(
+        new_train_targets, new_train_inputs = self.Normalizer.normalization_transform(
             new_train_targets,
             new_train_inputs
         )
 
         # fix certain dofs from input and targets, not including it in our gpr model.
-        moving_new_train_inputs, moving_new_train_targets = (
-            self.FixingDofs.transform_training_data_to_free_moving_dofs(
-                normalized_new_train_inputs, normalized_new_train_targets
-            )
-        )
+        # new_train_inputs, new_train_targets = (
+        #     self.FixingDofs.transform_training_data_to_free_moving_dofs(
+        #         new_train_inputs, new_train_targets
+        #     )
+        # )
 
         # transform numpy array into tensor.
-        (moving_new_train_inputs, moving_new_train_targets) = map(
-            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (moving_new_train_inputs, moving_new_train_targets)
+        (new_train_inputs, new_train_targets) = map(
+            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (new_train_inputs, new_train_targets)
         )
 
         # we only add new training data if they are not too close to each other.
         filtered_new_train_inputs_index = update_model_with_new_data(
             self.gpr_model,
-            moving_new_train_inputs,
-            moving_new_train_targets,
+            new_train_inputs,
+            new_train_targets,
             distance_cutoff,
             train_bool
         )
@@ -961,8 +966,8 @@ class GPModelWithDerivativesWrapper:
             self.update_training_variables(
                 filtered_new_train_inputs_index,
                 new_train_inputs,
-                normalized_new_train_inputs,
-                normalized_new_train_targets,
+                new_train_inputs,
+                new_train_targets,
                 new_train_x,
                 new_train_V,
                 new_train_grad_x
@@ -1118,19 +1123,19 @@ class GPModelWithDerivativesWrapper:
         )
 
         # add code to normalize the training inputs.
-        normalized_beads_internal_coordinate = (
+        beads_internal_coordinate = (
             self.Normalizer.normalization_transform_for_inputs(
                 beads_internal_coordinate
             )
         )
 
-        free_moving_beads_internal_coordinate = (
-            self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-                normalized_beads_internal_coordinate
-            )
-        )
+        # beads_internal_coordinate = (
+        #     self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
+        #         beads_internal_coordinate
+        #     )
+        # )
 
-        return free_moving_beads_internal_coordinate
+        return beads_internal_coordinate
 
     # ---- save and load gaussian process regression model -----
     def save_model(self, file_path):

@@ -26,7 +26,8 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         kernel_lengthscale_ratio,
         kernel_lengthscale_ratio_constraint: dict,
         likelihood_noise_variance,
-        nugget
+        nugget,
+        FixingDofs= None 
     ):
         """
         :param: train_inputs: training data.  torch.Tensor object. shape: [N, d]. N: number of data points. d: input data dimensions.
@@ -48,6 +49,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         cuda_available = torch.cuda.is_available()
         self.device = torch.device('cuda:0' if cuda_available else 'cpu')
         self.nugget = nugget
+        self.FixingDofs = FixingDofs 
 
         # set the noise prior information and construct the likelihood class.
         likelihood = self._set_likelihood_noise_prior(
@@ -79,14 +81,16 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         :param: likelihood_noise_variance: The mean value for the distribution of the variance of the noise. We set the prior of the noise variance as a Gaussian distribution.  (A gaussian distribution prior on the variance of the gaussian distribution of noise.)
         """
         self.noise_rank = 0
-
+        likelihood_noise_variance = torch.tensor(likelihood_noise_variance, device= self.device, dtype=torch.float64)
+        # clip the noise to have the minimum value as nugget. (10-8)
+        likelihood_noise_variance = torch.clip(likelihood_noise_variance, min= self.nugget)
         likelihood_noise_variance_mean = likelihood_noise_variance
         likelihood_noise_variance_std = (
             likelihood_noise_variance / 10
         )  # we set the std of the prior distribution as 1/10 of the mean value.
 
-        noise_mean_tensor = torch.from_numpy(likelihood_noise_variance_mean).to(device= self.device, dtype=torch.float64)
-        noise_std_tensor = torch.from_numpy(likelihood_noise_variance_std).to(device= self.device, dtype=torch.float64)
+        noise_mean_tensor = likelihood_noise_variance_mean
+        noise_std_tensor = likelihood_noise_variance_std
 
         # set the prior of the noise as a normal distribution.
         task_noise_prior = gpytorch.priors.NormalPrior(
@@ -165,6 +169,13 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         length_gamma_alpha = 3.0
         output_gamma_alpha = 3.0
 
+        # we set irrelevant lengthscale ratio to 10.0.
+        # The dofs that deems irrelevant will have length scale set to number larger than 10.0 
+        irrelevant_lengthscale_ratio = 1000.0 
+        if self.FixingDofs is not None:
+            fixed_dofs = torch.tensor(self.FixingDofs.fixed_internal_dofs) 
+            free_moving_dofs = torch.tensor(self.FixingDofs.free_moving_dofs)
+
         for i in range(gpr_SE_kernel_number):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs.
             # this is bad for cross-validation, but for simply training the model, it should be fine.
@@ -172,28 +183,42 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                 torch.max(train_inputs, dim=0).values
                 - torch.min(train_inputs, dim=0).values
             )
-            length_scale = (
-                kernel_lengthscale_ratio[i] * train_inputs_range
-            )  # set it as a given ratio of the training input range.
-            length_gamma_beta = torch.div(
-                length_gamma_alpha, length_scale
-            )  # value of beta: rate of the gamma distribution.
 
             output_scale = kernel_outputscale[i]
 
-            # set prior for length scale and output scale
-            lengthscale_prior = gpytorch.priors.GammaPrior(
-                length_gamma_alpha, length_gamma_beta
-            )
             outputscale_prior = gpytorch.priors.GammaPrior(
                 output_gamma_alpha, output_gamma_alpha / output_scale
             )
+
+            length_scale = (
+                kernel_lengthscale_ratio[i] * train_inputs_range
+            )  # set it as a given ratio of the training input range.
 
             # add lengthscale constraint. 
             length_scale_ratio_min_cutoff = kernel_lengthscale_ratio_constraint['min']
             length_scale_ratio_max_cutoff = kernel_lengthscale_ratio_constraint['max']
             length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
             length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
+
+            if self.FixingDofs is not None:
+                if i == 0:
+                    irrelevant_dofs = fixed_dofs
+                elif i == 1:
+                    irrelevant_dofs = free_moving_dofs
+                else:
+                    irrelevant_dofs = torch.tensor([]) 
+                length_scale[irrelevant_dofs] = irrelevant_lengthscale_ratio * 2 * train_inputs_range[irrelevant_dofs]
+                length_scale_min_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * train_inputs_range[irrelevant_dofs]
+                length_scale_max_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * 10 * train_inputs_range[irrelevant_dofs]
+
+            length_gamma_beta = torch.div(
+                length_gamma_alpha, length_scale
+            )  # value of beta: rate of the gamma distribution.
+
+            # set prior for length scale and output scale
+            lengthscale_prior = gpytorch.priors.GammaPrior(
+                length_gamma_alpha, length_gamma_beta
+            )
 
             lengthscale_constraint = gpytorch.constraints.Interval(
                 length_scale_min_cutoff, length_scale_max_cutoff
@@ -241,9 +266,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         covar_x = self.covar_module(x)
         mean_x = mean_x.to(dtype= torch.float64)
         covar_x = covar_x.to(dtype= torch.float64)
-        # add nugget to covar_x to regularize the kernel.
-        diag_nugget = torch.eye(covar_x.shape[0]).to(device= self.device, dtype= covar_x.dtype) * self.nugget 
-        covar_x = covar_x + diag_nugget
+        # # add nugget to covar_x to regularize the kernel.
+        # diag_nugget = torch.eye(covar_x.shape[0]).to(device= self.device, dtype= covar_x.dtype) * self.nugget 
+        # covar_x = covar_x + diag_nugget
 
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 

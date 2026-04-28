@@ -171,7 +171,7 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
               (if value is 0, use small number, 1e-6 for example)")
         
     
-    if np.absolute(temp - temp2) / K2au > 2:
+    if np.absolute(temp - temp2) / K2au > 5:
         print(
             "\n Mismatch between provided temperature and temperature in the calculation"
         )

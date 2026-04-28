@@ -719,8 +719,14 @@ def train_gpr_model(
     outputscale_prior_weight = 1.0 * (1 + ndofs)
 
     def compute_outputscale_loss(model):
-        outputscale = model.covar_module.outputscale 
-        loss = -outputscale_prior_weight * torch.log(torch.log(model.outputscale_max) - torch.log(outputscale)) 
+        loss = 0.0
+        if model.gpr_SE_kernel_number == 1:
+            outputscale = model.covar_module.outputscale
+            loss = -outputscale_prior_weight * torch.log(torch.log(model.outputscale_max) - torch.log(outputscale)) 
+        else:
+             for i in range(model.gpr_SE_kernel_number):
+                 outputscale = model.covar_module_component_list[i].outputscale
+                 loss = loss + (-outputscale_prior_weight * torch.log(torch.log(model.outputscale_max) - torch.log(outputscale)))
         return loss 
 
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),

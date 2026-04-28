@@ -381,7 +381,7 @@ elif case == "instanton":
         print("Overwriting energy shift with the provided values")
         V0 = V00 * eV2au
 
-    if np.absolute(temp - temp2) / K2au > 2:
+    if np.absolute(temp - temp2) / K2au > 5:
         print(
             "\n Mismatch between provided temperature and temperature in the calculation"
         )
