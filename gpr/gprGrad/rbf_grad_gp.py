@@ -171,10 +171,17 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
 
         # we set irrelevant lengthscale ratio to 10.0.
         # The dofs that deems irrelevant will have length scale set to number larger than 10.0 
-        irrelevant_lengthscale_ratio = 1000.0 
+        irrelevant_lengthscale_ratio = pow(10.0, 6) 
         if self.FixingDofs is not None:
             fixed_dofs = torch.tensor(self.FixingDofs.fixed_internal_dofs) 
             free_moving_dofs = torch.tensor(self.FixingDofs.free_moving_dofs)
+
+        # scale the length scale and length scale constraint according to the force range of the training data.
+        force = self.train_targets[:, 1:]
+        force_range = torch.max(force, dim=0).values - torch.min(force, dim=0).values
+        force_range_ratio = force_range / torch.max(force_range)
+        lengthscale_rescale_factor = 1.0 / force_range_ratio
+        # lengthscale_rescale_factor = torch.clip(1.0 / force_range_ratio, max= torch.pow(torch.tensor(10.0),4)) 
 
         for i in range(gpr_SE_kernel_number):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs.
@@ -185,20 +192,24 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             )
 
             output_scale = kernel_outputscale[i]
-
             outputscale_prior = gpytorch.priors.GammaPrior(
                 output_gamma_alpha, output_gamma_alpha / output_scale
             )
 
             length_scale = (
-                kernel_lengthscale_ratio[i] * train_inputs_range
+                kernel_lengthscale_ratio[i] * train_inputs_range  
             )  # set it as a given ratio of the training input range.
 
             # add lengthscale constraint. 
             length_scale_ratio_min_cutoff = kernel_lengthscale_ratio_constraint['min']
             length_scale_ratio_max_cutoff = kernel_lengthscale_ratio_constraint['max']
-            length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
-            length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
+            length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range  
+            length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range  
+
+            # rescale the length scale and length scale cutoff according to the amplitude of the force.  
+            length_scale = length_scale * lengthscale_rescale_factor 
+            length_scale_min_cutoff = length_scale_min_cutoff * lengthscale_rescale_factor 
+            length_scale_max_cutoff = length_scale_max_cutoff * lengthscale_rescale_factor
 
             if self.FixingDofs is not None:
                 if i == 0:
@@ -207,9 +218,10 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
                     irrelevant_dofs = free_moving_dofs
                 else:
                     irrelevant_dofs = torch.tensor([]) 
-                length_scale[irrelevant_dofs] = irrelevant_lengthscale_ratio * 2 * train_inputs_range[irrelevant_dofs]
-                length_scale_min_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * train_inputs_range[irrelevant_dofs]
-                length_scale_max_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * 10 * train_inputs_range[irrelevant_dofs]
+                if len(irrelevant_dofs) > 0:
+                    length_scale[irrelevant_dofs] = irrelevant_lengthscale_ratio * 2 * train_inputs_range[irrelevant_dofs]
+                    length_scale_min_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * train_inputs_range[irrelevant_dofs]
+                    length_scale_max_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * 10 * train_inputs_range[irrelevant_dofs]
 
             length_gamma_beta = torch.div(
                 length_gamma_alpha, length_scale
@@ -219,6 +231,9 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             lengthscale_prior = gpytorch.priors.GammaPrior(
                 length_gamma_alpha, length_gamma_beta
             )
+
+            #FIXME: set lengthscale prior to None
+            # lengthscale_prior = None 
 
             lengthscale_constraint = gpytorch.constraints.Interval(
                 length_scale_min_cutoff, length_scale_max_cutoff
@@ -243,7 +258,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             ).to(device= self.device)
 
             # Initialize lengthscale and output scale to the mean of priors
-            covar_module.base_kernel.lengthscale = lengthscale_prior.mean
+            covar_module.base_kernel.lengthscale = length_scale
             covar_module.outputscale = outputscale_prior.mean
 
             base_kernel_component_list.append(base_kernel)

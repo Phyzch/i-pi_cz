@@ -273,7 +273,7 @@ class GPRForceMapper(object):
         except:
             energy_shift = 0
 
-        """
+        
         if initial_data_number >= 2:
             test_x = train_x[0] * 1 / 4 + train_x[1] * 3 / 4
             print("x[0] * 1/4 + x[1] * 3/4")
@@ -305,7 +305,7 @@ class GPRForceMapper(object):
                 energy_shift,
                 test_x
             )
-        """
+        
     
     def initialize_gpr_model(self):
         """
