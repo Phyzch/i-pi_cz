@@ -181,7 +181,6 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         force_range = torch.max(force, dim=0).values - torch.min(force, dim=0).values
         force_range_ratio = force_range / torch.max(force_range)
         lengthscale_rescale_factor = 1.0 / force_range_ratio
-        # lengthscale_rescale_factor = torch.clip(1.0 / force_range_ratio, max= torch.pow(torch.tensor(10.0),4)) 
 
         for i in range(gpr_SE_kernel_number):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs.

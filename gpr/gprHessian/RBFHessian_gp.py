@@ -233,6 +233,14 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         length_gamma_alpha = 3.0
         output_gamma_alpha = 3.0
 
+        train_inputs = self.train_inputs[0]
+        data_num = train_inputs.shape[-2]
+        ard_num_dims = self.ard_num_dims
+        force = self.train_targets[data_num: data_num * (1 + ard_num_dims)].reshape(data_num, ard_num_dims)
+        force_range = torch.max(force, dim=0).values - torch.min(force, dim=0).values
+        force_range_ratio = force_range / torch.max(force_range)
+        lengthscale_rescale_factor = 1.0 / force_range_ratio
+
         for i in range(gpr_SE_kernel_number):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs (we only provides the ratio).
             # this is bad for cross validation, but for simply training model, it works fine.
@@ -240,24 +248,24 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 torch.max(train_inputs, dim=0).values
                 - torch.min(train_inputs, dim=0).values
             )
-            length_scale = kernel_lengthscale_ratio[i] * train_inputs_range
-            length_gamma_beta = torch.div(length_gamma_alpha, length_scale)
-
-            output_scale = kernel_outputscale[i]
-
-            # set prior for lengthscale and outputscale
-            lengthscale_prior = gpytorch.priors.GammaPrior(
-                length_gamma_alpha, length_gamma_beta
-            )
-            outputscale_prior = gpytorch.priors.GammaPrior(
-                output_gamma_alpha, output_gamma_alpha / output_scale
-            )
 
             # add lengthscale constraint
+            length_scale = kernel_lengthscale_ratio[i] * train_inputs_range
             length_scale_ratio_min_cutoff = kernel_lengthscale_ratio_constraint['min']
             length_scale_ratio_max_cutoff = kernel_lengthscale_ratio_constraint['max']
             length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
             length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
+
+            # rescale the length scale and length scale cutoff according to the amplitude of the force.  
+            length_scale = length_scale * lengthscale_rescale_factor 
+            length_scale_min_cutoff = length_scale_min_cutoff * lengthscale_rescale_factor 
+            length_scale_max_cutoff = length_scale_max_cutoff * lengthscale_rescale_factor
+
+            # set prior for lengthscale
+            length_gamma_beta = torch.div(length_gamma_alpha, length_scale)
+            lengthscale_prior = gpytorch.priors.GammaPrior(
+                length_gamma_alpha, length_gamma_beta
+            )
 
             lengthscale_constraint = gpytorch.constraints.Interval(
                 length_scale_min_cutoff, length_scale_max_cutoff
@@ -272,6 +280,11 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 hessian_fixdofs= self.hessian_fixdofs,
             )
 
+            output_scale = kernel_outputscale[i]
+            # set prior for outputscale
+            outputscale_prior = gpytorch.priors.GammaPrior(
+                output_gamma_alpha, output_gamma_alpha / output_scale
+            )
             outputscale_constraint = gpytorch.constraints.Interval(
                 kernel_outputscale_constraint['min'], 
                 kernel_outputscale_constraint['max']

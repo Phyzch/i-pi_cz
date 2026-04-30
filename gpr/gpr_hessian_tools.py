@@ -403,20 +403,22 @@ class FixInternalDofs(object):
 
         # Need to provide choice for using change in the internal coordinate / force as criterion for selecting free moving dofs.
         # code that use the change in forces as criterion to select dofs to include in GPR model.
-        grads_change_cutoff_ratio = 0.1
-        grads_change = np.max(grads, axis= 0) - np.min(grads, axis= 0)
-        grads_change_cutoff = np.max(grads_change) * grads_change_cutoff_ratio  # this cutoff value may need to be tuned for different molecules.
-        rigid_internal_dofs_with_force_criterion = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
+        # grads_change_cutoff_ratio = 0.1
+        # grads_change = np.max(grads, axis= 0) - np.min(grads, axis= 0)
+        # grads_change_cutoff = np.max(grads_change) * grads_change_cutoff_ratio  # this cutoff value may need to be tuned for different molecules.
+        # rigid_internal_dofs_with_force_criterion = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
 
-        self.rigid_internal_dofs = np.array(list(
-                                            set(
-                                                np.concatenate([rigid_internal_dofs_with_coord_criterion, 
-                                                       rigid_internal_dofs_with_force_criterion]
-                                                       )
-                                                )
-                                                )
-                                            )
+        # self.rigid_internal_dofs = np.array(list(
+        #                                     set(
+        #                                         np.concatenate([rigid_internal_dofs_with_coord_criterion, 
+        #                                                rigid_internal_dofs_with_force_criterion]
+        #                                                )
+        #                                         )
+        #                                         )
+        #                                     )
         
+        self.rigid_internal_dofs = rigid_internal_dofs_with_coord_criterion
+
         if gpr_rigid_internal_dofs is not None:
             self.rigid_internal_dofs = gpr_rigid_internal_dofs
             print("@gpr_hessian_model: load rigid internal dofs")
@@ -767,16 +769,14 @@ class FixInternalDofs(object):
                          self.input_dim,
                          self.input_dim]
                     )
-                if zero_bool or self.constrained_part_hessian_reg_model is None:
-                    pass 
-                else:
-                    # the prediction of hessian data in all dofs
-                    # We use linear regression to predict hessians in constrained dofs.
-                    test_inputs_with_hessian = test_inputs[test_hessian_data_point_index]
-                    test_hessians = self.predict_constrained_hessian(
-                        test_inputs_with_hessian,
-                        test_hessians
-                    )
+                
+                # the prediction of hessian data in all dofs
+                # We use linear regression to predict hessians in constrained dofs.
+                test_inputs_with_hessian = test_inputs[test_hessian_data_point_index]
+                test_hessians = self.predict_constrained_hessian(
+                    test_inputs_with_hessian,
+                    test_hessians
+                )
 
                 index_2d = self.free_moving_dofs_2d_index
                 test_hessians[:, index_2d[0], index_2d[1]] = test_moving_hessians
@@ -826,7 +826,7 @@ class GPModelWithHessiansWrapper:
         gpr_rigid_internal_dofs= None,
         ridge_regularization_alpha= {
                 "force": 0.1,
-                "hessian": 0.1,
+                "hessian": 0.5,
             },
         singular_value_cutoff = 1e-8
     ):
@@ -1809,9 +1809,9 @@ class GPModelWithHessiansWrapper:
             print("first stage: train the model with only potential and gradient information:")
             train_gpr_model(self.gpr_model, without_hessian_weight= 1.0, with_hessian_weight= 0.0)
             
-            print("second stage: train the model with hessian information:")
-            # then train the model that includes hessian information.
-            train_gpr_model(self.gpr_model, without_hessian_weight= 0.0, with_hessian_weight= 1.0)
+            # print("second stage: train the model with hessian information:")
+            # # then train the model that includes hessian information.
+            # train_gpr_model(self.gpr_model, without_hessian_weight= 0.0, with_hessian_weight= 1.0)
             
         else:
             train_gpr_model(self.gpr_model) 
