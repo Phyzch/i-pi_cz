@@ -550,6 +550,17 @@ def analyze_hessian_error(coord,
     print(f"{data_type}: relative hessian error for free moving dofs of ring polymers beads \
            (modeled by Gaussian Process Regression): {free_moving_hessian_error}")
     
+    # save the ab initio hessian and predicted hessian in the internal coordinate for error analysis. 
+    free_moving_dofs = gpr_hessian_model.FixingDofs.free_moving_dofs
+    rigid_internal_dofs = gpr_hessian_model.FixingDofs.rigid_internal_dofs
+
+    h5_file_path = os.path.join(data_type + " internal_coord_hessian.h5")
+    with h5py.File(h5_file_path, "w") as h5f:
+        h5f.create_dataset("ab_initio_hessian_internal_coord", data= ab_initio_hessian_q, compression= "gzip")
+        h5f.create_dataset("gpr_hessian_internal_coord", data= predicted_hessian_q, compression= "gzip")
+        h5f.create_dataset("free_moving_dofs", data= np.array(free_moving_dofs), compression= "gzip")
+        h5f.create_dataset("rigid_internal_dofs", data= np.array(rigid_internal_dofs), compression= "gzip")
+
     pass
 
 def analyze_train_error(gpr_hessian_model: GPModelWithHessiansWrapper):

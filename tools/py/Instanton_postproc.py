@@ -442,13 +442,13 @@ if not quiet:
     # d: eigvalue for mass weighted hessian after deleting trans & rot dof. w: eigenvector, detI: determinant of momentum of inertia
     hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3, asr, mofi=True)  # remove the  translational and rotational modes.
     print("Final lowest 10 frequencies (cm^-1)")
-    d10 = np.array2string(
-        np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au,
+    d50 = np.array2string(
+        np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au,
         precision=2,
         max_line_width=100,
         formatter={"float_kind": lambda x: "%.2f" % x},
     )
-    print(("{}".format(d10)))
+    print(("{}".format(d50)))
 
 if case == "reactant":
     Qtras = ((np.sum(m)) / (2 * np.pi * beta * hbar**2)) ** 1.5
@@ -520,8 +520,8 @@ elif case == "instanton":
 
             if asr != "poly":
                 print("WARNING asr != poly")
-                print("First 10 eigenvalues")
-                ten_eigv = np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au
+                print("First 50 eigenvalues")
+                ten_eigv = np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au
                 print("{}".format(ten_eigv))
                 print(
                     "Please check that this you don't have any unwanted zero frequency"
@@ -535,6 +535,22 @@ elif case == "instanton":
         else:
             logQvib = 0.0
 
+        # for debug:
+        exclude_eigenvalue_index = [10, 20, 30]
+        for index in exclude_eigenvalue_index:
+            print(
+                "We are excluding the eigenvalue from 0 until index {} for debug. Its value is {:8.3f} cm^-1".format(
+                    index, np.sign(hess_eigval[index]) * np.absolute(hess_eigval[index]) ** 0.5 / cm2au
+                )
+            )
+            modified_logQvib = (
+                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[index:]))))
+                + nzeros * np.log(nbeads)
+                + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+            )
+            print("log(Qvib * N): {:8.3f} (exclude eigenvalue index {})".format(modified_logQvib, index))
+            print("\n")
+            
         BN = 2 * np.sum(beads.m3[1:, :] * (beads.q[1:, :] - beads.q[:-1, :]) ** 2)  # 2 * : account for full ring-polymer
         factor = 1.0000  # default
         action1 = (2 * pots.sum() * factor - nbeads * V0) * 1.0 / (temp * nbeads * kb)   # \beta \hbar \sum(Vi - V0) potential contribution to the action

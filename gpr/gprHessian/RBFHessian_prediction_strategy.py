@@ -6,6 +6,7 @@ Written by Chenghao Zhang & Niri Govind, Pacific Norhtwest National Laboratory (
 """
 
 import torch
+from torch import Tensor 
 from gpytorch.models.exact_prediction_strategies import DefaultPredictionStrategy
 from gpytorch import settings
 from gpytorch.utils.memoize import (
@@ -93,12 +94,37 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
 
         mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
 
-        # debug the linear cg error. compared with pseudo-inverse.
-        # psuedo-inverse code.
-        # train_train_covar_tensor = train_train_covar.to_dense()
-        # singular_value_cutoff = self.likelihood.nugget
-        # covar_inverse = torch.linalg.pinv(train_train_covar_tensor, rtol= singular_value_cutoff)
-        # mean_cache = (covar_inverse @ train_labels_offset).squeeze(-1)
+        if settings.detach_test_caches.on():
+            mean_cache = mean_cache.detach()
+
+        if mean_cache.grad_fn is not None:
+            wrapper = functools.partial(clear_cache_hook, self)
+            functools.update_wrapper(wrapper, clear_cache_hook)
+            mean_cache.grad_fn.register_hook(wrapper)
+
+        return mean_cache
+
+    @property
+    @cached(name="mean_cache_without_hessian")
+    def mean_cache_without_hessian(self):
+        """
+        mean_cache = (K(X,X) + sigma^2 I)^(-1) * y.  here X are inputs of training data. y are targets of training data.
+        """
+        train_mean, train_train_covar = (
+            self.train_mean,
+            self.lik_train_train_covar,
+        )  # covariance matrix of y(x) (likelihood) : K(X,X) + sigma^2 I
+
+        train_mean = train_mean.to(dtype= torch.float64)
+        train_train_covar = train_train_covar.to(dtype= torch.float64)
+        self.train_labels = self.train_labels.to(dtype= torch.float64)
+        train_labels_offset = (self.train_labels - train_mean).unsqueeze(-1)  # y
+
+        # use only gradient info.
+        train_train_covar = torch.clone(train_train_covar)[: self.train_num * (self.d + 1), : self.train_num * (self.d + 1)]
+        train_labels_offset = train_labels_offset[: self.train_num * (self.d + 1), :]
+
+        mean_cache = train_train_covar.evaluate_kernel().solve(train_labels_offset).squeeze(-1)  # (K(X,X) + sigma^2 I)^-1 * y
 
         if settings.detach_test_caches.on():
             mean_cache = mean_cache.detach()
@@ -115,16 +141,51 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
     def covar_cache(self):
         """
         compute the cache for the prediction of the covariance matrix. Which is (K(X,X) + sigma^2 I)^{-1/2}
-        use pseudo-inverse (Moore Penrose inverse) when the covariance matrix becomes ill-conditioned. (smallest eigenvalue is close to 0).
         """
         train_train_covar = self.lik_train_train_covar 
         train_train_covar_inv_root = to_dense(train_train_covar.root_inv_decomposition().root)   # (K(x,x) + sigma^2 I)^(-1/2)
         train_train_covar_inv_root = train_train_covar_inv_root.to(dtype= torch.float64)
         return train_train_covar_inv_root
 
+    @property
+    @cached(name= "covar_cache_without_hessian")
+    def covar_cache_without_hessian(self):
+        """
+        compute the cache for the prediction of the covariance matrix without hessian information. Which is (K(X,X) + sigma^2 I)^{-1/2}
+        """
+        train_train_covar = torch.clone(self.lik_train_train_covar)
+        train_train_covar_without_hessian = train_train_covar[: self.train_num * (self.d + 1), : self.train_num * (self.d + 1)]
+        train_train_covar_inv_root_without_hessian = to_dense(train_train_covar_without_hessian .root_inv_decomposition().root).to(dtype= torch.float64)   # (K(x,x) + sigma^2 I)^(-1/2)
+        return train_train_covar_inv_root_without_hessian
+
+    def exact_predictive_mean(self, test_mean: Tensor, test_train_covar: LinearOperator, include_hessian= True) -> Tensor:
+        """
+        Computes the posterior predictive covariance of a GP
+
+        :param Tensor test_mean: The test prior mean
+        :param ~linear_operator.operators.LinearOperator test_train_covar:
+            Covariance matrix between test and train inputs (K(x^{*}, X))
+        :return: The predictive posterior mean of the test points
+        """
+        # NOTE TO FUTURE SELF:
+        # You **cannot* use addmv here, because test_train_covar may not actually be a non lazy tensor even for an exact
+        # GP, and using addmv requires you to to_dense test_train_covar, which is obviously a huge no-no!
+        if not include_hessian:
+            mean_cache = self.mean_cache_without_hessian
+        else:
+            mean_cache = self.mean_cache
+
+        if len(self.mean_cache.shape) == 4:
+            res = (test_train_covar @ mean_cache.squeeze(1).unsqueeze(-1)).squeeze(-1)  # self.mean_cache : (K(X,X) + sigma^2)^-1 y
+        else:
+            res = (test_train_covar @ mean_cache.unsqueeze(-1)).squeeze(-1)
+        res = res + test_mean
+
+        return res
 
     def exact_predictive_covar(
-        self, test_test_covar: LinearOperator, test_train_covar: LinearOperator
+        self, test_test_covar: LinearOperator, test_train_covar: LinearOperator,
+        include_hessian= True
     ) -> LinearOperator:
         """
         Computes the posterior predictive covariance of a GP. This is adapted from exact_predictive_covar() function in gpytorch/models/exact_prediction_strategies.py
@@ -181,12 +242,18 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
                 return test_test_covar + MatmulLinearOperator(
                     test_train_covar, covar_correction_rhs.mul(-1)
                 )
+            
+        #FIXME: You need to compute the covar_cache for the case without hessian. Can't just do truncation here. 
+        if not include_hessian:
+            precomputed_cache = self.covar_cache_without_hessian
+        else:
+            precomputed_cache = self.covar_cache
 
-        precomputed_cache = self.covar_cache
         precomputed_cache = precomputed_cache.to(dtype= test_train_covar.dtype)
         covar_inv_quad_form_root = self._exact_predictive_covar_inv_quad_form_root(
             precomputed_cache, test_train_covar
         )
+
         if torch.is_tensor(test_test_covar):
             return to_linear_operator(
                 torch.add(
@@ -203,7 +270,12 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             )
 
     def exact_prediction(
-        self, joint_mean, joint_covar, test_data_hessian_data_point_index, test_data_num
+        self, 
+        joint_mean, 
+        joint_covar, 
+        test_data_hessian_data_point_index, 
+        test_data_num,
+        include_hessian= True 
     ):
         """
         Compute the posterior predictive mean and covariance of a GP.
@@ -241,14 +313,24 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             end=(M1 + M2) * (d + 1) + MH_1 * hessian_triu_size,
             device= device
         )
-        training_target_index = torch.concat(
-            (
-                training_target_pots_index,
-                training_target_grads_index,
-                training_target_hessian_index,
-            ),
-            dim=-1,
-        )
+        # use only gradient information to make prediction of the gradient.
+        if include_hessian:
+            training_target_index = torch.concat(
+                (
+                    training_target_pots_index,
+                    training_target_grads_index,
+                    training_target_hessian_index,
+                ),
+                dim=-1,
+            )
+        else:
+             training_target_index = torch.concat(
+                 (
+                    training_target_pots_index,
+                    training_target_grads_index 
+                 ),
+                 dim= -1 
+             )
 
         # the index for potential, gradient and hessian of test data.
         test_target_pots_index = torch.arange(start=M1, end=M1 + M2, device= device)
@@ -261,14 +343,23 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
             end=(M1 + M2) * (d + 1) + (MH_1 + MH_2) * hessian_triu_size,
             device= device 
         )
-        test_target_index = torch.concat(
-            (
-                test_target_pots_index,
-                test_target_grads_index,
-                test_target_hessian_index,
-            ),
-            dim=-1,
-        )
+        if include_hessian:
+            test_target_index = torch.concat(
+                (
+                    test_target_pots_index,
+                    test_target_grads_index,
+                    test_target_hessian_index,
+                ),
+                dim=-1,
+            )
+        else:
+            test_target_index = torch.concat(
+                (
+                    test_target_pots_index,
+                    test_target_grads_index
+                ),
+                dim=-1,
+            )
         # mean value of test data.
         test_mean = torch.index_select(joint_mean, dim=-1, index=test_target_index)
 
@@ -282,7 +373,7 @@ class RBFHessianPredictionStrategy(DefaultPredictionStrategy):
         test_train_covar = test_covar[..., :, training_target_index]
 
         # mean and covariance matrix of posterior distribution.
-        prediction_mean = self.exact_predictive_mean(test_mean, test_train_covar)
-        prediction_var = self.exact_predictive_covar(test_test_covar, test_train_covar)
+        prediction_mean = self.exact_predictive_mean(test_mean, test_train_covar, include_hessian= include_hessian)
+        prediction_var = self.exact_predictive_covar(test_test_covar, test_train_covar, include_hessian= include_hessian)
 
         return (prediction_mean, prediction_var)

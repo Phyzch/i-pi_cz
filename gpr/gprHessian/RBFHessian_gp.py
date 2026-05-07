@@ -576,10 +576,6 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                 )
 
             include_hessian= kwargs.get('include_hessian', True)
-            if include_hessian == False:
-                print("Warning: you are calling the model with include_hessian = False, but the model is not in training mode. " \
-                "This is currently not allowed. We will still include hessian part in the prediction.")
-                include_hessian= True
 
             # make the prediction:
             # Get the terms that only depend on training data
@@ -635,7 +631,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             full_output = gpytorch.module.Module.__call__(
                 self,
                 *full_inputs,
-                inputs_hessian_data_point_index=full_inputs_hessian_data_point_index
+                inputs_hessian_data_point_index=full_inputs_hessian_data_point_index,
+                include_hessian= include_hessian 
             )
             if settings.debug().on():
                 if not isinstance(full_output, MultivariateNormal):
@@ -662,6 +659,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
                     full_covar,
                     inputs_hessian_data_point_index,
                     inputs[0].shape[-2],
+                    include_hessian= include_hessian 
                 )
 
             return full_output.__class__(predictive_mean, predictive_covar)
@@ -890,6 +888,21 @@ def predict_latent_function_GPHessian(
                 test_data_with_hessian_number,
             )
         )  # transform 1d data to pots, grads, hessian. It is the same for variance & mean value
+
+        # # use only gradient information to predict the gradient. 
+        prediction_latent_function_without_hessian = model(
+            test_inputs,
+            inputs_hessian_data_point_index=test_data_hessian_data_point_index_tensor,
+            include_hessian= False
+        )
+        
+        test_prediction_mean_without_hessian = prediction_latent_function_without_hessian.mean
+        predicted_grads = test_prediction_mean_without_hessian[..., test_data_num : test_data_num * (1 + ndofs)].reshape(test_data_num, ndofs)
+        grads = predicted_grads 
+
+        test_prediction_variance_without_hessian = torch.diag(prediction_latent_function_without_hessian.covariance_matrix)
+        predicted_grads_var = test_prediction_variance_without_hessian[..., test_data_num : test_data_num * (1 + ndofs)].reshape(test_data_num, ndofs)
+        grads_var = predicted_grads_var 
 
         pots = pots.detach().cpu().numpy()
         grads = grads.detach().cpu().numpy()

@@ -500,14 +500,14 @@ def compute_instanton_rate_or_splitting():
         else:
             m3_for_hessian = np.repeat(m3, repeats= 2, axis= 0) 
         hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi=True)  # remove the  translational and rotational modes.
-        print("Final lowest 10 frequencies (cm^-1)")
-        d10 = np.array2string(
-            np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au,
+        print("Final lowest 50 frequencies (cm^-1)")
+        d50 = np.array2string(
+            np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au,
             precision=2,
             max_line_width=100,
             formatter={"float_kind": lambda x: "%.2f" % x},
         )
-        print(("{}".format(d10)))
+        print(("{}".format(d50)))
 
         # print conditional number
     
@@ -525,33 +525,44 @@ def compute_instanton_rate_or_splitting():
             Qrot = 1.0
 
         if not quiet:
-            del_freq = np.sign(hess_eigval[1]) * np.absolute(hess_eigval[1]) ** 0.5 / cm2au
+            # zero_mode_index = np.argmin(np.absolute(hess_eigval)) # zero mode is the one with the smallest absolute value of eigenvalue. it should be the second lowest mode, since the lowest one is the imaginary frequency (unstable mode).
+            zero_mode_index = 1   
+            del_freq = np.sign(hess_eigval[zero_mode_index]) * np.absolute(hess_eigval[zero_mode_index]) ** 0.5 / cm2au
             print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
 
             if asr != "poly":
                 print("WARNING asr != poly")
-                print("First 10 eigenvalues")
-                ten_eigv = np.sign(hess_eigval[0:10]) * np.absolute(hess_eigval[0:10]) ** 0.5 / cm2au
+                print("First 50 eigenvalues")
+                ten_eigv = np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au
                 print("{}".format(ten_eigv))
                 print(
                     "Please check that this you don't have any unwanted zero frequency"
                 )
 
             logQvib = (
-                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, 1)))))
+                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, zero_mode_index)))))
                 + nzeros * np.log(nbeads)
                 + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
             )
-
-            logQvib1 = (
-                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[3:]))))
-                + nzeros * np.log(nbeads)
-                + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
-            )
-            print(f"For debug: logQvib with contribution excluding first 3 eigenvalues {logQvib1}")
 
         else:
             logQvib = 0.0
+
+        # for debug:
+        exclude_eigenvalue_index = [10, 20, 30]
+        for index in exclude_eigenvalue_index:
+            print(
+                "We are excluding the eigenvalue from 0 until index {} for debug. Its value is {:8.3f} cm^-1".format(
+                    index, np.sign(hess_eigval[index]) * np.absolute(hess_eigval[index]) ** 0.5 / cm2au
+                )
+            )
+            modified_logQvib = (
+                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[index:]))))
+                + nzeros * np.log(nbeads)
+                + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
+            )
+            print("log(Qvib * N): {:8.3f} (exclude eigenvalue index {})".format(modified_logQvib, index))
+            print("\n")
 
         pos_half_rp = pos[: int(len(pos) / 2), :]
         m3_half_rp = m3[:int(len(m3) / 2), :]

@@ -537,8 +537,10 @@ class FixInternalDofs(object):
         # we need to flatten hessians into 1d array [n_targets] for each sample
         y = constrained_dofs_hessians.reshape((data_num, -1))
         x = train_inputs
+
+        lin_degree = 1 
         # constrained_dofs_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x,y)
-        constrained_dofs_reg_model = lin_model(1, regularization= True, lambda_ = hessian_ridge_regularization_alpha)
+        constrained_dofs_reg_model = lin_model(lin_degree, regularization= True, lambda_ = hessian_ridge_regularization_alpha)
         constrained_dofs_reg_model.fit(x,y)
 
         constrained_free_moving_cross_term_hessians = hessians[:, 
@@ -548,7 +550,7 @@ class FixInternalDofs(object):
         y1 = constrained_free_moving_cross_term_hessians.reshape(data_num, -1)
         x1 = train_inputs 
         # cross_term_reg_model = Ridge(alpha= hessian_ridge_regularization_alpha).fit(x1, y1)
-        cross_term_reg_model = lin_model(1, regularization= True, lambda_= hessian_ridge_regularization_alpha)
+        cross_term_reg_model = lin_model(lin_degree, regularization= True, lambda_= hessian_ridge_regularization_alpha)
         cross_term_reg_model.fit(x1, y1)
 
         return constrained_dofs_reg_model, cross_term_reg_model
