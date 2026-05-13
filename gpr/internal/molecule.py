@@ -135,6 +135,7 @@ class NewMolecule(Molecule):
         New.na = self.na 
         New.xyz = copy.deepcopy(self.xyz)
         New.elem = copy.deepcopy(self.elem)
+        New.nonbonded_atom_index = copy.deepcopy(self.nonbonded_atom_index)
 
         for key in self.Data:
             if key in ['xyzs']:
@@ -227,7 +228,7 @@ class NewMolecule(Molecule):
             (ii, jj) = AtomIterator[i]
             if ii == jj: continue
 
-            if (ii in self.nonbonded_atom_index) or (jj in self.nonbonded_atom_index):
+            if (ii in self.nonbonded_atom_index) and (jj in self.nonbonded_atom_index):
                 continue
 
             atom_bonds[ii].append(jj)

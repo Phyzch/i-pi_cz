@@ -211,9 +211,11 @@ class PrimitiveInternalCoordinates(InternalCoordinates):
         else:
             if self.addcart:
                 for i in range(molecule.na):
-                    self.add(CartesianX(i, w= 1.0))
-                    self.add(CartesianY(i, w= 1.0))
-                    self.add(CartesianZ(i, w= 1.0))
+                    #FIXME: only include Cartesian of substrate. exclude Cartesian of adsorbate.
+                    if i in molecule.nonbonded_atom_index:
+                        self.add(CartesianX(i, w= 1.0))
+                        self.add(CartesianY(i, w= 1.0))
+                        self.add(CartesianZ(i, w= 1.0))
             else:
                 raise NotImplementedError("We do not implement Translation Rotation Internal Coordinate Here.\
                                            This may change in the future.")
@@ -498,13 +500,14 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
         U, S, Vh = np.linalg.svd(Bmat_average, full_matrices= False)
 
         natom = self.na
-        if self.addcart == False:
-            # If we do not include information about the position of 
-            # the center of mass and the orientation of molecular system.
-            # The number of nonzero eigenvalue should be 3N-6.
-            dlc_na = 3 * natom - 6
-        else:
-            dlc_na = 3 * natom 
+        # If we do not include information about the position of 
+        # the center of mass and the orientation of molecular system.
+        # The number of nonzero eigenvalue should be 3N-6.
+        dlc_na = 3 * natom - 6
+
+        # for HDLC, we have included cartesians.        
+        # if self.addcart:
+        #     dlc_na = 3 * natom 
             
         assert (
             np.size(S) >= dlc_na
