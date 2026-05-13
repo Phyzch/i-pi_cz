@@ -1,5 +1,6 @@
 import gpr.internal.CoulombInternal
 import gpr.internal.ZmatrixInternal
+import gpr.internal.MixedInternalCartesian
 from ipi.engine.motion import Motion 
 from ipi.utils.depend import dstrip
 import numpy as np 
@@ -40,6 +41,7 @@ def create_coordinate_transformer(motion:Motion, ref_x_list, load):
     # which handles the transformation from the Cartesian coordinate to internal coordinate.
     # This is for Coulomb matrix type internal coordinate.
     internal_coord = motion.options["internal_coord"]
+    nonbonded_atom_index = motion.optarrays["nonbonded_atom_index"]
     if internal_coord == "Coulomb":
         coordinate_transformer = gpr.internal.CoulombInternal.non_redundant_coordinate_transformer(
             motion.beads.natoms, 
@@ -66,6 +68,16 @@ def create_coordinate_transformer(motion:Motion, ref_x_list, load):
                 load_file_path= neb_final_gpr_folder,
                 inverse_distance= True
         )
+    elif internal_coord == "MIC":
+        coordinate_transformer = gpr.internal.MixedInternalCartesian.non_redundant_coordinate_transformer(
+            motion.beads.natoms,
+            ref_x_list,
+            names,
+            load,
+            load_file_path= neb_final_gpr_folder,
+            nonbonded_atom_index= nonbonded_atom_index
+        )
+
     else:
         raise ValueError("The input for internal_coord should be either 'bond' or 'Coulomb' ")
 

@@ -52,7 +52,7 @@ def union_topology(molecule_list,
 
     return new_molecule 
 
-def create_molecule(natoms, elem, xyz_list, molecule_index= 0):
+def create_molecule(natoms, elem, xyz_list, molecule_index= 0, nonbonded_atom_index=[]):
     """
     Create a Molecule object.
     The topology of the new molecule object is the union of topology for all molecules, each with the coordinate in the xyz_list.
@@ -64,7 +64,7 @@ def create_molecule(natoms, elem, xyz_list, molecule_index= 0):
     molecule_list = []
     assert molecule_index < len(xyz_list), f"molecule index {molecule_index} > number of xyz coordinate: {len(xyz_list)}"
     for xyz in xyz_list:
-        molecule = NewMolecule(natoms, xyz, elem)
+        molecule = NewMolecule(natoms, xyz, elem, nonbonded_atom_index= nonbonded_atom_index)
         # build topology
         molecule.build_topology()
 
@@ -93,6 +93,7 @@ class NewMolecule(Molecule):
                  natoms: int, 
                  xyz: np.ndarray, 
                  elem: list,
+                 nonbonded_atom_index = [],
                  fnm = None, ftype = None, top = None, ttype = None,
                  **kwargs):
         """
@@ -103,6 +104,7 @@ class NewMolecule(Molecule):
         natoms: number of atoms.
         xyz: xyz coordinate of atoms in the molecule. shape: [3 * natoms]. Need to reshape it to [Natoms, 3] when set it to self.xyz.
         elem: elements of atoms. In ipi, this is self.beads.names
+        nonbonded_atom_index: atom in molecule that is set to not form the bond with other atom. (Used for HDLC)
         Fac : float, optional
             Multiplicative factor to covalent radii criterion for deciding whether two atoms are bonded
             Default value of 1.2 is reasonable, 1.4 will produce lots of bonds
@@ -115,7 +117,8 @@ class NewMolecule(Molecule):
         self.na = natoms
         self.xyz = np.reshape(xyz, [natoms, 3])
         self.xyzs = self.xyz[np.newaxis, :]
-        self.elem = elem 
+        self.elem = elem
+        self.nonbonded_atom_index = nonbonded_atom_index  
 
     def __deepcopy__(self, memo):
         """
@@ -223,6 +226,9 @@ class NewMolecule(Molecule):
             # ii. jj: index for atoms in molecule.
             (ii, jj) = AtomIterator[i]
             if ii == jj: continue
+
+            if (ii in self.nonbonded_atom_index) or (jj in self.nonbonded_atom_index):
+                continue
 
             atom_bonds[ii].append(jj)
             atom_bonds[jj].append(ii)

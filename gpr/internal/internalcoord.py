@@ -498,11 +498,14 @@ class DelocalizedInternalCoordinates(InternalCoordinates):
         U, S, Vh = np.linalg.svd(Bmat_average, full_matrices= False)
 
         natom = self.na
-        # If we do not include information about the position of 
-        # the center of mass and the orientation of molecular system.
-        # The number of nonzero eigenvalue should be 3N-6.
-        dlc_na = 3 * natom - 6
-        
+        if self.addcart == False:
+            # If we do not include information about the position of 
+            # the center of mass and the orientation of molecular system.
+            # The number of nonzero eigenvalue should be 3N-6.
+            dlc_na = 3 * natom - 6
+        else:
+            dlc_na = 3 * natom 
+            
         assert (
             np.size(S) >= dlc_na
         ), "number of nonzero singular value of B is smaller than 3n-6. Wrong"

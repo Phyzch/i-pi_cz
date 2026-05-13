@@ -140,6 +140,7 @@ class MAPNEBGPRMover(Motion):
         selective_hessian_bool= False,
         new_hessian_data_index_rigid_mode= np.zeros(0, int),
         internal_coord = "bond",
+        nonbonded_atom_index=np.zeros(0, int),
         cross_validation_bool= False,
         ridge_regularization_alpha = {
             "force": 0.1,
@@ -251,6 +252,10 @@ class MAPNEBGPRMover(Motion):
         
         # nugget regularization of pseudo-inverse of covariance matrix
         self.optarrays["gpr_covar_inverse_nugget"] = gpr_covar_inverse_nugget
+
+        # nonbonded atom index for mixed cartesian internal coordinate.
+        self.optarrays["nonbonded_atom_index"]= nonbonded_atom_index
+
         self.rp_map = RP_MAP()
 
         # choose optimization method based on optimizer we provide in input.xml

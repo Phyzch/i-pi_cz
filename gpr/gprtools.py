@@ -674,7 +674,6 @@ class GPModelWithDerivativesWrapper:
             lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (train_inputs, train_targets)
         )
 
-        # -------- fixing certain dofs. -----------------
 
         # initialize the gaussian process regression model with input training data.
         self.gpr_model = GPModelWithDerivatives(

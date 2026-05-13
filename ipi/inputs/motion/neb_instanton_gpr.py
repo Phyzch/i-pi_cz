@@ -722,7 +722,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": str,
                 "default": "bond",
-                "options": ["bond", "Coulomb", "IRZ", "SOAP"],
+                "options": ["bond", "Coulomb", "IRZ", "MIC"],
                 "help": """
                 The option to construct primitive internal coordinate.
                 We provide three choices: bond, Coulomb and IRZ. 
@@ -733,9 +733,21 @@ class InputNebInstGPR(InputDictionary):
                 This is for intra-molecular proton transfer reaction like malonaldehyde and aminopropenal.
                 For IRZ, it stands for inverse radial Z matrix coordinates. It replace the bond length with inverse bond length
                 in the redundant internal coordinate.
+                For MIC, this is mixed internal cartesian coordinate. (A type of Hybrid delocalized internal coordinate (HDLC)).
+                The nonbonded_atom_index also needs to be specified.
                 """
             }
         ),
+        "nonbonded_atom_index":(
+            InputArray,
+            {
+                "dtype": int,
+                "default": input_default(factory=np.zeros, args=(0,)),
+                "help": "The atom index that will not form bond with other atoms. (Used in mixed internal cartesian coordinate)."
+                "They form the environment of core reaction area.",
+            },
+        ),
+
         "cross_validation_bool":(
             InputValue,
             {
@@ -868,6 +880,9 @@ class InputNebInstGPR(InputDictionary):
         self.dynamical_adjust_ratio.store(optarrays["dynamical_adjust_ratio"])
         self.end_bead_energy_converge_value.store(optarrays["end_bead_energy_converge_value"])
         self.neb_inner_loop_step_max.store(optarrays["neb_inner_loop_step_max"])
+
+        # for internal coordinate.
+        self.nonbonded_atom_index.store(optarrays["nonbonded_atom_index"])
 
         self.time_step.store(optarrays["time_step"])
         self.cg_big_step.store(optarrays["cg_big_step"])
