@@ -1,6 +1,7 @@
 import gpr.internal.CoulombInternal
 import gpr.internal.ZmatrixInternal
 import gpr.internal.MixedInternalCartesian
+import gpr.internal.SoapInternal
 from ipi.engine.motion import Motion 
 from ipi.utils.depend import dstrip
 import numpy as np 
@@ -76,6 +77,27 @@ def create_coordinate_transformer(motion:Motion, ref_x_list, load):
             load,
             load_file_path= neb_final_gpr_folder,
             nonbonded_atom_index= nonbonded_atom_index
+        )
+
+    elif internal_coord == "SOAP":
+        # This is for internal coordinate that uses SOAP descriptor as redundant internal coordinate.
+        r_cut = 5.0
+        n_max = 8 # radial basis function number
+        l_max = 8 # angular spherical harmonic function number
+        soap_parameter = {
+            "r_cut": r_cut,
+            "n_max": n_max,
+            "l_max": l_max
+        }
+        geometry_file_path = "init.xyz" # geometry file contains information about molecule.
+        coordinate_transformer = gpr.internal.SoapInternal.non_redundant_coordinate_transformer(
+            motion.beads.natoms,
+            ref_x_list,
+            names,
+            load,
+            load_file_path=neb_final_gpr_folder,
+            geometry_file_path= geometry_file_path,
+            soap_parameter= soap_parameter
         )
 
     else:

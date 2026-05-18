@@ -327,6 +327,7 @@ def split_train_cv_data(cartesian_coordinate_x,
         cv_force = np.array([])
         cv_hessian_index_list = np.array([])
         cv_hessian_data = np.array([])
+        cv_index = np.array([])
     else:
         hessian_data_num = len(hessian_index_list)
         cv_hessian_data_num = round((1- training_ratio) * hessian_data_num)

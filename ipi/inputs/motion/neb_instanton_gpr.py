@@ -722,7 +722,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": str,
                 "default": "bond",
-                "options": ["bond", "Coulomb", "IRZ", "MIC"],
+                "options": ["bond", "Coulomb", "IRZ", "MIC", "SOAP"],
                 "help": """
                 The option to construct primitive internal coordinate.
                 We provide three choices: bond, Coulomb and IRZ. 
