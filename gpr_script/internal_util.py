@@ -81,13 +81,15 @@ def create_coordinate_transformer(motion:Motion, ref_x_list, load):
 
     elif internal_coord == "SOAP":
         # This is for internal coordinate that uses SOAP descriptor as redundant internal coordinate.
-        r_cut = 5.0
+        r_cut = 10.0 # distance cutoff. 
         n_max = 8 # radial basis function number
         l_max = 8 # angular spherical harmonic function number
+        sigma= 1.0 # standard deviation for gaussians used to expand atomic density
         soap_parameter = {
             "r_cut": r_cut,
             "n_max": n_max,
-            "l_max": l_max
+            "l_max": l_max,
+            "sigma": sigma
         }
         geometry_file_path = "init.xyz" # geometry file contains information about molecule.
         coordinate_transformer = gpr.internal.SoapInternal.non_redundant_coordinate_transformer(

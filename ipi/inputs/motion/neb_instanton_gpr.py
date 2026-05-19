@@ -735,6 +735,7 @@ class InputNebInstGPR(InputDictionary):
                 in the redundant internal coordinate.
                 For MIC, this is mixed internal cartesian coordinate. (A type of Hybrid delocalized internal coordinate (HDLC)).
                 The nonbonded_atom_index also needs to be specified.
+                For SOAP, we use SOAP(Smooth Overlap of Atomic Positions) descriptor.
                 """
             }
         ),

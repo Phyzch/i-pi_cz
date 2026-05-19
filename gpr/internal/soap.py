@@ -15,7 +15,8 @@ class SOAPDescriptor(InternalCoordinates):
                  natom: int,
                  r_cut: float = 5,
                  n_max: int = 8,
-                 l_max: int = 8
+                 l_max: int = 8,
+                 sigma: float= 1.0
                  ):
         """
         r_cut: A cutoff for SOAP descriptor in angstroms. 
@@ -40,7 +41,8 @@ class SOAPDescriptor(InternalCoordinates):
             r_cut= r_cut,
             n_max= n_max,
             l_max= l_max,
-            average= "outer",
+            sigma= sigma,
+            average= "off",
             sparse= False
         )
 
@@ -65,7 +67,8 @@ class SOAPDescriptor(InternalCoordinates):
         assert molecule.get_positions().shape == xyz3.shape, "The shape of input coordinate is not correct."
         molecule.set_positions(xyz3)
 
-        feature_vectors = self.soap.create(molecule, n_jobs= 1).flatten() #[n_positions * n_features]
+        feature_vectors = self.soap.create(molecule, n_jobs= 1) #[n_positions, n_features]
+        feature_vectors = feature_vectors.flatten()
         return feature_vectors
     
     # return derivatives of SOAP descriptor 
@@ -78,10 +81,10 @@ class SOAPDescriptor(InternalCoordinates):
         assert molecule.get_positions().shape == xyz3.shape, "The shape of input coordinate is not correct."
         molecule.set_positions(xyz3)
 
-        derivatives = self.soap.derivatives(molecule, return_descriptor= False, n_jobs= 1) # [n_positions, natoms, 3, n_features]
+        derivatives = self.soap.derivatives(molecule, return_descriptor= False, n_jobs= 1, method= 'analytical') # [n_positions, natoms, 3, n_features]
         
-        (n_positions, natoms, 3, n_features) = derivatives.shape 
-        derivatives = derivatives.transpose((0, 3, 1, 2)).reshape(-1, natoms, 3) # shape [n_positions * n_features, natoms, 3]
+        (n_positions, natoms, ndofs, n_features) = derivatives.shape 
+        derivatives = derivatives.transpose((0, 3, 1, 2)).reshape(-1, natoms, ndofs) # shape [n_positions * n_features, natoms, ndofs]
 
         return derivatives
 
@@ -143,17 +146,23 @@ class DLC_SOAP(InternalCoordinates):
                  natom: int,
                  r_cut: float = 5.0,
                  n_max: int = 8,
-                 l_max: int = 8
+                 l_max: int = 8,
+                 sigma: float= 1.0
                  ):
         """
         r_cut: A cutoff for SOAP descriptor in angstroms. 
         n_max: The maximum degree of radial basis functions.
         l_max: the maximum degree of spherical harmonics. 
         """
-        self.Prims = SOAPDescriptor(molecule, natom, r_cut, n_max, l_max)
+        super().__init__()
+
+        self.Prims = SOAPDescriptor(molecule, natom, r_cut, n_max, l_max, sigma)
         self.na = natom 
         self.molecule = molecule
         self.ref_x_list = ref_x_list # ref coordinate list for building the delocalized internal coordinates.
+
+        # for debug:
+        feature_vectors= self.Prims.calculate(ref_x_list[0])
 
         self.build_dlc() 
 
@@ -169,9 +178,10 @@ class DLC_SOAP(InternalCoordinates):
             Bmat_list.append(Bmat)
         
         Bmat_list = np.array(Bmat_list)
-        Bmat_average = np.mean(Bmat_list, axis= 0)
+
+        Bmat = Bmat_list[0]
         # SVD decomposition of Bmat
-        U, S, Vh = np.linalg.svd(Bmat_average, full_matrices= False)
+        U, S, Vh = np.linalg.svd(Bmat, full_matrices= False)
 
         natom = self.na
         # If we do not include information about the position of 

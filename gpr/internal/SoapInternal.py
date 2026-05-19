@@ -50,11 +50,11 @@ class non_redundant_coordinate_transformer(dummy_non_redundant_coordinate_transf
         molecule.set_positions(ref_x.reshape(self.natom, 3))
 
         if soap_parameter is None:
-            r_cut, n_max, l_max = [5, 8, 8]
+            r_cut, n_max, l_max, sigma = [5, 8, 8, 1.0]
         else:
-            r_cut, n_max, l_max = [soap_parameter["r_cut"], soap_parameter["n_max"], soap_parameter["l_max"]]
+            r_cut, n_max, l_max, sigma = [soap_parameter["r_cut"], soap_parameter["n_max"], soap_parameter["l_max"], soap_parameter["sigma"]]
         
-        self.dlc_coord = DLC_SOAP(ref_x_list, molecule, natom, r_cut, n_max, l_max)
+        self.dlc_coord = DLC_SOAP(ref_x_list, molecule, natom, r_cut, n_max, l_max, sigma)
 
         # record unitary matrix U and singular value matrix S for the reference point.
         self.ref_U = self.dlc_coord.ref_U 
