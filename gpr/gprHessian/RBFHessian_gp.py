@@ -557,10 +557,12 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             inputs_hessian_data_point_index = kwargs.get(
                 "inputs_hessian_data_point_index"
             )
+
             if inputs_hessian_data_point_index is None:
                 raise RuntimeError(
                     "Must provide inputs_hessian_data_point_index for computing kernel."
                 )
+            
             if not isinstance(inputs_hessian_data_point_index, torch.Tensor):
                 raise RuntimeError(
                     "The inputs_hessian_data_point_index must be a tensor."
@@ -827,6 +829,65 @@ def check_cond_number(model: GPModelWithHessians):
     cond = torch.linalg.cond(covar)
     print(f"conditional number for covariance matrix: {cond}")
 
+def prediction(model,  test_inputs, test_data_hessian_data_point_index_tensor, include_hessian= True):
+    """
+    Do GPR prediction for each test data. 
+    This is to save GPU memory. 
+    """
+    input_data_num = np.shape(test_inputs)[0]
+    ndofs = test_inputs.shape[1]
+    pot_data = torch.tensor([])
+    grad_data = torch.tensor([])
+    hessian_data = torch.tensor([])
+
+    pot_var_data = torch.tensor([])
+    grad_var_data = torch.tensor([])
+    hessian_var_data = torch.tensor([]) 
+
+    with torch.no_grad():
+        for index in range(input_data_num):
+            test_input_data = test_inputs[index]
+            if include_hessian:
+                if index in test_data_hessian_data_point_index_tensor:
+                    prediction_latent_function = model(
+                        test_input_data.unsqueeze(0),
+                        inputs_hessian_data_point_index= torch.tensor([0], device= test_input_data.device)  # the index of hessian data point in the test data is 0, because we only input one data point each time.
+                    )
+                    hessian = prediction_latent_function.mean[..., 1 + ndofs :]
+                    hessian_data = torch.cat((hessian_data, hessian), dim=0) 
+
+                    var = prediction_latent_function.covariance_matrix.diag()
+                    hessian_var = var[..., 1 + ndofs :]
+                    hessian_var_data = torch.cat((hessian_var_data, hessian_var), dim=0)
+                else:
+                    prediction_latent_function = model(
+                        test_input_data.unsqueeze(0),
+                        inputs_hessian_data_point_index= torch.tensor([], device= test_input_data.device)  # no hessian data point in the test data.
+                    )
+            else:
+                prediction_latent_function = model(
+                    test_input_data.unsqueeze(0),
+                    inputs_hessian_data_point_index= torch.tensor([], device= test_input_data.device),  # no hessian data point in the test data.
+                    include_hessian= False
+                )
+            pot = prediction_latent_function.mean[..., 0].unsqueeze(0)
+            grad = prediction_latent_function.mean[..., 1: 1 + ndofs]
+            pot_data = torch.cat((pot_data, pot), dim=0)
+            grad_data = torch.cat((grad_data, grad), dim=0)
+
+            var = prediction_latent_function.covariance_matrix.diag()
+            pot_var = var[..., 0].unsqueeze(0)
+            grad_var = var[..., 1: 1 + ndofs]
+            pot_var_data = torch.cat((pot_var_data, pot_var), dim=0)
+            grad_var_data = torch.cat((grad_var_data, grad_var), dim=0)    
+
+    test_prediction_mean = torch.cat((pot_data, grad_data, hessian_data), dim=0) 
+    test_prediction_variance = torch.cat((pot_var_data, grad_var_data, hessian_var_data), dim=0)
+
+    return test_prediction_mean, test_prediction_variance
+
+
+
 
 def predict_latent_function_GPHessian(
     model: GPModelWithHessians,
@@ -860,13 +921,19 @@ def predict_latent_function_GPHessian(
     model.eval()
 
     with torch.no_grad():
-        prediction_latent_function = model(
-            test_inputs,
-            inputs_hessian_data_point_index=test_data_hessian_data_point_index_tensor,
-        )
+        #---- old code do all GPR inference at once. --- 
+        # prediction_latent_function = model(
+        #     test_inputs,
+        #     inputs_hessian_data_point_index=test_data_hessian_data_point_index_tensor,
+        # )
+        # # mean value of multi-variate normal distribution.
+        # test_prediction_mean = prediction_latent_function.mean
+        # test_prediction_variance = torch.diag(prediction_latent_function.covariance_matrix)
+        # --------------------
 
-        # mean value of multi-variate normal distribution.
-        test_prediction_mean = prediction_latent_function.mean
+        # Test do it one by one for data.
+        test_prediction_mean, test_prediction_variance = prediction(model, test_inputs, test_data_hessian_data_point_index_tensor)
+
         pots, grads, hessians = transform_1d_train_targets_into_pots_grads_hessians(
             test_prediction_mean,
             test_data_num,
@@ -875,10 +942,6 @@ def predict_latent_function_GPHessian(
             test_data_with_hessian_number,
         )
 
-        # the diagonal component of covariance matrix of multi-variate normal distribution gives the uncertainty of prediction.
-        test_prediction_variance = torch.diag(
-            prediction_latent_function.covariance_matrix
-        )
         pots_var, grads_var, hessians_var = (
             transform_1d_train_targets_into_pots_grads_hessians(
                 test_prediction_variance,
@@ -890,19 +953,28 @@ def predict_latent_function_GPHessian(
         )  # transform 1d data to pots, grads, hessian. It is the same for variance & mean value
 
         # # use only gradient information to predict the gradient. 
-        prediction_latent_function_without_hessian = model(
-            test_inputs,
-            inputs_hessian_data_point_index=test_data_hessian_data_point_index_tensor,
-            include_hessian= False
-        )
-        
-        test_prediction_mean_without_hessian = prediction_latent_function_without_hessian.mean
+
+        # -- old code that do prediction for all data at once. ---
+        # prediction_latent_function_without_hessian = model(
+        #     test_inputs,
+        #     inputs_hessian_data_point_index=test_data_hessian_data_point_index_tensor,
+        #     include_hessian= False
+        # )
+        # test_prediction_mean_without_hessian = prediction_latent_function_without_hessian.mean
+        # test_prediction_variance_without_hessian = torch.diag(prediction_latent_function_without_hessian.covariance_matrix)
+        # -----
+        test_prediction_mean_without_hessian, test_prediction_variance_without_hessian = prediction(model, 
+                                                                                                    test_inputs, 
+                                                                                                    test_data_hessian_data_point_index_tensor, 
+                                                                                                    include_hessian= False)
+
         predicted_grads = test_prediction_mean_without_hessian[..., test_data_num : test_data_num * (1 + ndofs)].reshape(test_data_num, ndofs)
         grads = predicted_grads 
 
-        test_prediction_variance_without_hessian = torch.diag(prediction_latent_function_without_hessian.covariance_matrix)
+
         predicted_grads_var = test_prediction_variance_without_hessian[..., test_data_num : test_data_num * (1 + ndofs)].reshape(test_data_num, ndofs)
         grads_var = predicted_grads_var 
+
 
         pots = pots.detach().cpu().numpy()
         grads = grads.detach().cpu().numpy()
