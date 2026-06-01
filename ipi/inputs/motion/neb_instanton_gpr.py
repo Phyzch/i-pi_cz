@@ -722,7 +722,7 @@ class InputNebInstGPR(InputDictionary):
             {
                 "dtype": str,
                 "default": "bond",
-                "options": ["bond", "Coulomb", "IRZ", "MIC", "SOAP"],
+                "options": ["bond", "Coulomb", "IRZ", "MIC"],
                 "help": """
                 The option to construct primitive internal coordinate.
                 We provide three choices: bond, Coulomb and IRZ. 
@@ -735,7 +735,6 @@ class InputNebInstGPR(InputDictionary):
                 in the redundant internal coordinate.
                 For MIC, this is mixed internal cartesian coordinate. (A type of Hybrid delocalized internal coordinate (HDLC)).
                 The nonbonded_atom_index also needs to be specified.
-                For SOAP, we use SOAP(Smooth Overlap of Atomic Positions) descriptor.
                 """
             }
         ),
