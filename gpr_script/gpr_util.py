@@ -440,18 +440,18 @@ def analyze_force_error(coord,
     )
 
     # error for force component that is predicted by linear regression.
-    constrained_dofs = gpr_hessian_model.FixingDofs.rigid_internal_dofs
+    rigid_internal_dofs = gpr_hessian_model.FixingDofs.rigid_internal_dofs
 
-    if len(constrained_dofs) > 0:
-        constrained_force_error = (np.linalg.norm(ab_initio_grad_q[:, constrained_dofs] 
-                                                - predicted_grad_q[:, constrained_dofs],
+    if len(rigid_internal_dofs) > 0:
+        rigid_force_error = (np.linalg.norm(ab_initio_grad_q[:, rigid_internal_dofs] 
+                                                - predicted_grad_q[:, rigid_internal_dofs],
                                                 axis= 1) / 
-                                                np.linalg.norm(ab_initio_grad_q[:, constrained_dofs], 
+                                                np.linalg.norm(ab_initio_grad_q[:, rigid_internal_dofs], 
                                                                 axis= 1)
                                )
-        absolute_constrained_force_error = np.linalg.norm(ab_initio_grad_q[:, constrained_dofs] - predicted_grad_q[:, constrained_dofs],
+        absolute_constrained_force_error = np.linalg.norm(ab_initio_grad_q[:, rigid_internal_dofs] - predicted_grad_q[:, rigid_internal_dofs],
                                                 axis= 1)
-        print(f"{data_type}: error in constrained internal dofs for force prediction (linear regression): {constrained_force_error}")
+        print(f"{data_type}: error in constrained internal dofs for force prediction (linear regression): {rigid_force_error}")
 
 
     # error for force component that is predicted by gaussian process regression. 
@@ -470,6 +470,13 @@ def analyze_force_error(coord,
     # print(f"{data_type}: absolute error for force prediction {df}\n")
     # print(f"{data_type}: absolute error in constrained internal dofs for force prediction (linear regression): {absolute_constrained_force_error}")
     # print(f"{data_type}: absolute error in free moving internal dofs for force prediction (GPR model): {absolute_free_moving_force_error}")
+
+    h5_file_path = os.path.join(data_type + " internal_coord_force.h5")
+    with h5py.File(h5_file_path, "w") as h5f:
+        h5f.create_dataset("ab_initio_grad_internal_coord", data= ab_initio_grad_q, compression= "gzip")
+        h5f.create_dataset("gpr_predicted_grad_internal_coord", data= predicted_grad_q, compression= "gzip")
+        h5f.create_dataset("free_moving_dofs", data= np.array(free_moving_dofs), compression= "gzip")
+        h5f.create_dataset("rigid_internal_dofs", data= np.array(rigid_internal_dofs), compression= "gzip")
 
     pass 
 
@@ -495,6 +502,8 @@ def analyze_hessian_error(coord,
     )
 
     print(f"{data_type}: relative hessian error for ring polymer beads: {relative_hessian_error}")
+
+    internal_coord = gpr_hessian_model.coordinate_transformer.get_internal_coordinate_q(coord[hessian_data_point_index])
 
     ab_initio_hessian_q = gpr_hessian_model.coordinate_transformer.transform_cartesian_hessian_to_internal_hessian(
             coord[hessian_data_point_index],
@@ -561,6 +570,7 @@ def analyze_hessian_error(coord,
         h5f.create_dataset("gpr_hessian_internal_coord", data= predicted_hessian_q, compression= "gzip")
         h5f.create_dataset("free_moving_dofs", data= np.array(free_moving_dofs), compression= "gzip")
         h5f.create_dataset("rigid_internal_dofs", data= np.array(rigid_internal_dofs), compression= "gzip")
+        h5f.create_dataset("internal_coord", data= internal_coord, compression= "gzip")
 
     pass
 

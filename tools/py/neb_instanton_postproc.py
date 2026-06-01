@@ -526,7 +526,7 @@ def compute_instanton_rate_or_splitting():
 
         if not quiet:
             # zero_mode_index = np.argmin(np.absolute(hess_eigval)) # zero mode is the one with the smallest absolute value of eigenvalue. it should be the second lowest mode, since the lowest one is the imaginary frequency (unstable mode).
-            zero_mode_index = 1   
+            zero_mode_index = np.argmin(np.absolute(hess_eigval))
             del_freq = np.sign(hess_eigval[zero_mode_index]) * np.absolute(hess_eigval[zero_mode_index]) ** 0.5 / cm2au
             print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
 

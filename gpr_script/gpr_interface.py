@@ -1404,7 +1404,7 @@ class GPRHessianMapper(object):
         if (self.add_new_hessian_data_bool or self.add_new_grad_data_bool) and self.train_hessian_model_bool:
             self.train_gpr_hessian_model()
 
-            gpr_util.analyze_train_error(self.gpr_hessian_model)
+        gpr_util.analyze_train_error(self.gpr_hessian_model)
                 
         # store the computed ab inito gradient and hessian data if we compute new data point. 
         self.store_ab_initio_hessian_and_grad_data(candidate_grad_point_x,

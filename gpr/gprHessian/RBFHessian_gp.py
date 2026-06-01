@@ -836,13 +836,13 @@ def prediction(model,  test_inputs, test_data_hessian_data_point_index_tensor, i
     """
     input_data_num = np.shape(test_inputs)[0]
     ndofs = test_inputs.shape[1]
-    pot_data = torch.tensor([])
-    grad_data = torch.tensor([])
-    hessian_data = torch.tensor([])
+    pot_data = torch.tensor([]).to(test_inputs.device)
+    grad_data = torch.tensor([]).to(test_inputs.device)
+    hessian_data = torch.tensor([]).to(test_inputs.device)
 
-    pot_var_data = torch.tensor([])
-    grad_var_data = torch.tensor([])
-    hessian_var_data = torch.tensor([]) 
+    pot_var_data = torch.tensor([]).to(test_inputs.device)
+    grad_var_data = torch.tensor([]).to(test_inputs.device)
+    hessian_var_data = torch.tensor([]).to(test_inputs.device) 
 
     with torch.no_grad():
         for index in range(input_data_num):
