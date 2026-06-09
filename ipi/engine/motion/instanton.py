@@ -1172,6 +1172,7 @@ class DummyOptimizer:
                     nbeads=self.beads.nbeads,
                     fixatoms=self.fixatoms,
                     friction=self.options["frictionSD"],
+                    d= 0.01,
                 )
 
                 if self.options["friction"] and self.options["frictionSD"]:
@@ -1450,6 +1451,7 @@ class HessianOptimizer(DummyOptimizer):
                 nbeads=self.beads.nbeads,
                 fixatoms=self.fixatoms,
                 friction=self.options["frictionSD"],
+                d= 0.01
             )
             if self.options["friction"] and self.options["frictionSD"]:
                 phys_hessian = full_hessian[0]
@@ -1505,6 +1507,7 @@ class HessianOptimizer(DummyOptimizer):
                 nbeads=self.beads.nbeads,
                 fixatoms=self.fixatoms,
                 friction=self.options["frictionSD"],
+                d= 0.01
             )
 
             if self.options["friction"] and self.options["frictionSD"]:
@@ -1794,7 +1797,7 @@ class LanczosOptimizer(HessianOptimizer):
                 self.mapper.sm.dbeads.natoms,
                 self.mapper.coef,
             )
-            h_test = np.add(self.mapper.sm.h, h_0)  # add spring terms to the physical hessian.  FIXME: They only treat asr = None case here. What about 'poly' & 'crystal' case?
+            h_test = np.add(self.mapper.sm.h, h_0)  # add spring terms to the physical hessian.  
             d, w = clean_hessian(
                 h_test,
                 self.mapper.sm.dbeads.q,

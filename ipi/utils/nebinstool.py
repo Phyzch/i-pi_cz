@@ -372,8 +372,61 @@ def print_instanton_hess(prefix, hessian, output_maker):
 
         f.write("\n")
 
+def three_point_stencil(x0, rp_beads, rp_forces, j, d= 0.001):
+    """
+    compute first order derivative using finite difference with three point stencil. 
+    j: index of the dof we want to compute the derivative along.
+    d: finite difference step.  
+    """
+    x = x0.copy()
+    # PLUS
+    x[:, j] = x0[:, j] + d
+    rp_beads.q[:] = x  # update bead location.
+    g1 = -rp_forces.f  # gradient = - force.
 
-def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1,  fixdofs = [], d=0.001):
+    # Minus
+    x[:, j] = x0[:, j] - d
+    rp_beads.q[:] = x
+    g2 = -rp_forces.f  # gradient = - force.
+
+    # COMBINE
+    g = (g1 - g2) / (2 * d)
+
+    return g 
+
+def five_point_stencil(x0, rp_beads, rp_forces, j, d=0.001):
+    """
+    compute first order derivative using finite difference with five point stencil.
+    j: index of the dof we want to compute the derivative along.
+    d: finite difference step. 
+    """
+    x = x0.copy()
+    # +2d 
+    x[:, j] = x0[:, j] + 2 * d 
+    rp_beads.q[:] = x 
+    g1 = -rp_forces.f
+
+    # +d
+    x[:, j] = x0[:, j] + d
+    rp_beads.q[:] = x
+    g2 = -rp_forces.f
+
+    # -d
+    x[:, j] = x0[:, j] - d
+    rp_beads.q[:] = x
+    g3 = -rp_forces.f
+
+    # -2d
+    x[:, j] = x0[:, j] - 2 * d
+    rp_beads.q[:] = x
+    g4 = -rp_forces.f
+
+    # COMBINE
+    g = (-g1 + 8 * g2 - 8 * g3 + g4) / (12 * d)
+
+    return g
+
+def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1,  fixdofs = [], d=0.01, stencil_size = 3):
     """
     Adapted from hesstool.py
     Compute hessian as finite difference of force.
@@ -385,7 +438,9 @@ def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1,  fixdofs = [], d=0.00
            natoms   = number of atoms
            nbeads   = number of beads
            fix_dofs = indexes of fixed dofs
-           d        = displacement
+           d        = displacement (Note to make numerical hessian calculation stable, d should be small but not too small. 
+           We recommend to test different values of d to make sure the hessian is converged with respect to d.
+           In our test, d= 0.01 is a good choice.)
 
     OUT    h       = physical hessian ( (natoms-len(fixatoms) )*3 , nbeads*( natoms-len(fixatoms) )*3)
     """
@@ -435,20 +490,14 @@ def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1,  fixdofs = [], d=0.00
                 " @get_hessian: Computing hessian: %d of %d" % (ndone + 1, ncalc),
                 verbosity.low,
             )
-            x = x0_copy.copy()
 
-            # PLUS
-            x[:, j] = x0_copy[:, j] + d
-            rp_beads.q[:] = x  # update bead location.
-            g1 = -rp_forces.f  # gradient = - force.
+            if stencil_size == 3:
+                g = three_point_stencil(x0_copy, rp_beads, rp_forces, j, d)
+            elif stencil_size == 5:
+                g = five_point_stencil(x0_copy, rp_beads, rp_forces, j, d)
+            else:
+                raise ValueError("unsupported stencil size. Only 3 and 5 are supported. Current value: {}".format(stencil_size))
 
-            # Minus
-            x[:, j] = x0_copy[:, j] - d
-            rp_beads.q[:] = x
-            g2 = -rp_forces.f  # gradient = - force.
-
-            # COMBINE
-            g = (g1 - g2) / (2 * d)
             # Set hessian component along fixed dofs as 0.
             g[:, fixdofs] = 0
             

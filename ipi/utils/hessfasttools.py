@@ -61,7 +61,7 @@ class SelectiveHessianCalculation:
         if internal_coord_type == "Coulomb":
             train_inputs_change = np.abs(sq * (vh @ train_x_change))
         elif internal_coord_type == "bond":
-            train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
+            train_inputs_change = np.abs(sq * (vh @ train_x_change))
         else:
             print("Warning: internal coord type unrecognized.")
             train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
@@ -87,6 +87,10 @@ class SelectiveHessianCalculation:
                 train_x, grad_x
             )
         )
+
+        # Need to provide choice for using change in the internal coordinate / force as criterion for selecting free moving dofs.
+        # code that use the change in forces as criterion to select dofs to include in GPR model.
+        # This code will effectively prevent the forces with very different magnitudes to be modeled together by GPR.
         grads_change_cutoff_ratio = 0.1
         grads_change = np.max(grad_q, axis= 0) - np.min(grad_q, axis= 0)
         grads_change_cutoff = np.max(grads_change) * grads_change_cutoff_ratio
@@ -166,7 +170,7 @@ class SelectiveHessianCalculation:
         
 
     
-    def get_internal_coordinate_hessian_component(self, train_x, train_q, beads, forces, hess, index_q, d= 0.001):
+    def get_internal_coordinate_hessian_component(self, train_x, train_q, beads, forces, hess, index_q, d= 0.01):
         """
         compute the hessian component along internal coordinate index i: Hq[i, :].
         component of hessian matrix along dof (index_q) is computed and stored in hess. 
@@ -437,7 +441,7 @@ class SelectiveHessianCalculation:
         if self.cross_validation_bool and len(self.rigid_mode_train_q_dataset) >= 3:
             self.linear_regression_cross_validation(ridge_regularization_alpha= ridge_regularization_alpha)
 
-    def get_hessian(self, rp_beads, rp_forces, x0, d= 0.001):
+    def get_hessian(self, rp_beads, rp_forces, x0, d= 0.01):
         """
         Compute hessian as finite difference of forces in the internal coordinate.
         Then transform hessian in internal coordinate back to Cartesian coordinate.

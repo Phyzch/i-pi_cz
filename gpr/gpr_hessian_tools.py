@@ -383,7 +383,7 @@ class FixInternalDofs(object):
         if internal_coord_type == "Coulomb":
             train_inputs_change = np.abs(sq * (vh @ train_x_change))
         elif internal_coord_type == "bond":
-            train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
+            train_inputs_change = np.abs(sq * (vh @ train_x_change))
         else:
             print("Warning: internal coord type unrecognized.")
             train_inputs_change = np.max(train_inputs, axis= 0) - np.min(train_inputs, axis= 0)
@@ -403,19 +403,20 @@ class FixInternalDofs(object):
 
         # Need to provide choice for using change in the internal coordinate / force as criterion for selecting free moving dofs.
         # code that use the change in forces as criterion to select dofs to include in GPR model.
-        # grads_change_cutoff_ratio = 0.1
-        # grads_change = np.max(grads, axis= 0) - np.min(grads, axis= 0)
-        # grads_change_cutoff = np.max(grads_change) * grads_change_cutoff_ratio  # this cutoff value may need to be tuned for different molecules.
-        # rigid_internal_dofs_with_force_criterion = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
+        # This code will effectively prevent the forces with very different magnitudes to be modeled together by GPR.
+        grads_change_cutoff_ratio = 0.1
+        grads_change = np.max(grads, axis= 0) - np.min(grads, axis= 0)
+        grads_change_cutoff = np.max(grads_change) * grads_change_cutoff_ratio  # this cutoff value may need to be tuned for different molecules.
+        rigid_internal_dofs_with_force_criterion = np.arange(self.input_dim)[grads_change < grads_change_cutoff]
 
-        # self.rigid_internal_dofs = np.array(list(
-        #                                     set(
-        #                                         np.concatenate([rigid_internal_dofs_with_coord_criterion, 
-        #                                                rigid_internal_dofs_with_force_criterion]
-        #                                                )
-        #                                         )
-        #                                         )
-        #                                     )
+        self.rigid_internal_dofs = np.array(list(
+                                            set(
+                                                np.concatenate([rigid_internal_dofs_with_coord_criterion, 
+                                                       rigid_internal_dofs_with_force_criterion]
+                                                       )
+                                                )
+                                                )
+                                            )
         
         self.rigid_internal_dofs = rigid_internal_dofs_with_coord_criterion
 
