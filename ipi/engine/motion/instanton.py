@@ -35,7 +35,7 @@ from ipi.utils.instools import (
     Fix,
 )
 from ipi.utils.instools import print_instanton_hess, diag_banded, ms_pathway
-from ipi.utils.hesstools import get_hessian, clean_hessian, get_dynmat
+from ipi.utils.hesstools import get_hessian, clean_hessian, get_dynmat, get_hessian_beadwise
 
 
 __all__ = ["InstantonMotion"]
@@ -1165,14 +1165,26 @@ class DummyOptimizer:
 
             else:
                 info("We are going to compute the final hessian", verbosity.low)
-                current_hessian = get_hessian(
-                    gm=self.mapper.gm,
-                    x0=self.beads.q.copy(),
-                    natoms=self.beads.natoms,
-                    nbeads=self.beads.nbeads,
-                    fixatoms=self.fixatoms,
-                    friction=self.options["frictionSD"],
-                    d= 0.01,
+                
+                # current_hessian = get_hessian(
+                #     gm=self.mapper.gm,
+                #     x0=self.beads.q.copy(),
+                #     natoms=self.beads.natoms,
+                #     nbeads=self.beads.nbeads,
+                #     fixatoms=self.fixatoms,
+                #     friction=self.options["frictionSD"],
+                #     d= 0.01,
+                # )
+
+                current_hessian = get_hessian_beadwise(
+                    self.beads,
+                    self.cell,
+                    self.forces,
+                    self.beads.q.copy(),
+                    natoms = self.beads.natoms,
+                    nbeads = self.beads.nbeads,
+                    fixatoms= self.fixatoms,
+                    d= 0.01
                 )
 
                 if self.options["friction"] and self.options["frictionSD"]:
@@ -1187,12 +1199,12 @@ class DummyOptimizer:
                         self.optarrays["fric_hessian"],
                         self.output_maker,
                     )
-
+                
                     phys_hessian = current_hessian[0]
 
                 else:
                     phys_hessian = current_hessian
-
+                
                 # self.optarrays["hessian"][:] = self.fix.get_full_vector(phys_hessian, 2) #ALBERTO
                 self.optarrays["hessian"][:] = phys_hessian  # ALBERTO
 
@@ -1444,15 +1456,28 @@ class HessianOptimizer(DummyOptimizer):
         # compute hessian for the initial instanton geometry. here full_hessian has shape [3 * natoms, 3 * natoms * nbeads]
         # full_hessian is computed using finite difference method ( (f(x+h)-f(x-h))/(2h) )
         if self.options["hessian_init"]:
-            full_hessian = get_hessian(
-                gm=self.mapper.gm,
-                x0=self.beads.q.copy(),
+            # full_hessian = get_hessian(
+            #     gm=self.mapper.gm,
+            #     x0=self.beads.q.copy(),
+            #     natoms=self.beads.natoms,
+            #     nbeads=self.beads.nbeads,
+            #     fixatoms=self.fixatoms,
+            #     friction=self.options["frictionSD"],
+            #     d= 0.01
+            # )
+
+            # debug purpose. compute hessian beadwise.  
+            full_hessian = get_hessian_beadwise(
+                self.beads,
+                self.cell,
+                self.forces,
+                self.beads.q.copy(),
                 natoms=self.beads.natoms,
                 nbeads=self.beads.nbeads,
                 fixatoms=self.fixatoms,
-                friction=self.options["frictionSD"],
-                d= 0.01
+                d = 0.01
             )
+
             if self.options["friction"] and self.options["frictionSD"]:
                 phys_hessian = full_hessian[0]
                 friction_hessian = full_hessian[1]

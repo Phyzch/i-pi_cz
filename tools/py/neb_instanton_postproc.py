@@ -500,6 +500,9 @@ def compute_instanton_rate_or_splitting():
         else:
             m3_for_hessian = np.repeat(m3, repeats= 2, axis= 0) 
         hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi=True)  # remove the  translational and rotational modes.
+        truncated_hess_eigvec = hess_eigvec[:, :50]
+        np.savetxt("hessian_eigval.txt", hess_eigval)
+        np.savetxt("hessian_eigvec.txt", truncated_hess_eigvec)
         print("Final lowest 50 frequencies (cm^-1)")
         d50 = np.array2string(
             np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au,
@@ -527,6 +530,7 @@ def compute_instanton_rate_or_splitting():
         if not quiet:
             # zero_mode_index = np.argmin(np.absolute(hess_eigval)) # zero mode is the one with the smallest absolute value of eigenvalue. it should be the second lowest mode, since the lowest one is the imaginary frequency (unstable mode).
             zero_mode_index = 1
+            # zero_mode_index = 5 # analyze eigenstates and decide zero mode index here. 
             del_freq = np.sign(hess_eigval[zero_mode_index]) * np.absolute(hess_eigval[zero_mode_index]) ** 0.5 / cm2au
             print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
 
@@ -547,22 +551,6 @@ def compute_instanton_rate_or_splitting():
 
         else:
             logQvib = 0.0
-
-        # for debug:
-        exclude_eigenvalue_index = [10, 20, 30]
-        for index in exclude_eigenvalue_index:
-            print(
-                "We are excluding the eigenvalue from 0 until index {} for debug. Its value is {:8.3f} cm^-1".format(
-                    index, np.sign(hess_eigval[index]) * np.absolute(hess_eigval[index]) ** 0.5 / cm2au
-                )
-            )
-            modified_logQvib = (
-                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(hess_eigval[index:]))))
-                + nzeros * np.log(nbeads)
-                + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
-            )
-            print("log(Qvib * N): {:8.3f} (exclude eigenvalue index {})".format(modified_logQvib, index))
-            print("\n")
 
         pos_half_rp = pos[: int(len(pos) / 2), :]
         m3_half_rp = m3[:int(len(m3) / 2), :]

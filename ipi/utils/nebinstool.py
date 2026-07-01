@@ -372,7 +372,7 @@ def print_instanton_hess(prefix, hessian, output_maker):
 
         f.write("\n")
 
-def three_point_stencil(x0, rp_beads, rp_forces, j, d= 0.001):
+def three_point_stencil(x0, rp_beads, rp_forces, j, d= 0.01):
     """
     compute first order derivative using finite difference with three point stencil. 
     j: index of the dof we want to compute the derivative along.
@@ -394,7 +394,7 @@ def three_point_stencil(x0, rp_beads, rp_forces, j, d= 0.001):
 
     return g 
 
-def five_point_stencil(x0, rp_beads, rp_forces, j, d=0.001):
+def five_point_stencil(x0, rp_beads, rp_forces, j, d=0.01):
     """
     compute first order derivative using finite difference with five point stencil.
     j: index of the dof we want to compute the derivative along.
@@ -425,6 +425,48 @@ def five_point_stencil(x0, rp_beads, rp_forces, j, d=0.001):
     g = (-g1 + 8 * g2 - 8 * g3 + g4) / (12 * d)
 
     return g
+
+def get_hessian_beadwise(dbeads, dforces, dcell, x0, natoms, nbeads=1, fixdofs=[], d= 0.01, stencil_size= 3):
+    """
+    Compute hessian for each bead separately. The hessian for fixed dofs will be set as 0 and we will skip its calculation.
+    """
+    ndofs = natoms * 3 
+    h = np.zeros((nbeads, ndofs, ndofs), float)
+    
+    def create_single_bead_and_forces():
+        bead = Beads(dbeads.natoms, 1)
+        bead.m = dbeads.m
+        bead.names[:] = dbeads.names
+        cell = dcell.copy() 
+        forces= dforces.copy(bead, cell)
+
+        return bead, forces
+
+    beads, forces = create_single_bead_and_forces() 
+    for i in range(nbeads):
+        info(" @get_hessian_beadwise: Computing hessian for bead %d of %d" % (i+1, nbeads), verbosity.low)
+        if isinstance(x0, ipi.utils.depend.depend_array):
+            bead_x0 = np.copy(dstrip(x0[i]))
+        elif isinstance(x0, np.ndarray):
+            bead_x0 = np.copy(x0[i])
+        bead_x0 = bead_x0[np.newaxis, :] 
+
+        for j in range(ndofs):
+            if j in fixdofs:
+                continue
+            else:
+                if stencil_size == 3:
+                    g = three_point_stencil(bead_x0, beads, forces, j, d)
+                elif stencil_size == 5:
+                    g = five_point_stencil(bead_x0, beads, forces, j, d)
+                else:
+                    raise ValueError("unsupported stencil size. Only 3 and 5 are supported. Current value: {}".format(stencil_size))
+                
+                h[i, j] = g.flatten()
+    
+    h = np.transpose(h, (1, 0, 2)).reshape((ndofs, nbeads * ndofs))
+
+    return h 
 
 def get_hessian(rp_beads, rp_forces, x0, natoms, nbeads=1,  fixdofs = [], d=0.01, stencil_size = 3):
     """

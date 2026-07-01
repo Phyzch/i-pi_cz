@@ -982,7 +982,7 @@ class GPRHessianMapper(object):
         if (not model_hyperparameter_exists) | self.train_hessian_model_bool:
             # the hyper-parameter of the gpr hessian model does not exist.
             # or we want to train the model by setting train_hessian_model as true.
-            self.train_gpr_hessian_model(stagewise_training_bool= True)
+            self.train_gpr_hessian_model(stagewise_training_bool= False)
 
         gpr_util.analyze_train_error(self.gpr_hessian_model)
             
@@ -1227,9 +1227,20 @@ class GPRHessianMapper(object):
                         d= 0.01
                     )
                 else:
-                    new_hessians = ipi.utils.nebinstool.get_hessian(
+                    # new_hessians = ipi.utils.nebinstool.get_hessian(
+                    #     new_beads,
+                    #     new_forces,
+                    #     np.copy(new_beads.q),
+                    #     natoms,
+                    #     new_hessian_data_num,
+                    #     d= 0.01,
+                    #     stencil_size= 3
+                    # )
+
+                    new_hessians = ipi.utils.nebinstool.get_hessian_beadwise(
                         new_beads,
                         new_forces,
+                        self.motion.cell,
                         np.copy(new_beads.q),
                         natoms,
                         new_hessian_data_num,

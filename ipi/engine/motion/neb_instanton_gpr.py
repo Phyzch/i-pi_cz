@@ -2742,12 +2742,23 @@ class RP_MAP(object):
         new_forces = self.rp_forces.copy(new_beads, self.dcell)
         new_beads.q = new_hessian_point_x
 
-        new_hessians = ipi.utils.nebinstool.get_hessian(
+        # new_hessians = ipi.utils.nebinstool.get_hessian(
+        #     new_beads,
+        #     new_forces,
+        #     np.copy(new_beads.q),
+        #     natoms,
+        #     new_hessian_data_num
+        # )
+
+        new_hessians = ipi.utils.nebinstool.get_hessian_beadwise(
             new_beads,
             new_forces,
+            self.dcell,
             np.copy(new_beads.q),
             natoms,
-            new_hessian_data_num
+            new_hessian_data_num,
+            d= 0.01,
+            stencil_size= 3
         )
 
         new_hessians = np.transpose(

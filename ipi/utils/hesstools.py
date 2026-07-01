@@ -8,7 +8,8 @@ import numpy as np
 import scipy 
 from ipi.utils.messages import verbosity, info
 import os
-
+from ipi.engine.beads import Beads
+from ipi.utils.depend import dstrip
 
 def get_dynmat(h, m3, nbeads=1):
     """Computes the dynamical matrix.
@@ -188,6 +189,68 @@ def clean_hessian(h, q, natoms, nbeads, m, m3, asr, mofi=False, neigs = None):
         return d, w
 
 
+# for debug purpose
+def get_hessian_beadwise(dbead, dcell, dforces, x0, natoms, nbeads, fixatoms= [], d= 0.01):
+    """Compute the physical hessian for each bead separately. This is only for debug purpose. 
+    IN     dbead     = position of the bead (natoms, 3)
+           dforces   = function to evaluate forces given positions
+           natoms   = number of atoms
+           nbeads   = number of beads
+           fixatoms = indexes of fixed atoms
+           d        = displacement
+
+    OUT    h       = physical hessian for each bead (nbeads, natoms*3, natoms*3)
+    """
+    ndofs = natoms * 3
+    h = np.zeros((nbeads, ndofs, ndofs), float)
+    
+    fixdofs = list()
+    for i in fixatoms:
+        fixdofs.extend([3 * i, 3 * i + 1, 3 * i + 2])  # add all fixdofs attached to fix atoms.
+
+    def create_single_bead_and_forces(dbead, dforces):
+        bead = Beads(dbead.natoms, 1)
+        bead.m = dbead.m
+        bead.names[:] = dbead.names
+        cell = dcell.copy() 
+        forces= dforces.copy(bead, cell)
+
+        return bead, forces 
+    
+    def gm(bead, forces, q):
+        assert bead.q.shape == q.shape
+        bead.q[:] = q
+        g = - np.copy(forces.f) 
+        return g 
+
+    bead, forces = create_single_bead_and_forces(dbead, dforces)
+    for i in range(nbeads):
+        info(" @get_hessian_beadwise: Computing hessian for bead %d of %d" % (i+1, nbeads), verbosity.low)
+        bead_x0 = dstrip(x0[i].copy())
+        bead_x0 = bead_x0[np.newaxis, :] 
+
+        for j in range(ndofs):
+           if j in fixdofs:
+               continue
+           else:
+               x = bead_x0.copy()
+               # PLUS
+               x[:, j] = bead_x0[:, j] + d 
+               g1 = gm(bead, forces, x)
+
+               # Minus
+               x[:, j] = bead_x0[:, j] - d 
+               g2 = gm(bead, forces, x)
+
+               # combine:
+               g = (g1 - g2)/ (2 * d)
+
+               h[i, j] = g.flatten()
+
+    h = np.transpose(h, (1, 0, 2)).reshape((ndofs, nbeads * ndofs)) 
+    
+    return h
+
 def get_hessian(
     gm, x0, natoms, nbeads=1, fixatoms=[], d=0.001, new_disc=False, friction=False
 ):
@@ -287,16 +350,19 @@ def get_hessian(
 
             # COMBINE
             g = (f1 - f2) / (2 * d)
+
+            # g = five_point_stencil(x0, gm, j, d)  # use five point stencil to compute the derivative.
+
             h[j, :] = g.flatten()
             f = open("hessian_" + str(j) + ".tmp", "w")
             np.savetxt(f, h)
             f.close()
 
-            if friction:
-                eta_h[:, :, :, j] = (eta1 - eta2) / (2 * d)
-                f = open("hessianEta_" + str(j) + ".tmp", "w")
-                np.savetxt(f, eta_h.flatten())
-                f.close()
+            # if friction:
+            #     eta_h[:, :, :, j] = (eta1 - eta2) / (2 * d)
+            #     f = open("hessianEta_" + str(j) + ".tmp", "w")
+            #     np.savetxt(f, eta_h.flatten())
+            #     f.close()
 
     u, g = gm(x0)  # Keep the mapper updated
 
