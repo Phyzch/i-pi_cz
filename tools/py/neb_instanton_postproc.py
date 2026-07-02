@@ -3,7 +3,7 @@ import sys
 
 import argparse
 from ipi.utils.messages import verbosity, info
-
+import time 
 '''
 Adapted from Instanton_postproc.py written by Y. Litman
 '''
@@ -31,10 +31,10 @@ main directory must be added to the PYTHONPATH environment variable.
 from ipi.engine.simulation import Simulation
 from ipi.utils.units import unit_to_internal, Constants
 from ipi.utils.instools import red2comp
-from ipi.utils.hesstools import clean_hessian
+from ipi.utils.hesstools import clean_hessian, project_hessian 
 from ipi.utils.depend import dstrip
 from ipi.engine.motion.instanton import SpringMapper
-
+from ipi.utils.hesslogdet import compute_hessian_logdet
 
 # UNITS
 K2au = unit_to_internal("temperature", "kelvin", 1.0)
@@ -93,6 +93,14 @@ def parse_input():
         "--freq_reac",
         default= None,
         help="List of frequencies of the minimum. Required for splitting calculation."
+    )
+
+    parser.add_argument(
+        "-ed",
+        "--exact_diagonal",
+        default=True,
+        type= lambda x: x.lower() == "true",
+        help = "Use exact diagonalization to compute logdet of hessian. If False, use trace estimator to compute logdet of hessian.",
     )
 
     args = parser.parse_args() # convert arguments to object and assign arguments as attributes of the namespace. return namespace. the name is specified by --.
@@ -493,27 +501,56 @@ def compute_instanton_rate_or_splitting():
     print(("ASR:    {}".format(asr)))
     print(("1/(betaP*hbar) = {:8.5f}".format((1 / (betaP * hbar)))))
 
+    exact_diag_bool = args.exact_diagonal
+
     if not quiet:
         print("Diagonalization ... \n\n")
         if cal_type == "rate":
             m3_for_hessian = m3
         else:
             m3_for_hessian = np.repeat(m3, repeats= 2, axis= 0) 
-        hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi=True)  # remove the  translational and rotational modes.
-        truncated_hess_eigvec = hess_eigvec[:, :50]
-        np.savetxt("hessian_eigval.txt", hess_eigval)
-        np.savetxt("hessian_eigvec.txt", truncated_hess_eigvec)
-        print("Final lowest 50 frequencies (cm^-1)")
-        d50 = np.array2string(
-            np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au,
-            precision=2,
-            max_line_width=100,
-            formatter={"float_kind": lambda x: "%.2f" % x},
-        )
-        print(("{}".format(d50)))
 
-        # print conditional number
-    
+        # use exact diagonalization to solve eigenvalue and eigenvector.
+        if exact_diag_bool:
+            start_time = time.perf_counter()         
+            hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi=True)  # remove the  translational and rotational modes.
+            end_time = time.perf_counter() 
+            ed_time = (end_time - start_time) / 60
+
+            truncated_hess_eigvec = hess_eigvec[:, :50]
+            np.savetxt("hessian_eigval.txt", hess_eigval)
+            np.savetxt("hessian_eigvec.txt", truncated_hess_eigvec)
+
+            print("Final lowest 50 frequencies (cm^-1)")
+            d50 = np.array2string(
+                np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au,
+                precision=2,
+                max_line_width=100,
+                formatter={"float_kind": lambda x: "%.2f" % x},
+            )
+            print(("{}".format(d50)))
+
+            # debug.
+            zero_mode_index = 1
+            # compute log determinant using the exact diagonalization. 
+            hess_logdet_ED = np.sum(np.log(np.absolute(np.delete(hess_eigval, zero_mode_index))))
+            print(f"log determinant obtained using the exact diagonalization: {hess_logdet_ED}, time {ed_time} min.")
+        else:
+            # compute log determinant using the trace estimator in hesslogdet.py.
+            # project out translational and rotational modes.
+            start_time = time.perf_counter()
+            hm, detI =  project_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
+            # use log determinant estimator to compute log determinant of the projected hessian.
+            hess_logdet_estimate = compute_hessian_logdet(hm, 
+                                                        random_vector_number= 10000,
+                                                        max_tridiag_iter= 50,
+                                                        cg_tolerance = 1e-3
+                                                        )
+            end_time = time.perf_counter()
+            trace_estimator_time = (end_time - start_time) / 60
+            print(f"log determinant obtained using the trace estimator: {hess_logdet_estimate}, time {trace_estimator_time} min.")
+
+        
     # print instanton path for half ring polymer
     nbeads_to_print = int(nbeads/2) 
     print_instanton_path(nbeads_to_print, natoms, neb_beads.names, pos, pots)
@@ -528,26 +565,35 @@ def compute_instanton_rate_or_splitting():
             Qrot = 1.0
 
         if not quiet:
-            # zero_mode_index = np.argmin(np.absolute(hess_eigval)) # zero mode is the one with the smallest absolute value of eigenvalue. it should be the second lowest mode, since the lowest one is the imaginary frequency (unstable mode).
-            zero_mode_index = 1
-            # zero_mode_index = 5 # analyze eigenstates and decide zero mode index here. 
-            del_freq = np.sign(hess_eigval[zero_mode_index]) * np.absolute(hess_eigval[zero_mode_index]) ** 0.5 / cm2au
-            print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
+            if exact_diag_bool:
+                # zero_mode_index = np.argmin(np.absolute(hess_eigval)) # zero mode is the one with the smallest absolute value of eigenvalue. it should be the second lowest mode, since the lowest one is the imaginary frequency (unstable mode).
+                zero_mode_index = 1
+                # zero_mode_index = 5 # analyze eigenstates and decide zero mode index here. 
+                del_freq = np.sign(hess_eigval[zero_mode_index]) * np.absolute(hess_eigval[zero_mode_index]) ** 0.5 / cm2au
+                print("Deleted frequency: {:8.3f} cm^-1".format(del_freq))   # zero mode frequency is deleted. hess_eigval[0] is imaginary freq. (unstable mode)
 
-            if asr != "poly":
-                print("WARNING asr != poly")
-                print("First 50 eigenvalues")
-                ten_eigv = np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au
-                print("{}".format(ten_eigv))
-                print(
-                    "Please check that this you don't have any unwanted zero frequency"
+                if asr != "poly":
+                    print("WARNING asr != poly")
+                    print("First 50 eigenvalues")
+                    ten_eigv = np.sign(hess_eigval[0:50]) * np.absolute(hess_eigval[0:50]) ** 0.5 / cm2au
+                    print("{}".format(ten_eigv))
+                    print(
+                        "Please check that this you don't have any unwanted zero frequency"
+                    )
+
+                logQvib = (
+                    -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, zero_mode_index)))))
+                    + nzeros * np.log(nbeads)
+                    + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
                 )
-
-            logQvib = (
-                -np.sum(np.log(betaP * hbar * np.sqrt(np.absolute(np.delete(hess_eigval, zero_mode_index)))))
-                + nzeros * np.log(nbeads)
-                + np.log(nbeads)     # See eq. 60 in review paper : https://doi.org/10.1080/0144235X.2018.1472353
-            )
+            else:
+                # use logdet from trace estimator.
+                size1 = hm.shape[0] - (6 + 1)
+                logQvib = (
+                    - np.log(betaP * hbar) * size1 - 0.5 * hess_logdet_estimate
+                    + nzeros * np.log(nbeads)
+                    + np.log(nbeads)
+                )
 
         else:
             logQvib = 0.0
