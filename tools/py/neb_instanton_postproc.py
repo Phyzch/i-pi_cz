@@ -103,6 +103,14 @@ def parse_input():
         help = "Use exact diagonalization to compute logdet of hessian. If False, use trace estimator to compute logdet of hessian.",
     )
 
+    parser.add_argument(
+        "-rv",
+        "--random_vector_number",
+        default= 100,
+        type= int,
+        help= "number of random vector for trace estimator."
+    )
+
     args = parser.parse_args() # convert arguments to object and assign arguments as attributes of the namespace. return namespace. the name is specified by --.
     inputt = args.input
     case = args.case
@@ -114,6 +122,7 @@ def parse_input():
     input_freq = args.freq_reac 
     Verbosity = verbosity
     Verbosity.level = "quiet"
+
 
     if case not in list(["instanton"]):
             raise ValueError(
@@ -140,6 +149,28 @@ def parse_input():
     return args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros, input_freq 
 
 # ----- read instanton data from check point file (RESTART) -------
+def block_bead_hessian(hessian, nbeads, natoms, full_rp= True):
+    """
+    get bead hessian in block diagonal form. 
+    shape: [nbeads, 3 * natoms, 3 * natoms]
+    if full_rp is True, the hessian is for full ring polymer, shape is [2 * nbeads, 3 * natoms, 3 * natoms]
+    if False, the hessian is for half ring polymer, shape is [nbeads, 3 * natoms, 3 * natoms]
+
+    :param: hessian: shape [3 * natoms, nbeads, 3 * natoms]
+    """
+    h0 = np.reshape(hessian, (3 * natoms, nbeads, 3 * natoms))
+    h0 = np.transpose(h0, (1, 0, 2))
+
+    if full_rp:
+        full_hessian = np.zeros((2 * nbeads, 3 * natoms, 3 * natoms))
+        full_hessian[:nbeads, :, :] = h0
+        
+        for i in range(nbeads):
+            full_hessian[nbeads + i, :, :] = h0[nbeads - 1 - i, :, :]
+
+        return full_hessian
+    else:
+        return h0
 
 def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
     '''
@@ -191,11 +222,12 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
 
     
     if cal_type == "rate":
+        bead_hessian = block_bead_hessian(hessian, nbeads, natoms, full_rp= True)
+
         h0 = red2comp(hessian, nbeads, natoms)
         full_rp_beads_q, nbeads, hessian2 = get_double(pos, nbeads, natoms, h0)  # get position, nbeads and hessian for full ring polymer. (now nbeads is for full ring polymer)
 
         pos = full_rp_beads_q
-        hessian = hessian2 
 
         m3_half_rp = np.tile(m3_one_bead, ( int(nbeads / 2) , 1))
         # now generate m3 for full ring polymer
@@ -208,7 +240,9 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
         spring = SpringMapper.spring_hessian(
             natoms, nbeads, m3_one_bead, omega2, mode = "full"
         )
-        h = np.add(hessian, spring)
+        h = np.add(hessian2, spring)
+
+
 
     elif cal_type == "splitting":
         if input_freq is None:
@@ -242,12 +276,16 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
                 "We are changing asr to none since we consider a fixed ended linear polymer for the post-processing"
             )
             asr = "none"
+        
+        bead_hessian = block_bead_hessian(hessian, nbeads, natoms, full_rp= False)
+
+    spring_term_param = (nbeads, natoms, omega2, m3_one_bead)
 
     return (neb_beads, m, nbeads, natoms, temp2, 
             pots, pos, 
             V0, h,  m3, 
             omega2, asr,
-            cal_type)
+            cal_type, bead_hessian, spring_term_param)
 
 
 # -----Some functions-----------------
@@ -479,9 +517,11 @@ def print_instanton_path(nbeads, natoms, names, bead_q ,pots, filename = "instan
 def compute_instanton_rate_or_splitting():
     args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros, input_freq = parse_input()
 
+    random_vector_number = args.random_vector_number
+
     (neb_beads, m, nbeads, natoms, temp2, 
      pots, pos, 
-     V0, h, m3,  omega2, asr, cal_type) = Read_instanton_data(inputt, 
+     V0, h, m3,  omega2, asr, cal_type, bead_hessian, spring_term_param) = Read_instanton_data(inputt, 
                                                          V00, 
                                                          temp, 
                                                          quiet,
@@ -539,10 +579,13 @@ def compute_instanton_rate_or_splitting():
             # compute log determinant using the trace estimator in hesslogdet.py.
             # project out translational and rotational modes.
             start_time = time.perf_counter()
-            hm, detI =  project_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
+            hm, detI, proj_info =  project_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
             # use log determinant estimator to compute log determinant of the projected hessian.
-            hess_logdet_estimate = compute_hessian_logdet(hm, 
-                                                        random_vector_number= 10000,
+            hess_logdet_estimate = compute_hessian_logdet(hm,
+                                                          bead_hessian,
+                                                          spring_term_param,
+                                                          proj_info, 
+                                                        random_vector_number= random_vector_number,
                                                         max_tridiag_iter= 50,
                                                         cg_tolerance = 1e-3
                                                         )

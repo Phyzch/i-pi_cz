@@ -266,13 +266,16 @@ def project_hessian(h, q, natoms, nbeads, m, m3, asr, mofi= False):
     # Symmetrize to use linalg.eigh
     hmT = hm.T
     hm = (hmT + hm) / 2.0
+
+    proj_vec = D  
+    proj_info = (ism, proj_vec) # info required to transform hessian into dynmat 
     if mofi:
         if asr == "poly":
-            return hm, np.prod(I) 
+            return hm, np.prod(I), proj_info
         else:
-            return hm, 1.0
+            return hm, 1.0, proj_info
     else:
-        return hm
+        return hm, proj_info
 
 # comopute hessian for each bead separately. This will treat soft mode correctly. 
 def get_hessian_beadwise(dbead, dcell, dforces, x0, natoms, nbeads, fixatoms= [], d= 0.01):
