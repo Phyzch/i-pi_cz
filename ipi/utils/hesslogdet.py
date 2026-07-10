@@ -259,27 +259,6 @@ def compute_block_diagonal_lcholesky(nbeads, pd_hessian):
     lcholesky = block_tensor_operator.cholesky(upper= False)
     return lcholesky
 
-def estimate_variance_reduction(nbeads, pd_hessian):
-    """
-    assume hessian matrix is H.
-    compute the frobenius norm of H.
-    compute the frobenius norm of L^{-1} H R^{-1}.  H = LR where R = L^{T}
-    here B is block diagonalized part of H. 
-    """
-    h_eigvals = np.linalg.eigvalsh(pd_hessian)
-    frobenius_norm_log_h = np.sqrt(np.sum(np.power(np.log(h_eigvals) , 2)))
-    lcholesky = compute_block_diagonal_lcholesky(nbeads, pd_hessian)
-    rcholesky = lcholesky.transpose(0, 1)
-
-    h1 = lcholesky.solve(right_tensor= torch.tensor(pd_hessian)) # L^{-1} H
-    h2 = h1.matmul(rcholesky.solve(right_tensor= torch.eye(pd_hessian.shape[0]))) # yR = h1 ->  y = h1 R^{-1} I= L^{-1} H R{-1}
-
-    h2_eigvals = np.linalg.eigvalsh(h2.to_dense().numpy())
-    frobenius_norm_log_h2 = np.sqrt(np.sum(np.power(np.log(h2_eigvals) , 2)))
-
-    print(f"frobenius norm of log(hessian) {frobenius_norm_log_h}")
-    print(f"frobenius norm of log(B^(-1/2) H B^(-1/2)) {frobenius_norm_log_h2}")
-
 def compute_residue_operator(nbeads, pd_hessian, sparse_pd_hessian_operator):
     """
     compute B^{-1/2} H B^{-1/2} of pd matrix pd_hessian.
@@ -319,23 +298,21 @@ def compute_hessian_logdet(hessian: np.ndarray,
     elapsed_time = (time.perf_counter() - start_time) / 60
     print(f"Time to solve negative and zero eigenpairs: {elapsed_time:.2f} minutes")
 
+    # construct the positive defintie hessian matrix.
+    # bead + spring term. Then mass weighted & project out zero mode.
+    # finally shift negative eigenvalues to positive. 
     bead_hessian_operator = create_block_diag_linear_operator(bead_hessian)
     rp_sparse_linear_operator = create_spring_term_linear_operator(spring_term_param)
 
     projected_hessian_operator = proj_hessian_operator(bead_hessian_operator,
                                               rp_sparse_linear_operator,
                                               proj_info)
-    hessian_operator = linear_operator.to_linear_operator(torch.tensor(hessian))
-
-    pd_hessian_operator = create_shifted_linear_operator(hessian_operator, v, shift)
+    
     sparse_pd_hessian_operator = create_shifted_linear_operator (projected_hessian_operator,
-                                                                       v,
-                                                                       shift)
+                                                                v,
+                                                                shift)
 
-    shifted_positive_eigenvalues = positive_eigval  
-    total_shifted_mode_number = d.shape[0] 
-    shift_value = - total_shifted_mode_number * np.log(shifted_positive_eigenvalues) + np.log(np.abs(d[0]))
-
+    # compute the logdet for block diagonalized hessian part.
     nbeads = spring_term_param[0]
     block_logdet = compute_block_hessian_logdet(nbeads, hessian)
     print("log det for block diagonal term of shifted psd hessian.")
@@ -344,35 +321,32 @@ def compute_hessian_logdet(hessian: np.ndarray,
     C = v @ np.sqrt(np.diag(shift))
     shift_matrix = C @ C.T 
     pd_hessian = hessian + shift_matrix
-    
-    # compute residue operator of sparse_pd_hessian_operator
-    # estimate_variance_reduction(nbeads, pd_hessian)
-    residue_operator = compute_residue_operator(nbeads, pd_hessian, sparse_pd_hessian_operator)
 
-    # dense linear operator. 
-    # start_time = time.perf_counter()
-    # logdet = compute_logdet(pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
-    # elapsed_time = (time.perf_counter() - start_time) / 60
-    # print(f"Time to compute logdet: {elapsed_time:.2f} minutes")
-
+    # do the trace estimator on the matrix itself.
     start_time = time.perf_counter()
     logdet = compute_logdet(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
     elapsed_time = (time.perf_counter() - start_time) / 60
     print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
  
+     # compute residue operator of sparse_pd_hessian_operator & do the trace estimator.
+    residue_operator = compute_residue_operator(nbeads, pd_hessian, sparse_pd_hessian_operator)
     start_time = time.perf_counter()
     residue_logdet = compute_logdet(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
     elapsed_time = (time.perf_counter() - start_time) / 60
     print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
     logdet_from_residue = residue_logdet + block_logdet
 
+    # compute the standard deviation of trace estimator with 10 samples. 
     logdet_std = compute_trace_estimator_std(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= 10)
     residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= 10)
     print(f"std from 10 samples for logdet: {logdet_std}")
     print(f"std from 10 samples for residue_logdet: {residue_logdet_std}")
 
+
     # remove log(shifted eigval). Add log(d[0]) which is negative eigenvalue.
+    shifted_positive_eigenvalues = positive_eigval  
+    total_shifted_mode_number = d.shape[0] 
+    shift_value = - total_shifted_mode_number * np.log(shifted_positive_eigenvalues) + np.log(np.abs(d[0]))
     hess_logdet = logdet + shift_value
 
-    nonzero_eigval_number = hessian.shape[0] - 1 - 6 # remove 1 zero eigenvalue and 6 translational and rotational zero eigenvalues.
     return hess_logdet
