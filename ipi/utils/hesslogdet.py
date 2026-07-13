@@ -9,6 +9,7 @@ import numpy as np
 import scipy 
 import torch 
 import time 
+import copy 
 
 try:
     import linear_operator
@@ -228,49 +229,106 @@ def proj_hessian_operator(bead_hessian_operator,
 
     return projected_dynmat
 
-def compute_block_hessian_logdet(nbeads, hessian):
+class ControlVariateLogDetTraceEstimator():
     """
-    The submatrix of PSD is also PSD. 
-    We compute logdet for each block corresponds to hessian of each bead. (After shift & adding spring terms)
+    Use control variate method to decrease the variance of log determinant.
     """
-    block_size = int(hessian.shape[0] / (nbeads))
-    logdet_block_matrix = 0
-    for i in range(nbeads):
-        block_indices = range(i * block_size, (i+1) * block_size)
-        block_hessian = hessian[:, block_indices][block_indices, :]
-        eigvals = np.linalg.eigvalsh(block_hessian)
-        logdet_block_matrix = logdet_block_matrix + np.sum(np.log(eigvals))
+    def __init__(self, base_linear_op):
+        self.base_linear_op = base_linear_op
+        self.control_variate_op = None
+        self.residue_op = None 
+        self.construct_control_variate()
+        self.construct_residue_op()
 
-    return logdet_block_matrix
-
-def compute_block_diagonal_lcholesky(nbeads, pd_hessian):
-    """
-    compute lower triangular cholesky linear operator for block diagonal principle matrix of pd_hessian.
-    :param: pd_hessian: positive defintie hessian. numpy.array.
-    :return: lcholesky: lower triangular cholesky decomposition.
-    """
-    block_size = int(pd_hessian.shape[0] / (nbeads))
-    block_matrix = np.zeros((nbeads, block_size, block_size))
-    for i in range(nbeads):
-        block_indices = range(i * block_size, (i+1) * block_size)
-        block = pd_hessian[:, block_indices][block_indices, :]
-        block_matrix[i] = block 
-    block_tensor_operator = linear_operator.operators.BlockDiagLinearOperator(torch.tensor(block_matrix))
-    lcholesky = block_tensor_operator.cholesky(upper= False)
-    return lcholesky
-
-def compute_residue_operator(nbeads, pd_hessian, sparse_pd_hessian_operator):
-    """
-    compute B^{-1/2} H B^{-1/2} of pd matrix pd_hessian.
-    Here B is block diagonalized part of pd_hessian.
-    """
-    lcholesky = compute_block_diagonal_lcholesky(nbeads, pd_hessian)
-    rcholesky = lcholesky.transpose(0, 1)
+    def construct_control_variate(self) -> LinearOperator:
+        """
+        create self.control_variate_op (B).
+        """
+        NotImplementedError(f"compute_control_variate({self.__class__.__name__}) is not implemented")
     
-    r1 = lcholesky.inverse().matmul(sparse_pd_hessian_operator)
-    r2 = r1.matmul(rcholesky.inverse())
+    def compute_control_variate_logdet(self):
+        """
+        compute logdet of control variate operator.
+        This term needs to be computed exactly & explicitly. 
+        """
+        NotImplementedError(f"compute_control_variate_logdet({self.__class__.__name__}) is not implemented")
 
-    return r2 
+    def compute_control_variate_lcholesky(self):
+        """
+        compute the lower triangular cholesky of control variate matrix.
+        """
+        lcholesky = self.control_variate_op.cholesky(upper= False)
+        return lcholesky
+    
+    def construct_residue_op(self):
+        """
+        compute B^{-1/2} H B^{-1/2} of positive definite matrix pd_hessian.
+        Here B is the control variate operator.
+        """
+        lcholesky = self.compute_control_variate_lcholesky()
+        rcholesky = lcholesky.transpose(0,1)
+
+        r1 = lcholesky.inverse().matmul(self.base_linear_op)
+        r2 = r1.matmul(rcholesky.inverse())
+
+        self.residue_op = r2 
+        return r2 
+    
+    def compute_logdet(self, random_vector_number, max_tridiag_iter, cg_tolerance):
+        """
+        compute the log determinant of base linear operator.
+        """
+        # logdet(B)
+        control_variate_logdet = self.compute_control_variate_logdet()
+
+        # logdet(B^{-1/2} A B^{-1/2})
+        residue_logdet = compute_logdet(self._residue_op, random_vector_number, max_tridiag_iter, cg_tolerance)
+        logdet = residue_logdet + control_variate_logdet
+        return logdet
+    
+    @property
+    def residue_op(self):
+        return copy.deepcopy(self._residue_op) 
+
+    @residue_op.setter
+    def residue_op(self, op):
+        self._residue_op = op
+
+class BlockDiagControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEstimator):
+    """
+    Use block diagonal part of base_linear_op as the control variate.
+    """
+    def __init__(self, base_linear_op, nbeads):
+        self.nbeads = nbeads
+        super().__init__(base_linear_op)
+        
+    def construct_control_variate(self):
+        nbeads = self.nbeads
+
+        pd_matrix = self.base_linear_op.to_dense()        
+        block_size = int(pd_matrix.shape[0] / nbeads)
+        block_matrix = np.zeros((nbeads, block_size, block_size))
+        for i in range(nbeads):
+            block_indices = range(i * block_size, (i + 1) * block_size)
+            block = pd_matrix[:, block_indices][block_indices, :]
+            block_matrix[i] = block 
+        
+        # use BlockDiagLinearOperator to construct block matrix.
+        block_tensor_op = linear_operator.operators.BlockDiagLinearOperator(torch.tensor(block_matrix))
+
+        self.control_variate_op = block_tensor_op
+    
+    def compute_control_variate_logdet(self):
+        block_tensor = self.control_variate_op.base_linear_op.to_dense()
+        block_number = self.control_variate_op.num_blocks
+        block_matrix = block_tensor.numpy()
+        logdet = 0
+        for i in range(block_number):
+            block = block_matrix[i]
+            eigvals = np.linalg.eigvalsh(block)
+            logdet = logdet + np.sum(np.log(eigvals))
+
+        return logdet  
 
 def compute_trace_estimator_std(operator, random_vector_number, max_tridiag_iter, cg_tolerance,
                                  avg_num = 10):
@@ -314,34 +372,32 @@ def compute_hessian_logdet(hessian: np.ndarray,
 
     # compute the logdet for block diagonalized hessian part.
     nbeads = spring_term_param[0]
-    block_logdet = compute_block_hessian_logdet(nbeads, hessian)
-    print("log det for block diagonal term of shifted psd hessian.")
+    block_diag_trace_estimator = BlockDiagControlVariateLogDetTraceEstimator(sparse_pd_hessian_operator,
+                                                                          nbeads)
+    blocklogdet = block_diag_trace_estimator.compute_control_variate_logdet()
+    residue_operator = block_diag_trace_estimator.residue_op 
 
-    # get positive definite hessian matrix.
-    C = v @ np.sqrt(np.diag(shift))
-    shift_matrix = C @ C.T 
-    pd_hessian = hessian + shift_matrix
+     # compute residue operator of sparse_pd_hessian_operator & do the trace estimator.
+    start_time = time.perf_counter()
+    logdet_from_residue = block_diag_trace_estimator.compute_logdet(random_vector_number,
+                                                                    max_tridiag_iter,
+                                                                    cg_tolerance)
+    
+    elapsed_time = (time.perf_counter() - start_time) / 60
+    print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
+    print(f"logdet of block matrix {blocklogdet}, logdet of pd matrix use control variate: {logdet_from_residue}")
 
     # do the trace estimator on the matrix itself.
     start_time = time.perf_counter()
     logdet = compute_logdet(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
     elapsed_time = (time.perf_counter() - start_time) / 60
     print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
- 
-     # compute residue operator of sparse_pd_hessian_operator & do the trace estimator.
-    residue_operator = compute_residue_operator(nbeads, pd_hessian, sparse_pd_hessian_operator)
-    start_time = time.perf_counter()
-    residue_logdet = compute_logdet(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
-    elapsed_time = (time.perf_counter() - start_time) / 60
-    print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
-    logdet_from_residue = residue_logdet + block_logdet
 
     # compute the standard deviation of trace estimator with 10 samples. 
     logdet_std = compute_trace_estimator_std(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= 10)
     residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= 10)
     print(f"std from 10 samples for logdet: {logdet_std}")
     print(f"std from 10 samples for residue_logdet: {residue_logdet_std}")
-
 
     # remove log(shifted eigval). Add log(d[0]) which is negative eigenvalue.
     shifted_positive_eigenvalues = positive_eigval  
