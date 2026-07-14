@@ -56,8 +56,12 @@ class SparseLinearOperator(LinearOperator):
         values = self.sparse_matrix.values()
         size = self.sparse_matrix.size()
         transposed_indices = torch.stack([indices[1], indices[0]], dim= 0)
-        transposed_sparse_matrix = torch.sparse_coo_tensor(transposed_indices, values, size)
+        transposed_size = torch.Size([*size[:-2] ,size[-1], size[-2]])
+        transposed_sparse_matrix = torch.sparse_coo_tensor(transposed_indices, values, transposed_size)
         return SparseLinearOperator(transposed_sparse_matrix)
+    
+    def get_sparse_matrix(self):
+        return copy.deepcopy(self.sparse_matrix)
 
 def solve_negative_and_zero_eigenpairs(hessian):
     """
@@ -403,7 +407,6 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
     def compute_sp_eigenvecs(self):
         """
         get eigenvectors of spring term tensor.
-        TODO: This code needs to be optimized to sparse form. if we use this method for large systems.
         """
         # spring terms
         sp_term_tensor = self.spring_term_op.to_dense()
@@ -412,22 +415,107 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         block_size = int(size / self.nbeads)
 
         sp_eigvec_lists = torch.zeros(size, size) # columns are eigenvectors.
+        # sparse form.
+        row_indices = []
+        col_indices = []
+        val_list = []
+        eigval_list = []
         for i in range(block_size):
             indices = range(i, size, block_size)
             sub_tensor = sp_term_tensor[indices, :][:, indices]
             eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
-            sp_eigvec_lists[:, i * self.nbeads: (i + 1) * self.nbeads][indices, :] = eigvecs 
+            # sp_eigvec_lists[:, i * self.nbeads: (i + 1) * self.nbeads][indices, :] = eigvecs 
+            eigval_list.append(eigvals)
+            for j in range(nbeads): # indices for eigenvec.
+                for k in range(nbeads):  # indices for element of eigenvec.
+                    col_indices.append(i*nbeads + j)
+                    row_indices.append(indices[k])
+                    val_list.append(eigvecs[k, j])
 
-        sp_eigvec_tensor = torch.tensor(sp_eigvec_lists)
-        sp_eigvec_op = linear_operator.to_linear_operator(sp_eigvec_tensor)
+        # create sparse tensor.
+        value = torch.tensor(np.array(val_list))
+        row_indices = torch.tensor(np.array(row_indices))
+        col_indices = torch.tensor(np.array(col_indices))
+        indices = torch.stack([row_indices, col_indices], axis= 0)
+        sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, size))
+        sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
 
-        return sp_eigvec_op 
+        eigval_list = torch.tensor(np.array(eigval_list).flatten())
+        # dense tensor and linear operator.
+        # sp_eigvec_tensor = torch.tensor(sp_eigvec_lists)
+        # sp_eigvec_op = linear_operator.to_linear_operator(sp_eigvec_tensor)
+
+        return eigval_list, sp_eigevec_sparse_linear_operator 
     
+    def inverse_sqrt_control_variate(self, eigval_list, sp_eigvec_sparse_linear_operator: SparseLinearOperator):
+        """
+        compute U^{T} B^{-1/2}
+        :param: eigval_list: a list of eigenvalues.
+        :param: sp_eigvec_sparse_linear_operator: sparse linear operator, each column is eigenvector.
+        """
+        nbeads = self.nbeads
+        size = self.base_linear_op.size()[0] 
+        block_size = int(size / nbeads) # physical dimension f.
+        zero_mode_index = range(0, size, nbeads)
+        zero_mode_num = block_size
+
+        # pseudo-inverse of eigenvalue.
+        inv_eigval_list = torch.zeros_like(eigval_list)
+        mask = torch.ones(size, dtype= torch.bool)
+        mask[zero_mode_index] = False
+        inv_eigval_list[mask] = 1.0 / eigval_list[mask]
+        inv_sqrt_eigval_list = torch.sqrt(inv_eigval_list)
+        inv_sqrt_eigval_linear_operator = linear_operator.operators.DiagLinearOperator(inv_sqrt_eigval_list)
+        
+        # U^T U0, here U0 is eigenstate of zero mode.
+        row_indices = torch.tensor(np.array(zero_mode_index))
+        col_indices = torch.tensor(np.array(range(0, zero_mode_num)))
+        val_list = torch.ones(zero_mode_num)
+        indices = torch.stack([row_indices, col_indices], axis= 0)
+        sparse_proj_matrix = torch.sparse_coo_tensor(indices, val_list, size= (size, zero_mode_num))
+        zero_mode_proj_operator = SparseLinearOperator(sparse_proj_matrix)
+
+        # U0: zero mode eigenvec.
+        sp_eigvec_sparse = sp_eigvec_sparse_linear_operator.get_sparse_matrix()
+        zero_mode_eigvec_sparse = torch.index_select(sp_eigvec_sparse, dim= 1, index= torch.tensor(zero_mode_index))
+        zero_mode_eigvec_linear_operator = SparseLinearOperator(zero_mode_eigvec_sparse)
+
+        # (U0^{T} A U0)^{-1/2}
+        sp_zero_modes_proj_tensor = self.sp_zero_modes_proj_tensor
+        # SVD decomposition.
+        u1, s1, v1 = torch.svd(sp_zero_modes_proj_tensor)
+        inv_sqrt_s1 = 1/torch.sqrt(s1)
+        inv_sqrt_zero_modes_proj_tensor = torch.matmul(torch.matmul(u1, torch.diag(inv_sqrt_s1)), v1.T)
+        # Cholesky decomposition.
+        lcholesky = torch.cholesky(sp_zero_modes_proj_tensor)
+        lcholesky_inverse = lcholesky.inverse()
+        inv_sqrt_zero_modes_proj_linear_op = linear_operator.to_linear_operator(lcholesky_inverse)
+
+        # compute U^{T} B^{-1/2}
+        comp1 = inv_sqrt_eigval_linear_operator.matmul(sp_eigvec_sparse_linear_operator.T)
+        comp2 = zero_mode_proj_operator.matmul(inv_sqrt_zero_modes_proj_linear_op).matmul(zero_mode_eigvec_linear_operator.T)
+        inv_sqrt_control_variate = comp1 + comp2 
+
+        return inv_sqrt_control_variate
+
     def construct_residue_op(self):
-        residue_op = super().construct_residue_op()
-        sp_eigvec_op = self.compute_sp_eigenvecs()
-        transformed_residue_op = sp_eigvec_op.T.matmul(residue_op).matmul(sp_eigvec_op)
-        self.residue_op = transformed_residue_op
+        # TODO: Need to speed up the calculation of U^{T} B^{-1/2}
+        sp_eigvals, sp_eigvec_op = self.compute_sp_eigenvecs()
+        # U^{T} B^{-1/2}
+        inv_sqrt_control_variate = self.inverse_sqrt_control_variate(sp_eigvals, sp_eigvec_op)
+
+        r1 = inv_sqrt_control_variate.matmul(self.base_linear_op)
+        r2 = r1.matmul(inv_sqrt_control_variate.T)
+
+        self.residue_op = r2
+
+        # # do it brute force.
+        # lcholesky = self.compute_control_variate_lcholesky()
+        # rcholesky = lcholesky.transpose(0,1)
+
+        # r11 = lcholesky.inverse().matmul(self.base_linear_op)
+        # r21 = r11.matmul(rcholesky.inverse())
+        # transformed_residue = sp_eigvec_op.T.matmul(r21).matmul(sp_eigvec_op)
 
         pass 
 
@@ -445,7 +533,8 @@ def blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                   nbeads,
                                                   random_vector_number, 
                                                   max_tridiag_iter, 
-                                                  cg_tolerance):
+                                                  cg_tolerance,
+                                                  estimate_logdet_std= False):
     """
     evaluate the performance of using block diagonal term as control variate.
     """
@@ -464,17 +553,21 @@ def blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
     print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
     print(f"logdet of block matrix {blocklogdet}, logdet of pd matrix use control variate: {logdet_from_residue}")
 
-    residue_operator = block_diag_trace_estimator.residue_op 
-    avg_num = 10
-    residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
-    print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
+    if estimate_logdet_std:
+        residue_operator = block_diag_trace_estimator.residue_op 
+        avg_num = 10
+        residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
+
+    return logdet_from_residue
 
 def spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                spring_term_operator,
                                                 nbeads,
                                                 random_vector_number, 
                                                 max_tridiag_iter, 
-                                                cg_tolerance):
+                                                cg_tolerance,
+                                                estimate_logdet_std= False):
     """
     evaluate the performance of using spring term as control variate.
     """    
@@ -495,11 +588,13 @@ def spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
     print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
     print(f"logdet of control variate matrix {control_variate_logdet}, logdet of pd matrix use control variate: {logdet_from_residue}")
 
-    residue_operator = spring_term_cv_trace_estimator.residue_op 
-    avg_num = 10
-    residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
-    print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
+    if estimate_logdet_std:
+        residue_operator = spring_term_cv_trace_estimator.residue_op 
+        avg_num = 10
+        residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
 
+    return logdet_from_residue
 
 def compute_hessian_logdet(hessian: np.ndarray,
                            bead_hessian: np.ndarray,
@@ -507,7 +602,8 @@ def compute_hessian_logdet(hessian: np.ndarray,
                            proj_info: tuple,
                            random_vector_number= 1000,
                            max_tridiag_iter= 50,
-                           cg_tolerance = 1e-2) -> float:
+                           cg_tolerance = 1e-2,
+                           estimate_logdet_std= False) -> float:
     """
     Compute the log determinant of the hessian matrix.
     Remove zero eigenvalue, use the absolute value of negative eigenvalue.
@@ -535,18 +631,20 @@ def compute_hessian_logdet(hessian: np.ndarray,
     nbeads = spring_term_param[0]
     
     # # use block diagonal component as control variate matrix.
-    blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
-                                                  nbeads,
-                                                  random_vector_number,
-                                                  max_tridiag_iter,
-                                                  cg_tolerance)
+    # logdet_bd = blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
+    #                                               nbeads,
+    #                                               random_vector_number,
+    #                                               max_tridiag_iter,
+    #                                               cg_tolerance,
+    #                                               estimate_logdet_std= estimate_logdet_std)
 
-    spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
+    logdet_sp = spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                projected_sp_op,
                                                nbeads,
                                                random_vector_number,
                                                max_tridiag_iter,
-                                               cg_tolerance)
+                                               cg_tolerance,
+                                               estimate_logdet_std= estimate_logdet_std)
 
     # do the trace estimator on the matrix itself.
     start_time = time.perf_counter()
@@ -554,10 +652,15 @@ def compute_hessian_logdet(hessian: np.ndarray,
     elapsed_time = (time.perf_counter() - start_time) / 60
     print(f"logdet computed directly {logdet}")
     print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
-    # compute the standard deviation of trace estimator with 10 samples. 
-    avg_num = 10
-    logdet_std = compute_trace_estimator_std(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
-    print(f"std from {avg_num} samples for logdet: {logdet_std}")
+
+    if estimate_logdet_std:
+        # compute the standard deviation of trace estimator with 10 samples. 
+        avg_num = 10
+        logdet_std = compute_trace_estimator_std(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        print(f"std from {avg_num} samples for logdet: {logdet_std}")
+
+    # use the logdet from spring term.
+    logdet = logdet_sp
 
     # remove log(shifted eigval). Add log(d[0]) which is negative eigenvalue.
     shifted_positive_eigenvalues = positive_eigval  
