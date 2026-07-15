@@ -118,7 +118,6 @@ def compute_logdet(pd_matrix: linear_operator.LinearOperator,
     :param: cg_tolerance: the tolerance for the batched conjugate gradient solver, this is used to compute Lanczos tridiagonalization matrix.
     See https://arxiv.org/abs/1809.11165
     """
-    print(f"random vector number for trace estimation {random_vector_number}")
     with (linear_operator.settings.num_trace_samples(random_vector_number),
           linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
           linear_operator.settings.cg_tolerance(cg_tolerance)):
@@ -527,7 +526,26 @@ def compute_trace_estimator_std(operator, random_vector_number, max_tridiag_iter
         logdet_list.append(logdet)
     
     std = np.std(logdet_list)
-    return std 
+    avg = np.mean(logdet_list)
+    return std, avg 
+
+def trace_estimate_original_matrix(sparse_pd_hessian_operator,
+                                   random_vector_number,
+                                   max_tridiag_iter, 
+                                   cg_tolerance,
+                                   estimate_logdet_std= False):
+    # do the trace estimator on the matrix itself.
+    start_time = time.perf_counter()
+    logdet = compute_logdet(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
+    elapsed_time = (time.perf_counter() - start_time) / 60
+    print(f"logdet computed directly {logdet}")
+    print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
+
+    if estimate_logdet_std:
+        # compute the standard deviation of trace estimator with 10 samples. 
+        avg_num = 10
+        logdet_std, logdet = compute_trace_estimator_std(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        print(f"std from {avg_num} samples for logdet: {logdet_std}")
 
 def blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                   nbeads,
@@ -556,7 +574,7 @@ def blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
     if estimate_logdet_std:
         residue_operator = block_diag_trace_estimator.residue_op 
         avg_num = 10
-        residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        residue_logdet_std, logdet_from_residue = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
         print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
 
     return logdet_from_residue
@@ -591,7 +609,7 @@ def spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
     if estimate_logdet_std:
         residue_operator = spring_term_cv_trace_estimator.residue_op 
         avg_num = 10
-        residue_logdet_std = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        residue_logdet_std, logdet_from_residue = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
         print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
 
     return logdet_from_residue
@@ -608,6 +626,8 @@ def compute_hessian_logdet(hessian: np.ndarray,
     Compute the log determinant of the hessian matrix.
     Remove zero eigenvalue, use the absolute value of negative eigenvalue.
     """
+    print(f"random vector number for trace estimation {random_vector_number}")
+    
     start_time = time.perf_counter()
     d, v, shift = solve_negative_and_zero_eigenpairs(hessian)
     elapsed_time = (time.perf_counter() - start_time) / 60
@@ -638,6 +658,7 @@ def compute_hessian_logdet(hessian: np.ndarray,
     #                                               cg_tolerance,
     #                                               estimate_logdet_std= estimate_logdet_std)
 
+    # use spring term as control variate.
     logdet_sp = spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                projected_sp_op,
                                                nbeads,
@@ -646,18 +667,11 @@ def compute_hessian_logdet(hessian: np.ndarray,
                                                cg_tolerance,
                                                estimate_logdet_std= estimate_logdet_std)
 
-    # do the trace estimator on the matrix itself.
-    start_time = time.perf_counter()
-    logdet = compute_logdet(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
-    elapsed_time = (time.perf_counter() - start_time) / 60
-    print(f"logdet computed directly {logdet}")
-    print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
-
-    if estimate_logdet_std:
-        # compute the standard deviation of trace estimator with 10 samples. 
-        avg_num = 10
-        logdet_std = compute_trace_estimator_std(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
-        print(f"std from {avg_num} samples for logdet: {logdet_std}")
+    # logdet_origin = trace_estimate_original_matrix(sparse_pd_hessian_operator,
+    #                                                random_vector_number, 
+    #                                                max_tridiag_iter, 
+    #                                                cg_tolerance, 
+    #                                                estimate_logdet_std= estimate_logdet_std)
 
     # use the logdet from spring term.
     logdet = logdet_sp
