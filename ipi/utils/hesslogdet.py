@@ -118,6 +118,7 @@ def compute_logdet(pd_matrix: linear_operator.LinearOperator,
     :param: cg_tolerance: the tolerance for the batched conjugate gradient solver, this is used to compute Lanczos tridiagonalization matrix.
     See https://arxiv.org/abs/1809.11165
     """
+    print(f"random vector number for trace estimation {random_vector_number}")
     with (linear_operator.settings.num_trace_samples(random_vector_number),
           linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
           linear_operator.settings.cg_tolerance(cg_tolerance)):
@@ -499,7 +500,6 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         return inv_sqrt_control_variate
 
     def construct_residue_op(self):
-        # TODO: Need to speed up the calculation of U^{T} B^{-1/2}
         sp_eigvals, sp_eigvec_op = self.compute_sp_eigenvecs()
         # U^{T} B^{-1/2}
         inv_sqrt_control_variate = self.inverse_sqrt_control_variate(sp_eigvals, sp_eigvec_op)

@@ -111,6 +111,14 @@ def parse_input():
         help= "number of random vector for trace estimator."
     )
 
+    parser.add_argument(
+        "-std",
+        "--trace_standard_deviation",
+        default= False,
+        type= lambda x: x.lower() == "true",
+        help= "Estimate the standard deviation of the trace estimator."
+    )
+
     args = parser.parse_args() # convert arguments to object and assign arguments as attributes of the namespace. return namespace. the name is specified by --.
     inputt = args.input
     case = args.case
@@ -518,6 +526,7 @@ def compute_instanton_rate_or_splitting():
     args, inputt, case, temp, asr, V00, filt, quiet, Verbosity, nzeros, input_freq = parse_input()
 
     random_vector_number = args.random_vector_number
+    trace_estimate_std_bool = args.trace_standard_deviation
 
     (neb_beads, m, nbeads, natoms, temp2, 
      pots, pos, 
@@ -587,7 +596,8 @@ def compute_instanton_rate_or_splitting():
                                                           proj_info, 
                                                         random_vector_number= random_vector_number,
                                                         max_tridiag_iter= 50,
-                                                        cg_tolerance = 1e-3
+                                                        cg_tolerance = 1e-3,
+                                                        estimate_logdet_std= trace_estimate_std_bool
                                                         )
             end_time = time.perf_counter()
             trace_estimator_time = (end_time - start_time) / 60
