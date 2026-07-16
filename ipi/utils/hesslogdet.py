@@ -107,24 +107,6 @@ def create_shifted_linear_operator(hessian_operator: linear_operator.LinearOpera
     
     return pd_hessian_operator
 
-def compute_logdet(pd_matrix: linear_operator.LinearOperator, 
-                   random_vector_number= 10, 
-                   max_tridiag_iter= 50, 
-                   cg_tolerance = 1e-2) -> float:
-    """
-    Compute the log determinant of a positive definite matrix using linear operator.
-    :param: random_vector_number: number of random vectors used to estimate the trace.
-    :param: max_tridiag_iter: the maximum size of tridiagonalization matrix. 
-    :param: cg_tolerance: the tolerance for the batched conjugate gradient solver, this is used to compute Lanczos tridiagonalization matrix.
-    See https://arxiv.org/abs/1809.11165
-    """
-    with (linear_operator.settings.num_trace_samples(random_vector_number),
-          linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
-          linear_operator.settings.cg_tolerance(cg_tolerance)):
-        logdet = pd_matrix.logdet().item() 
-    
-    return logdet
-
 def create_block_diag_linear_operator(bead_hessian: np.ndarray) -> linear_operator.LinearOperator:
     """
     Create a block diagonal linear operator from the bead hessian matrix.
@@ -227,13 +209,98 @@ def proj_hessian_operator(bead_hessian_operator,
 
     # project out trans & rotation mode.
     proj_vector_tensor = torch.tensor(proj_vector, dtype= ism_tensor.dtype)
-    proj_linear_operator = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_vector_tensor.T) 
+    complement_proj_linear_operator = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_vector_tensor.T) 
 
-    projected_dynmat = proj_linear_operator.T.matmul(dynmat).matmul(proj_linear_operator)
+    projected_dynmat = complement_proj_linear_operator.T.matmul(dynmat).matmul(complement_proj_linear_operator)
 
     mscaled_sp_term = ism_diag.matmul(rp_sparse_linear_operator).matmul(ism_diag)
-    projected_sp_op = proj_linear_operator.T.matmul(mscaled_sp_term).matmul(proj_linear_operator)
+    projected_sp_op = complement_proj_linear_operator.T.matmul(mscaled_sp_term).matmul(complement_proj_linear_operator)
     return projected_dynmat, projected_sp_op
+
+
+class TraceEstimation():
+    """
+    Perform the stochastic trace estimation of the operator.
+    """
+    def __init__(self, linear_op):
+        self.linear_op = linear_op 
+
+    @staticmethod
+    def compute_logdet(op, random_vector_number, max_tridiag_iter, cg_tolerance):
+        """
+        Compute the log determinant of a positive definite matrix using linear operator.
+        :param: random_vector_number: number of random vectors used to estimate the trace.
+        :param: max_tridiag_iter: the maximum size of tridiagonalization matrix. 
+        :param: cg_tolerance: the tolerance for the batched conjugate gradient solver, this is used to compute Lanczos tridiagonalization matrix.
+        See https://arxiv.org/abs/1809.11165
+        """
+        with (linear_operator.settings.num_trace_samples(random_vector_number),
+            linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
+            linear_operator.settings.cg_tolerance(cg_tolerance)):
+            logdet = op.logdet().item() 
+        
+        return logdet
+
+    @staticmethod
+    def compute_trace_estimator_std(operator, random_vector_number, max_tridiag_iter, cg_tolerance,
+                                 avg_num = 10):
+        logdet_list = []
+        trace_estimator = TraceEstimation(operator)
+        for _ in range(avg_num):
+            logdet = trace_estimator.logdet_estimate(random_vector_number, max_tridiag_iter, cg_tolerance)
+            logdet_list.append(logdet)
+        
+        std = np.std(logdet_list)
+        avg = np.mean(logdet_list)
+        return std, avg 
+
+    def logdet_estimate(self, random_vector_number, max_tridiag_iter, cg_tolerance):
+        """
+        Compute the log determinant of a positive definite matrix using linear operator.
+        :param: random_vector_number: number of random vectors used to estimate the trace.
+        :param: max_tridiag_iter: the maximum size of tridiagonalization matrix. 
+        :param: cg_tolerance: the tolerance for the batched conjugate gradient solver, this is used to compute Lanczos tridiagonalization matrix.
+        See https://arxiv.org/abs/1809.11165
+        """
+        logdet = self.compute_logdet(self.linear_op, random_vector_number, max_tridiag_iter, cg_tolerance)
+        return logdet
+
+    def logdet_estimate_std(self, random_vector, max_tridiag_iter, cg_tolerance, avg_num):
+        """
+        estimate the std of trace estimator.
+        """
+        return self.compute_trace_estimator_std(self.linear_op, random_vector, max_tridiag_iter, cg_tolerance, avg_num)
+
+    def proj_operator_logdet_calculation(self, proj_operator) -> float:
+        """
+        compute the trace estimate of projected linear operator exactly.
+        """
+        matrix_size = self.linear_op.size()[0]
+        
+
+    def subspace_projection_logdet_estimate(self,
+                                            proj_operator, 
+                                            random_vector_number, 
+                                            max_tridiag_iter, 
+                                            cg_tolerance):
+        """
+        compute the logdet of a given subspace vectors exactly.
+        compute the logdet of the operator in the complement space use trace estimate.
+        :param: proj_operator: each column is an eigenvector. 
+        """
+        # compute the exact trace estimate in projected space.
+        proj_op_logdet = self.proj_operator_logdet_calculation(proj_operator)
+
+        # compute logdet in the complement space.
+        matrix_size = self.linear_op.size()[0]
+        complement_proj_linear_op = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_operator)
+        complement_op = complement_proj_linear_op.matmul(self.linear_op).matmul(complement_proj_linear_op)
+
+        complement_op_logdet = self.compute_logdet(complement_op, random_vector_number, max_tridiag_iter, cg_tolerance)
+
+        logdet = proj_op_logdet + complement_op_logdet
+
+        return logdet
 
 class ControlVariateLogDetTraceEstimator():
     """
@@ -290,10 +357,32 @@ class ControlVariateLogDetTraceEstimator():
         control_variate_logdet = self.compute_control_variate_logdet()
 
         # logdet(B^{-1/2} A B^{-1/2})
-        residue_logdet = compute_logdet(self._residue_op, random_vector_number, max_tridiag_iter, cg_tolerance)
+        trace_estimator = TraceEstimation(self.residue_op)
+        residue_logdet = trace_estimator.logdet_estimate(random_vector_number, max_tridiag_iter, cg_tolerance)
+
         logdet = residue_logdet + control_variate_logdet
         return logdet
     
+    def compute_logdet_std_estimate(self, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num):
+        """
+        estimate the std of trace estimation.
+        """
+        # logdet(B)
+        control_variate_logdet = self.compute_control_variate_logdet()
+
+        # logdet(B^{-1/2} A B^{-1/2})
+        trace_estimator = TraceEstimation(self.residue_op)
+        residue_logdet_std, residue_logdet = trace_estimator.logdet_estimate_std(random_vector_number,
+                                                                                 max_tridiag_iter,
+                                                                                 cg_tolerance,
+                                                                                 avg_num)
+        
+        logdet = residue_logdet + control_variate_logdet
+        # control_variate_logdet has 0 std.
+        logdet_std = residue_logdet_std
+
+        return logdet_std, logdet
+
     @property
     def residue_op(self):
         return copy.deepcopy(self._residue_op) 
@@ -345,6 +434,11 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
     def __init__(self, base_linear_op, nbeads):
         self.nbeads = nbeads
         super().__init__(base_linear_op)
+    
+    def build_control_variate_decomposition(self, spring_term_op):
+        self.construct_control_variate(spring_term_op)
+        self.construct_residue_op()
+
     def construct_control_variate(self, spring_term_op):
         """
         set the spring term operator as the control covariate operator.
@@ -374,11 +468,6 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         self.sp_zero_modes_proj_tensor = sp_zero_modes_tensor.matmul(self.base_linear_op.matmul(sp_zero_modes_tensor.T))
         self.control_variate_op = self.spring_term_op + comp 
         
-
-    def build_control_variate_decomposition(self, spring_term_op):
-        self.construct_control_variate(spring_term_op)
-        self.construct_residue_op()
-
     def compute_control_variate_logdet(self):
         """
         use the fact that spring terms are block diagonal in each physical dimension space.
@@ -445,11 +534,14 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         # sp_eigvec_tensor = torch.tensor(sp_eigvec_lists)
         # sp_eigvec_op = linear_operator.to_linear_operator(sp_eigvec_tensor)
 
+        self.sp_eigvec_linear_op = sp_eigevec_sparse_linear_operator
+        self.sp_eigvec_sparse_tensor = sp_eigvec_sparse_tensor
+
         return eigval_list, sp_eigevec_sparse_linear_operator 
     
     def inverse_sqrt_control_variate(self, eigval_list, sp_eigvec_sparse_linear_operator: SparseLinearOperator):
         """
-        compute U^{T} B^{-1/2}
+        compute U^{T} B^{-1/2}. here U is the eigenvector of the spring term. 
         :param: eigval_list: a list of eigenvalues.
         :param: sp_eigvec_sparse_linear_operator: sparse linear operator, each column is eigenvector.
         """
@@ -508,26 +600,49 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
 
         self.residue_op = r2
 
-        # # do it brute force.
-        # lcholesky = self.compute_control_variate_lcholesky()
-        # rcholesky = lcholesky.transpose(0,1)
+        pass
 
-        # r11 = lcholesky.inverse().matmul(self.base_linear_op)
-        # r21 = r11.matmul(rcholesky.inverse())
-        # transformed_residue = sp_eigvec_op.T.matmul(r21).matmul(sp_eigvec_op)
+    def construct_projection_vector(self):
+        """
+        construct the projection vector for the subspace method.
+        """
+        sp_eig_index_for_proj = np.array(range(1, 3))
+        size = self.base_linear_op.size()[0]
+        nbeads = self.nbeads
+        block_size = int(size / self.nbeads)
 
-        pass 
+        # indices in eigenvector space for spring term across all physical dimension.
+        sp_eig_index_for_proj_all = np.empty()
+        for i in range(block_size):
+            indices = (i * nbeads) + sp_eig_index_for_proj
+            sp_eig_index_for_proj_all = np.concatenate([sp_eig_index_for_proj_all, indices])
+        
+        sp_eigvec_for_proj = torch.index_select(self.sp_eigvec_sparse_tensor, dim= 1, index= torch.tensor(sp_eig_index_for_proj_all))
 
-def compute_trace_estimator_std(operator, random_vector_number, max_tridiag_iter, cg_tolerance,
-                                 avg_num = 10):
-    logdet_list = []
-    for _ in range(avg_num):
-        logdet = compute_logdet(operator, random_vector_number, max_tridiag_iter, cg_tolerance)
-        logdet_list.append(logdet)
-    
-    std = np.std(logdet_list)
-    avg = np.mean(logdet_list)
-    return std, avg 
+        self.sp_eigvec_for_proj = sp_eigvec_for_proj
+        self.sp_eigvec_for_proj_linear_op = SparseLinearOperator(sp_eigvec_for_proj)
+
+    # The code below delegate the trace estimation with subspace projection to the TraceEstimator class.
+    def compute_logdet_subspace_projection(self, random_vector_number, max_tridiag_iter, cg_tolerance):
+        """
+        Use the subspace projection method to compute the trace of large eigenvector exactly
+        and compute the orthogonal compliment space use stochastic trace estimator.
+        The subspace projection version of trace estimtor is delegated to the TraceEstimation class.
+        """
+        # logdet(B)
+        control_variate_logdet = self.compute_control_variate_logdet()
+        
+        # logdet(B^{-1/2} A B^{-1/2}) 
+        self.construct_projection_vector()
+        trace_estimator = TraceEstimation(self.residue_op)
+        # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
+        residue_logdet = trace_estimator.subspace_projection_logdet_estimate(self.sp_eigvec_for_proj_linear_op,
+                                                                             random_vector_number,
+                                                                             max_tridiag_iter,
+                                                                             cg_tolerance)
+        
+        logdet = residue_logdet + control_variate_logdet
+        return logdet
 
 def trace_estimate_original_matrix(sparse_pd_hessian_operator,
                                    random_vector_number,
@@ -536,16 +651,22 @@ def trace_estimate_original_matrix(sparse_pd_hessian_operator,
                                    estimate_logdet_std= False):
     # do the trace estimator on the matrix itself.
     start_time = time.perf_counter()
-    logdet = compute_logdet(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance)
+    trace_estimator = TraceEstimation(sparse_pd_hessian_operator)
+    logdet = trace_estimator.logdet_estimate(random_vector_number, max_tridiag_iter, cg_tolerance)
     elapsed_time = (time.perf_counter() - start_time) / 60
-    print(f"logdet computed directly {logdet}")
-    print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
 
     if estimate_logdet_std:
         # compute the standard deviation of trace estimator with 10 samples. 
         avg_num = 10
-        logdet_std, logdet = compute_trace_estimator_std(sparse_pd_hessian_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        logdet_std, logdet = trace_estimator.logdet_estimate_std(random_vector_number, 
+                                                                         max_tridiag_iter, 
+                                                                         cg_tolerance, 
+                                                                         avg_num= avg_num)
         print(f"std from {avg_num} samples for logdet: {logdet_std}")
+    
+    print(f"logdet computed directly {logdet}")
+    print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
+
 
 def blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                   nbeads,
@@ -568,14 +689,14 @@ def blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                                     cg_tolerance)
     
     elapsed_time = (time.perf_counter() - start_time) / 60
+
+    if estimate_logdet_std: 
+        avg_num = 10
+        residue_logdet_std, logdet_from_residue = block_diag_trace_estimator.compute_logdet_std_estimate(random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
+
     print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
     print(f"logdet of block matrix {blocklogdet}, logdet of pd matrix use control variate: {logdet_from_residue}")
-
-    if estimate_logdet_std:
-        residue_operator = block_diag_trace_estimator.residue_op 
-        avg_num = 10
-        residue_logdet_std, logdet_from_residue = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
-        print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
 
     return logdet_from_residue
 
@@ -596,6 +717,9 @@ def spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
 
     control_variate_logdet = spring_term_cv_trace_estimator.compute_control_variate_logdet()
 
+    # TODO: Need to write code to perform the projection space method here.
+    # spring_term_cv_trace_estimator.compute_logdet_subspace_projection()
+
     # compute residue operator of sparse_pd_hessian_operator & do the trace estimator.
     start_time = time.perf_counter()
     logdet_from_residue = spring_term_cv_trace_estimator.compute_logdet(random_vector_number,
@@ -603,14 +727,15 @@ def spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                                     cg_tolerance)
     
     elapsed_time = (time.perf_counter() - start_time) / 60
-    print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
-    print(f"logdet of control variate matrix {control_variate_logdet}, logdet of pd matrix use control variate: {logdet_from_residue}")
 
     if estimate_logdet_std:
-        residue_operator = spring_term_cv_trace_estimator.residue_op 
+        # if estiamte logdet std, then we use avg logdet to replace the result of the single run.
         avg_num = 10
-        residue_logdet_std, logdet_from_residue = compute_trace_estimator_std(residue_operator, random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
+        residue_logdet_std, logdet_from_residue =  spring_term_cv_trace_estimator.compute_logdet_std_estimate(random_vector_number, max_tridiag_iter, cg_tolerance, avg_num= avg_num)
         print(f"std from {avg_num} samples for residue_logdet: {residue_logdet_std}")
+
+    print(f"Time to compute logdet of residue in sparse form: {elapsed_time:.2f} minutes")
+    print(f"logdet of control variate matrix {control_variate_logdet}, logdet of pd matrix use control variate: {logdet_from_residue}")
 
     return logdet_from_residue
 
@@ -667,11 +792,11 @@ def compute_hessian_logdet(hessian: np.ndarray,
                                                cg_tolerance,
                                                estimate_logdet_std= estimate_logdet_std)
 
-    # logdet_origin = trace_estimate_original_matrix(sparse_pd_hessian_operator,
-    #                                                random_vector_number, 
-    #                                                max_tridiag_iter, 
-    #                                                cg_tolerance, 
-    #                                                estimate_logdet_std= estimate_logdet_std)
+    logdet_origin = trace_estimate_original_matrix(sparse_pd_hessian_operator,
+                                                   random_vector_number, 
+                                                   max_tridiag_iter, 
+                                                   cg_tolerance, 
+                                                   estimate_logdet_std= estimate_logdet_std)
 
     # use the logdet from spring term.
     logdet = logdet_sp
