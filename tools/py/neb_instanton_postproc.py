@@ -119,6 +119,24 @@ def parse_input():
         help= "Estimate the standard deviation of the trace estimator."
     )
 
+    parser.add_argument(
+        "-proj",
+        "--subspace_projection",
+        default= False,
+        type= lambda x: x.lower() == "true",
+        help= "bool variable. Whether to perform subspace projection when doing trace estimate." \
+        "Currently only support subspace projection in the spring term eigenmode space." \
+        "See Hutch++ paper about subspace projection."
+    )
+
+    parser.add_argument(
+        "-proj_index",
+        "--subspace_projection_index",
+        default= 2,
+        type= int,
+        help= "index for spring term eigenmodes for subspace projection. proj out [1, proj_index] vectors in trace estimate." 
+    )
+
     args = parser.parse_args() # convert arguments to object and assign arguments as attributes of the namespace. return namespace. the name is specified by --.
     inputt = args.input
     case = args.case
@@ -218,11 +236,11 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
               (if value is 0, use small number, 1e-6 for example)")
         
     
-    if np.absolute(temp - temp2) / K2au > 5:
-        print(
-            "\n Mismatch between provided temperature and temperature in the calculation"
-        )
-        sys.exit()
+    # if np.absolute(temp - temp2) / K2au > 5:
+    #     print(
+    #         "\n Mismatch between provided temperature and temperature in the calculation"
+    #     )
+    #     sys.exit()
     
     # process hessians.
     # generate m3 for half ring polymer
@@ -527,6 +545,8 @@ def compute_instanton_rate_or_splitting():
 
     random_vector_number = args.random_vector_number
     trace_estimate_std_bool = args.trace_standard_deviation
+    subspace_projection = args.subspace_projection
+    subspace_projection_index = args.subspace_projection_index
 
     (neb_beads, m, nbeads, natoms, temp2, 
      pots, pos, 
@@ -597,7 +617,9 @@ def compute_instanton_rate_or_splitting():
                                                         random_vector_number= random_vector_number,
                                                         max_tridiag_iter= 50,
                                                         cg_tolerance = 1e-3,
-                                                        estimate_logdet_std= trace_estimate_std_bool
+                                                        estimate_logdet_std= trace_estimate_std_bool,
+                                                        subspace_proj= subspace_projection,
+                                                        proj_index= subspace_projection_index
                                                         )
             end_time = time.perf_counter()
             trace_estimator_time = (end_time - start_time) / 60
