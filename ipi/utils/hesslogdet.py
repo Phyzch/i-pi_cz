@@ -411,7 +411,7 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         base_linear_op = self.base_linear_op
 
         # low frequency modes of spring term (coupled harmonic oscillator)
-        self.spring_low_freq_index = 0
+        self.spring_low_freq_index = 2
 
         spring_low_freq_mode_num = (self.spring_low_freq_index + 1)
         size = base_linear_op.size()[0]
@@ -424,18 +424,20 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         
         for i in range(block_size):  # loop through physical dimension.
             indices = range(i, size, block_size)
-            sub_tensor = sp_term_tensor[indices, :][:, indices]
-            eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
+            spring_tensor = sp_term_tensor[indices, :][:, indices]
+            eigvals, eigvecs = torch.linalg.eigh(spring_tensor)
             low_freq_modes = np.zeros([spring_low_freq_mode_num, size])
             low_freq_modes[:, indices] = (eigvecs.T)[:spring_low_freq_mode_num, :]
             sp_low_freq_modes[i * spring_low_freq_mode_num: (i + 1) * spring_low_freq_mode_num] = low_freq_modes
 
         sp_low_freq_modes_tensor = torch.tensor(sp_low_freq_modes)
         low_freq_modes_proj_op = linear_operator.operators.LowRankRootLinearOperator(sp_low_freq_modes_tensor.T)
-        comp = low_freq_modes_proj_op.matmul(self.base_linear_op).matmul(low_freq_modes_proj_op)
+        
          ## U^T A U, here U^T is low frequency modes projection operator.
         self.sp_low_freq_modes_proj_tensor = sp_low_freq_modes_tensor.matmul(self.base_linear_op.matmul(sp_low_freq_modes_tensor.T))
 
+        phys_hess_operator = self.base_linear_op - spring_term_op 
+        comp = low_freq_modes_proj_op.matmul(phys_hess_operator).matmul(low_freq_modes_proj_op)
         self.control_variate_op = self.spring_term_op + comp 
         
     def compute_control_variate_logdet(self):
@@ -530,7 +532,7 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         low_freq_mode_index = []
         spring_low_freq_mode_num = self.spring_low_freq_index + 1
         for i in range(block_size):
-            mode_index = list(range(i * block_size, i * block_size + spring_low_freq_mode_num)) # low frequency spring eigenstate for each physical dimension.
+            mode_index = list(range(i * nbeads, i * nbeads + spring_low_freq_mode_num)) # low frequency spring eigenstate for each physical dimension.
             low_freq_mode_index = low_freq_mode_index + mode_index
         low_freq_mode_index = np.array(low_freq_mode_index)
         low_freq_mode_num = len(low_freq_mode_index)
@@ -567,7 +569,7 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
             # compute U^{T} B^{-1/2}
             # S^{-1/2} U^{T}
             comp1 = inv_sqrt_eigval_linear_operator.matmul(sp_eigvec_sparse_linear_operator.T)
-            # U^{T} U0 (U0^T H U0)^{-1/2} U0^{T} 
+            # (U^{T} U0)  (U0^T H U0)^{-1/2} U0^{T} 
             comp2 = low_freq_mode_proj_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
             inv_sqrt_control_variate = comp1 + comp2 
         else:
