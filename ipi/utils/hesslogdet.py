@@ -66,162 +66,6 @@ class SparseLinearOperator(LinearOperator):
         return copy.deepcopy(self.sparse_matrix)
 
 
-def solve_negative_and_zero_eigenpairs(hessian):
-    """
-    solve the negative and zero eigenpairs of ring polymer hessian matrix.
-    There will be 1 negative eigenmode, 1 zero eigenmode, and 6 extra zero modes corresponding to translation and rotation.
-    """
-    negative_mode_number = 1
-    zero_mode_number = 1 
-    trans_rot_zero_mode_number = 6
-    total_mode_number = negative_mode_number + zero_mode_number + trans_rot_zero_mode_number 
-
-    #d, v = scipy.sparse.linalg.eigsh(hessian, k= total_mode_number, which='SA', return_eigenvectors=True)
-    d, v = scipy.linalg.eigh(hessian, subset_by_index=[0, total_mode_number - 1])
-
-    dd = (
-        np.sign(d) * np.absolute(d) ** 0.5 / (2 * np.pi * 3e10 * 2.4188843e-17)
-    ) # convert to cm^{-1}
-    
-    # Zeros
-    cut0 = 0.01  # Note that dd[] units are cm^1
-    condition = np.abs(dd) < cut0
-    nzero = np.extract(condition, dd)
-    print(f"Number of zero eigenvalues: {len(nzero)}")
-
-    # shift_values for eigenvalues
-    shift = positive_eigval - d
-
-    return d, v, shift  
-
-def create_shifted_linear_operator(hessian_operator: linear_operator.LinearOperator, v, shift) -> linear_operator.LinearOperator:
-    """
-    Create a linear operator from the hessian matrix.
-    shift hessian matrix to make it positive definite.
-    :param: v: negative and zero eigenvectors.
-    :param: shift: shift values for negative and zero eigenvalues.
-    """
-    dtype = hessian_operator.dtype
-    C = v @ np.sqrt(np.diag(shift)) 
-    C = torch.tensor(C, dtype=dtype)
-    shift_operator = LowRankRootLinearOperator(C)
-
-    pd_hessian_operator = hessian_operator + shift_operator # positive definite hessian in linear operator form. s
-    
-    return pd_hessian_operator
-
-def create_block_diag_linear_operator(bead_hessian: np.ndarray) -> linear_operator.LinearOperator:
-    """
-    Create a block diagonal linear operator from the bead hessian matrix.
-    :param: bead_hessian: the bead hessian matrix, which is a 3N x 3N matrix.
-    :param: nbeads: number of beads in the ring polymer.
-    :param: natoms: number of atoms in the system.
-    """
-    dtype = torch.from_numpy(np.empty(0, bead_hessian.dtype)).dtype
-    bead_hessian = (bead_hessian + bead_hessian.transpose(0, 2, 1)) / 2
-    bead_hessian_tensor = torch.tensor(bead_hessian, dtype=dtype)
-    bead_hessian_linear_op = linear_operator.to_linear_operator(bead_hessian_tensor)
-    block_diag_operator = linear_operator.operators.BlockDiagLinearOperator(
-        bead_hessian_linear_op,
-        block_dim = -3
-    )
-    
-    return block_diag_operator
-
-def create_spring_term_linear_operator(spring_term_param) -> linear_operator.LinearOperator:
-    """
-    Create a linear operator which represents the spring term in rp hessian. this is sparse tensor.
-    """
-    # m3_one_bead: mass for one bead, dimension (3 * natoms)
-    # omega2 = (1/(betaN * hbar))^2.
-    nbeads, natoms, omega2, m3_one_bead = spring_term_param
-    
-    # h_sp: spring term for one bead. size: (3 * natoms) 
-    h_sp = list(np.array(m3_one_bead) * omega2)
-    h_sp_diagonal = list(np.array(h_sp) * 2)
-    h_sp_ndiag = list(-np.array(h_sp))
-
-    row_indices = []
-    col_indices = []
-    val_list = []
-    # diagonal term
-    ii  = 3 * natoms 
-    for i in range(0, nbeads):
-        diag_indices = list(range(i * ii, (i + 1) * ii))
-        row_indices = row_indices + diag_indices
-        col_indices = col_indices + diag_indices 
-        val_list = val_list + h_sp_diagonal 
-    
-    # off diagonal terms
-    for i in range(0, nbeads - 1):
-        row_index = list(range(i * ii, (i + 1) * ii))
-        col_index = list(range((i + 1) * ii, (i + 2) * ii))
-        
-        row_indices = row_indices + row_index
-        col_indices = col_indices + col_index 
-        val_list = val_list + h_sp_ndiag
-
-        row_index = list(range((i + 1) * ii, (i + 2) * ii))
-        col_index = list(range(i * ii, (i + 1) * ii))
-        
-        row_indices = row_indices + row_index
-        col_indices = col_indices + col_index
-        val_list = val_list + h_sp_ndiag
-    
-    # corner off diagonal terms
-    row_index = list(range(0, ii))
-    col_index = list(range((nbeads - 1) * ii, nbeads * ii))
-
-    row_indices = row_indices + row_index
-    col_indices = col_indices + col_index 
-    val_list = val_list + h_sp_ndiag 
-
-    row_index = list(range((nbeads - 1) * ii, nbeads * ii))
-    col_index = list(range(0, ii))
-
-    row_indices = row_indices + row_index
-    col_indices = col_indices + col_index 
-    val_list = val_list + h_sp_ndiag 
-
-    value = torch.tensor(np.array(val_list))
-    row_indices = torch.tensor(np.array(row_indices))
-    col_indices = torch.tensor(np.array(col_indices))
-    indices = torch.stack([row_indices, col_indices], axis= 0)
-
-    size= nbeads * 3 * natoms
-    rp_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, size))
-    rp_sparse_linear_operator = SparseLinearOperator(rp_sparse_tensor)
-
-    return rp_sparse_linear_operator
-
-
-def proj_hessian_operator(bead_hessian_operator,
-                          rp_sparse_linear_operator,
-                          proj_info):
-    """
-    transform hessian into dynmat.
-    also project out translation and rotation dof.
-    """
-    ism, proj_vector = proj_info 
-    hessian_operator = bead_hessian_operator + rp_sparse_linear_operator
-    
-    matrix_size = hessian_operator.size()[0]
-    # mass weighted
-    ism_tensor = torch.tensor(ism)
-    ism_diag = linear_operator.operators.DiagLinearOperator(ism_tensor)
-    dynmat = ism_diag.matmul(hessian_operator).matmul(ism_diag)
-
-    # project out trans & rotation mode.
-    proj_vector_tensor = torch.tensor(proj_vector, dtype= ism_tensor.dtype)
-    complement_proj_linear_operator = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_vector_tensor.T) 
-
-    projected_dynmat = complement_proj_linear_operator.T.matmul(dynmat).matmul(complement_proj_linear_operator)
-
-    mscaled_sp_term = ism_diag.matmul(rp_sparse_linear_operator).matmul(ism_diag)
-    projected_sp_op = complement_proj_linear_operator.T.matmul(mscaled_sp_term).matmul(complement_proj_linear_operator)
-    return projected_dynmat, projected_sp_op
-
-
 class TraceEstimation():
     """
     Perform the stochastic trace estimation of the operator.
@@ -281,8 +125,10 @@ class TraceEstimation():
         probe_vectors = proj_operator.to_dense()
         probe_vector_nums = probe_vectors.shape[-1]
         # to use batched cg to get the Lanczos tri-diagonalization matrix.
+        max_cg_num = 1000
         with (linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
-              linear_operator.settings.cg_tolerance(cg_tolerance)):
+              linear_operator.settings.cg_tolerance(cg_tolerance),
+              linear_operator.settings.max_cg_iterations(max_cg_num)):
             _, t_mat = self.linear_op._solve(probe_vectors, None, num_tridiag= probe_vector_nums)
             eigenvalues, eigenvectors = linear_operator.utils.lanczos.lanczos_tridiag_to_diag(t_mat)
             slq = linear_operator.utils.stochastic_lq.StochasticLQ()
@@ -326,9 +172,11 @@ class TraceEstimation():
         # factor should be (N- proj_op_num) / N
         factor = (size - proj_op_num) / size
 
+        max_cg_num = 1000
         # to use batched cg to get the Lanczos tri-diagonalization matrix. 
         with (linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
-            linear_operator.settings.cg_tolerance(cg_tolerance)):
+            linear_operator.settings.cg_tolerance(cg_tolerance),
+            linear_operator.settings.max_cg_iterations(max_cg_num)):
             _, t_mat = self.linear_op._solve(probe_vectors, None, num_tridiag= random_vector_number)
             eigenvalues, eigenvectors = linear_operator.utils.lanczos.lanczos_tridiag_to_diag(t_mat)
             slq = linear_operator.utils.stochastic_lq.StochasticLQ()
@@ -562,35 +410,45 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         self.spring_term_op = spring_term_op 
         base_linear_op = self.base_linear_op
 
-        # zero mode of spring term (coupled harmonic oscillator)
+        # low frequency modes of spring term (coupled harmonic oscillator)
+        self.spring_low_freq_index = 0
+
+        spring_low_freq_mode_num = (self.spring_low_freq_index + 1)
         size = base_linear_op.size()[0]
         block_size = int(size / self.nbeads)
 
-        # zero mode for spring term
-        sp_zero_modes = np.zeros((block_size, size))
-        for i in range(block_size):
-            zero_mode = np.zeros(size)
-            indices = range(i, size, block_size)
-            zero_mode[indices] = 1
-            zero_mode = zero_mode / np.linalg.norm(zero_mode)
-            sp_zero_modes[i] = zero_mode
+        # low frequency modes for spring terms
+        # we include the projection of low frequency modes of physical hessian in the control variate matrix.
+        sp_term_tensor = self.spring_term_op.to_dense()
+        sp_low_freq_modes = np.zeros((block_size * spring_low_freq_mode_num, size))
         
-        sp_zero_modes_tensor = torch.tensor(sp_zero_modes)
-        zero_modes_proj_op = linear_operator.operators.LowRankRootLinearOperator(sp_zero_modes_tensor.T)
+        for i in range(block_size):  # loop through physical dimension.
+            indices = range(i, size, block_size)
+            sub_tensor = sp_term_tensor[indices, :][:, indices]
+            eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
+            low_freq_modes = np.zeros([spring_low_freq_mode_num, size])
+            low_freq_modes[:, indices] = (eigvecs.T)[:spring_low_freq_mode_num, :]
+            sp_low_freq_modes[i * spring_low_freq_mode_num: (i + 1) * spring_low_freq_mode_num] = low_freq_modes
 
-        comp = zero_modes_proj_op.matmul(self.base_linear_op).matmul(zero_modes_proj_op)
+        sp_low_freq_modes_tensor = torch.tensor(sp_low_freq_modes)
+        low_freq_modes_proj_op = linear_operator.operators.LowRankRootLinearOperator(sp_low_freq_modes_tensor.T)
+        comp = low_freq_modes_proj_op.matmul(self.base_linear_op).matmul(low_freq_modes_proj_op)
+         ## U^T A U, here U^T is low frequency modes projection operator.
+        self.sp_low_freq_modes_proj_tensor = sp_low_freq_modes_tensor.matmul(self.base_linear_op.matmul(sp_low_freq_modes_tensor.T))
 
-        # D^T A D, here D^T is zero modes projection operator.
-        self.sp_zero_modes_proj_tensor = sp_zero_modes_tensor.matmul(self.base_linear_op.matmul(sp_zero_modes_tensor.T))
         self.control_variate_op = self.spring_term_op + comp 
         
     def compute_control_variate_logdet(self):
         """
         use the fact that spring terms are block diagonal in each physical dimension space.
         """
-        # zero modes.
-        zero_modes_eigvals = torch.linalg.eigvalsh(self.sp_zero_modes_proj_tensor)
-        logdet1 = np.sum(np.log(zero_modes_eigvals.numpy()))
+        # # zero modes.
+        # zero_modes_eigvals = torch.linalg.eigvalsh(self.sp_zero_modes_proj_tensor)
+        # logdet1 = np.sum(np.log(zero_modes_eigvals.numpy()))
+
+        # low frequency proj of (physical + spring term)
+        low_freq_modes_eigvals = torch.linalg.eigvalsh(self.sp_low_freq_modes_proj_tensor)
+        logdet1 = np.sum(np.log(low_freq_modes_eigvals.numpy()))
 
         # spring terms
         sp_term_tensor = self.spring_term_op.to_dense()
@@ -602,8 +460,8 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
             indices = range(i, size, block_size)
             sub_tensor = sp_term_tensor[indices, :][:, indices]
             eigvals = torch.linalg.eigvalsh(sub_tensor)
-            nonzero_eigvals = eigvals[1:]
-            logdet = logdet + np.sum(np.log(nonzero_eigvals.numpy()))
+            nonmixed_eigvals = eigvals[self.spring_low_freq_index + 1: ]
+            logdet = logdet + np.sum(np.log(nonmixed_eigvals.numpy()))
         
         logdet = logdet + logdet1
 
@@ -667,50 +525,57 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         nbeads = self.nbeads
         size = self.base_linear_op.size()[0] 
         block_size = int(size / nbeads) # physical dimension f.
-        zero_mode_index = range(0, size, nbeads)
-        zero_mode_num = block_size
+    
+        # low frequency mode index
+        low_freq_mode_index = []
+        spring_low_freq_mode_num = self.spring_low_freq_index + 1
+        for i in range(block_size):
+            mode_index = list(range(i * block_size, i * block_size + spring_low_freq_mode_num)) # low frequency spring eigenstate for each physical dimension.
+            low_freq_mode_index = low_freq_mode_index + mode_index
+        low_freq_mode_index = np.array(low_freq_mode_index)
+        low_freq_mode_num = len(low_freq_mode_index)
 
         # pseudo-inverse of eigenvalue.
         inv_eigval_list = torch.zeros_like(eigval_list)
         mask = torch.ones(size, dtype= torch.bool)
-        mask[zero_mode_index] = False
+        mask[low_freq_mode_index] = False
         inv_eigval_list[mask] = 1.0 / eigval_list[mask]
         inv_sqrt_eigval_list = torch.sqrt(inv_eigval_list)
         inv_sqrt_eigval_linear_operator = linear_operator.operators.DiagLinearOperator(inv_sqrt_eigval_list)
         
-        # U^T U0, here U0 is eigenstate of zero mode.
-        row_indices = torch.tensor(np.array(zero_mode_index))
-        col_indices = torch.tensor(np.array(range(0, zero_mode_num)))
-        val_list = torch.ones(zero_mode_num)
+        # U^T U0, here U0 is eigenstate of low frequency mode.
+        row_indices = torch.tensor(np.array(low_freq_mode_index))
+        col_indices = torch.tensor(np.array(range(0, low_freq_mode_num)))
+        val_list = torch.ones(low_freq_mode_num)
         indices = torch.stack([row_indices, col_indices], axis= 0)
-        sparse_proj_matrix = torch.sparse_coo_tensor(indices, val_list, size= (size, zero_mode_num))
-        zero_mode_proj_operator = SparseLinearOperator(sparse_proj_matrix)
+        sparse_proj_matrix = torch.sparse_coo_tensor(indices, val_list, size= (size, low_freq_mode_num))
+        low_freq_mode_proj_operator = SparseLinearOperator(sparse_proj_matrix)
 
-        # U0: zero mode eigenvec.
+        # U0: low freq mode eigenvec.
         sp_eigvec_sparse = sp_eigvec_sparse_linear_operator.get_sparse_matrix()
-        zero_mode_eigvec_sparse = torch.index_select(sp_eigvec_sparse, dim= 1, index= torch.tensor(zero_mode_index))
-        zero_mode_eigvec_linear_operator = SparseLinearOperator(zero_mode_eigvec_sparse)
+        low_freq_mode_eigvec_sparse = torch.index_select(sp_eigvec_sparse, dim= 1, index= torch.tensor(low_freq_mode_index))
+        low_freq_mode_eigvec_linear_operator = SparseLinearOperator(low_freq_mode_eigvec_sparse)
 
         # (U0^{T} A U0)^{-1/2}
-        sp_zero_modes_proj_tensor = self.sp_zero_modes_proj_tensor
-        # SVD decomposition.
-        u1, s1, v1 = torch.svd(sp_zero_modes_proj_tensor)
-        inv_sqrt_s1 = 1/torch.sqrt(s1)
-        inv_sqrt_zero_modes_proj_tensor = torch.matmul(torch.matmul(u1, torch.diag(inv_sqrt_s1)), v1.T)
+        sp_low_freq_modes_proj_tensor = self.sp_low_freq_modes_proj_tensor
         # Cholesky decomposition.
-        lcholesky = torch.cholesky(sp_zero_modes_proj_tensor)
+        lcholesky = torch.cholesky(sp_low_freq_modes_proj_tensor)
         lcholesky_inverse = lcholesky.inverse()
-        inv_sqrt_zero_modes_proj_linear_op = linear_operator.to_linear_operator(lcholesky_inverse)
+        inv_sqrt_low_freq_modes_proj_linear_op = linear_operator.to_linear_operator(lcholesky_inverse)
 
-        # compute U^{T} B^{-1/2}
         if sp_basis_set:
+            # compute U^{T} B^{-1/2}
+            # S^{-1/2} U^{T}
             comp1 = inv_sqrt_eigval_linear_operator.matmul(sp_eigvec_sparse_linear_operator.T)
-            comp2 = zero_mode_proj_operator.matmul(inv_sqrt_zero_modes_proj_linear_op).matmul(zero_mode_eigvec_linear_operator.T)
+            # U^{T} U0 (U0^T H U0)^{-1/2} U0^{T} 
+            comp2 = low_freq_mode_proj_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
             inv_sqrt_control_variate = comp1 + comp2 
         else:
             # compute B^{-1/2}
+            # U S^{-1/2} U^{T}
             comp1 = sp_eigvec_sparse_linear_operator.matmul(inv_sqrt_eigval_linear_operator).matmul(sp_eigvec_sparse_linear_operator.T)
-            comp2 = zero_mode_eigvec_linear_operator.matmul(inv_sqrt_zero_modes_proj_linear_op).matmul(zero_mode_eigvec_linear_operator.T)
+            # U0 (U0^T H U0)^{-1/2} U0^{T} 
+            comp2 = low_freq_mode_eigvec_linear_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
             inv_sqrt_control_variate = comp1 + comp2 
 
         return inv_sqrt_control_variate
@@ -740,7 +605,8 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         construct the projection vector for the subspace method.
         :param: projection_index: We will use eigenvector (normal mode) of spring term [1, projection_index] as projection vector.
         """
-        sp_eig_index_for_proj = np.array(range(1, projection_index + 1))
+        # we project out the subspace that is not included in control variate construction but still overlaps with physical modes.
+        sp_eig_index_for_proj = np.array(range(self.spring_low_freq_index + 1, projection_index + 1))
         size = self.base_linear_op.size()[0]
         nbeads = self.nbeads
         block_size = int(size / self.nbeads)
@@ -810,6 +676,164 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         logdet_std = residue_logdet_std
         
         return logdet_std, logdet
+
+
+def solve_negative_and_zero_eigenpairs(hessian):
+    """
+    solve the negative and zero eigenpairs of ring polymer hessian matrix.
+    There will be 1 negative eigenmode, 1 zero eigenmode, and 6 extra zero modes corresponding to translation and rotation.
+    """
+    negative_mode_number = 1
+    zero_mode_number = 1 
+    trans_rot_zero_mode_number = 6
+    total_mode_number = negative_mode_number + zero_mode_number + trans_rot_zero_mode_number 
+
+    #d, v = scipy.sparse.linalg.eigsh(hessian, k= total_mode_number, which='SA', return_eigenvectors=True)
+    d, v = scipy.linalg.eigh(hessian, subset_by_index=[0, total_mode_number - 1])
+
+    dd = (
+        np.sign(d) * np.absolute(d) ** 0.5 / (2 * np.pi * 3e10 * 2.4188843e-17)
+    ) # convert to cm^{-1}
+    
+    # Zeros
+    cut0 = 0.01  # Note that dd[] units are cm^1
+    condition = np.abs(dd) < cut0
+    nzero = np.extract(condition, dd)
+    print(f"Number of zero eigenvalues: {len(nzero)}")
+
+    # shift_values for eigenvalues
+    shift = positive_eigval - d
+
+    return d, v, shift  
+
+def create_shifted_linear_operator(hessian_operator: linear_operator.LinearOperator, v, shift) -> linear_operator.LinearOperator:
+    """
+    Create a linear operator from the hessian matrix.
+    shift hessian matrix to make it positive definite.
+    :param: v: negative and zero eigenvectors.
+    :param: shift: shift values for negative and zero eigenvalues.
+    """
+    dtype = hessian_operator.dtype
+    C = v @ np.sqrt(np.diag(shift)) 
+    C = torch.tensor(C, dtype=dtype)
+    shift_operator = LowRankRootLinearOperator(C)
+
+    pd_hessian_operator = hessian_operator + shift_operator # positive definite hessian in linear operator form. s
+    
+    return pd_hessian_operator
+
+def create_block_diag_linear_operator(bead_hessian: np.ndarray) -> linear_operator.LinearOperator:
+    """
+    Create a block diagonal linear operator from the bead hessian matrix.
+    :param: bead_hessian: the bead hessian matrix, which is a 3N x 3N matrix.
+    :param: nbeads: number of beads in the ring polymer.
+    :param: natoms: number of atoms in the system.
+    """
+    dtype = torch.from_numpy(np.empty(0, bead_hessian.dtype)).dtype
+    bead_hessian = (bead_hessian + bead_hessian.transpose(0, 2, 1)) / 2
+    bead_hessian_tensor = torch.tensor(bead_hessian, dtype=dtype)
+    bead_hessian_linear_op = linear_operator.to_linear_operator(bead_hessian_tensor)
+    block_diag_operator = linear_operator.operators.BlockDiagLinearOperator(
+        bead_hessian_linear_op,
+        block_dim = -3
+    )
+    
+    return block_diag_operator
+
+def create_spring_term_linear_operator(spring_term_param) -> linear_operator.LinearOperator:
+    """
+    Create a linear operator which represents the spring term in rp hessian. this is sparse tensor.
+    """
+    # m3_one_bead: mass for one bead, dimension (3 * natoms)
+    # omega2 = (1/(betaN * hbar))^2.
+    nbeads, natoms, omega2, m3_one_bead = spring_term_param
+    
+    # h_sp: spring term for one bead. size: (3 * natoms) 
+    h_sp = list(np.array(m3_one_bead) * omega2)
+    h_sp_diagonal = list(np.array(h_sp) * 2)
+    h_sp_ndiag = list(-np.array(h_sp))
+
+    row_indices = []
+    col_indices = []
+    val_list = []
+    # diagonal term
+    ii  = 3 * natoms 
+    for i in range(0, nbeads):
+        diag_indices = list(range(i * ii, (i + 1) * ii))
+        row_indices = row_indices + diag_indices
+        col_indices = col_indices + diag_indices 
+        val_list = val_list + h_sp_diagonal 
+    
+    # off diagonal terms
+    for i in range(0, nbeads - 1):
+        row_index = list(range(i * ii, (i + 1) * ii))
+        col_index = list(range((i + 1) * ii, (i + 2) * ii))
+        
+        row_indices = row_indices + row_index
+        col_indices = col_indices + col_index 
+        val_list = val_list + h_sp_ndiag
+
+        row_index = list(range((i + 1) * ii, (i + 2) * ii))
+        col_index = list(range(i * ii, (i + 1) * ii))
+        
+        row_indices = row_indices + row_index
+        col_indices = col_indices + col_index
+        val_list = val_list + h_sp_ndiag
+    
+    # corner off diagonal terms
+    row_index = list(range(0, ii))
+    col_index = list(range((nbeads - 1) * ii, nbeads * ii))
+
+    row_indices = row_indices + row_index
+    col_indices = col_indices + col_index 
+    val_list = val_list + h_sp_ndiag 
+
+    row_index = list(range((nbeads - 1) * ii, nbeads * ii))
+    col_index = list(range(0, ii))
+
+    row_indices = row_indices + row_index
+    col_indices = col_indices + col_index 
+    val_list = val_list + h_sp_ndiag 
+
+    value = torch.tensor(np.array(val_list))
+    row_indices = torch.tensor(np.array(row_indices))
+    col_indices = torch.tensor(np.array(col_indices))
+    indices = torch.stack([row_indices, col_indices], axis= 0)
+
+    size= nbeads * 3 * natoms
+    rp_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, size))
+    rp_sparse_linear_operator = SparseLinearOperator(rp_sparse_tensor)
+
+    return rp_sparse_linear_operator
+
+
+def proj_hessian_operator(bead_hessian_operator,
+                          rp_sparse_linear_operator,
+                          proj_info):
+    """
+    transform hessian into dynmat.
+    also project out translation and rotation dof.
+    """
+    ism, proj_vector = proj_info 
+    hessian_operator = bead_hessian_operator + rp_sparse_linear_operator
+    
+    matrix_size = hessian_operator.size()[0]
+    # mass weighted
+    ism_tensor = torch.tensor(ism)
+    ism_diag = linear_operator.operators.DiagLinearOperator(ism_tensor)
+    dynmat = ism_diag.matmul(hessian_operator).matmul(ism_diag)
+
+    # project out trans & rotation mode.
+    proj_vector_tensor = torch.tensor(proj_vector, dtype= ism_tensor.dtype)
+    complement_proj_linear_operator = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_vector_tensor.T) 
+
+    projected_dynmat = complement_proj_linear_operator.T.matmul(dynmat).matmul(complement_proj_linear_operator)
+
+    mscaled_sp_term = ism_diag.matmul(rp_sparse_linear_operator).matmul(ism_diag)
+    projected_sp_op = complement_proj_linear_operator.T.matmul(mscaled_sp_term).matmul(complement_proj_linear_operator)
+    return projected_dynmat, projected_sp_op
+
+
 
 def trace_estimate_original_matrix(sparse_pd_hessian_operator,
                                    random_vector_number,
