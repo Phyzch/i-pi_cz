@@ -104,6 +104,14 @@ def parse_input():
     )
 
     parser.add_argument(
+        "-cv",
+        "--control_variate",
+        default= True,
+        type= lambda x: x.lower() == "true",
+        help = "Use control variate method to reduce the variance of trace estimation."
+    )
+
+    parser.add_argument(
         "-rv",
         "--random_vector_number",
         default= 100,
@@ -135,6 +143,14 @@ def parse_input():
         default= 2,
         type= int,
         help= "index for spring term eigenmodes for subspace projection. proj out [1, proj_index] vectors in trace estimate." 
+    )
+
+    parser.add_argument(
+        "-lc",
+        "--lanczos_number",
+        default= 50,
+        type= int,
+        help="number of Lanczos iteration for lanczos quadrature."
     )
 
     args = parser.parse_args() # convert arguments to object and assign arguments as attributes of the namespace. return namespace. the name is specified by --.
@@ -236,11 +252,11 @@ def Read_instanton_data(inputt, V00, temp, quiet, asr, input_freq):
               (if value is 0, use small number, 1e-6 for example)")
         
     
-    # if np.absolute(temp - temp2) / K2au > 5:
-    #     print(
-    #         "\n Mismatch between provided temperature and temperature in the calculation"
-    #     )
-    #     sys.exit()
+    if np.absolute(temp - temp2) / K2au > 5:
+        print(
+            "\n Mismatch between provided temperature and temperature in the calculation"
+        )
+        sys.exit()
     
     # process hessians.
     # generate m3 for half ring polymer
@@ -547,6 +563,8 @@ def compute_instanton_rate_or_splitting():
     trace_estimate_std_bool = args.trace_standard_deviation
     subspace_projection = args.subspace_projection
     subspace_projection_index = args.subspace_projection_index
+    lanczos_iteration_num = args.lanczos_number
+    control_varaite = args.control_variate
 
     (neb_beads, m, nbeads, natoms, temp2, 
      pots, pos, 
@@ -615,9 +633,10 @@ def compute_instanton_rate_or_splitting():
                                                           spring_term_param,
                                                           proj_info, 
                                                         random_vector_number= random_vector_number,
-                                                        max_tridiag_iter= 50,
+                                                        max_tridiag_iter= lanczos_iteration_num,
                                                         cg_tolerance = 1e-3,
                                                         estimate_logdet_std= trace_estimate_std_bool,
+                                                        control_varaite= control_varaite,
                                                         subspace_proj= subspace_projection,
                                                         proj_index= subspace_projection_index
                                                         )

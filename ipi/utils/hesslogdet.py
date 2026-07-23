@@ -399,11 +399,11 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         self.nbeads = nbeads
         super().__init__(base_linear_op)
     
-    def build_control_variate_decomposition(self, spring_term_op):
-        self.construct_control_variate(spring_term_op)
+    def build_control_variate_decomposition(self, spring_term_op, spring_low_freq_index):
+        self.construct_control_variate(spring_term_op, spring_low_freq_index)
         self.construct_residue_op()
 
-    def construct_control_variate(self, spring_term_op):
+    def construct_control_variate(self, spring_term_op, spring_low_freq_index):
         """
         set the spring term operator as the control covariate operator.
         """
@@ -411,7 +411,7 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         base_linear_op = self.base_linear_op
 
         # low frequency modes of spring term (coupled harmonic oscillator)
-        self.spring_low_freq_index = 2
+        self.spring_low_freq_index = spring_low_freq_index
 
         spring_low_freq_mode_num = (self.spring_low_freq_index + 1)
         size = base_linear_op.size()[0]
@@ -488,6 +488,8 @@ class SpringTermControlVariateLogDetTraceEstimator(ControlVariateLogDetTraceEsti
         for i in range(block_size):
             indices = range(i, size, block_size)
             sub_tensor = sp_term_tensor[indices, :][:, indices]
+            # TODO: ideally this should be evaluated in the closed form. 
+            # The O(P^{3}) scaling of eigendecomposition, where P is bead number is undesirable 
             eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
             # sp_eigvec_lists[:, i * self.nbeads: (i + 1) * self.nbeads][indices, :] = eigvecs 
             eigval_list.append(eigvals)
@@ -690,7 +692,6 @@ def solve_negative_and_zero_eigenpairs(hessian):
     trans_rot_zero_mode_number = 6
     total_mode_number = negative_mode_number + zero_mode_number + trans_rot_zero_mode_number 
 
-    #d, v = scipy.sparse.linalg.eigsh(hessian, k= total_mode_number, which='SA', return_eigenvectors=True)
     d, v = scipy.linalg.eigh(hessian, subset_by_index=[0, total_mode_number - 1])
 
     dd = (
@@ -860,6 +861,8 @@ def trace_estimate_original_matrix(sparse_pd_hessian_operator,
     print(f"logdet computed directly {logdet}")
     print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
 
+    return logdet
+
 
 def blockdiagonal_control_variate_trace_estimate(sparse_pd_hessian_operator,
                                                   nbeads,
@@ -908,7 +911,8 @@ def spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
     spring_term_cv_trace_estimator = SpringTermControlVariateLogDetTraceEstimator(sparse_pd_hessian_operator,
                                                                                   nbeads)
     
-    spring_term_cv_trace_estimator.build_control_variate_decomposition(spring_term_operator)
+    spring_low_freq_index= 1
+    spring_term_cv_trace_estimator.build_control_variate_decomposition(spring_term_operator, spring_low_freq_index)
 
     control_variate_logdet = spring_term_cv_trace_estimator.compute_control_variate_logdet()
 
@@ -925,7 +929,7 @@ def spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
 
         if estimate_logdet_std:
             # if estimate logdet std, then we use the avg logdet to replace the result of the single run.
-            avg_num = 10
+            avg_num = 50
             logdet_std, logdet_from_residue = spring_term_cv_trace_estimator.compute_logdet_subspace_projection_std_estimate(
                 projection_index,
                 random_vector_number,
@@ -963,8 +967,9 @@ def compute_hessian_logdet(hessian: np.ndarray,
                            proj_info: tuple,
                            random_vector_number= 1000,
                            max_tridiag_iter= 50,
-                           cg_tolerance = 1e-2,
+                           cg_tolerance = 1e-3,
                            estimate_logdet_std= False,
+                           control_varaite= True,
                            subspace_proj= False,
                            proj_index= 2) -> float:
     """
@@ -1004,24 +1009,25 @@ def compute_hessian_logdet(hessian: np.ndarray,
     #                                               estimate_logdet_std= estimate_logdet_std)
 
     # use spring term as control variate.
-    logdet_sp = spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
-                                               projected_sp_op,
-                                               nbeads,
-                                               random_vector_number,
-                                               max_tridiag_iter,
-                                               cg_tolerance,
-                                               estimate_logdet_std= estimate_logdet_std,
-                                               subspace_projection= subspace_proj,
-                                               projection_index= proj_index)
+    if control_varaite:
+        logdet_sp = spring_term_control_variate_trace_estimate(sparse_pd_hessian_operator,
+                                                   projected_sp_op,
+                                                   nbeads,
+                                                   random_vector_number,
+                                                   max_tridiag_iter,
+                                                   cg_tolerance,
+                                                   estimate_logdet_std= estimate_logdet_std,
+                                                   subspace_projection= subspace_proj,
+                                                   projection_index= proj_index)
+        logdet = logdet_sp
+    else:
+        logdet_origin = trace_estimate_original_matrix(sparse_pd_hessian_operator,
+                                                    random_vector_number, 
+                                                    max_tridiag_iter, 
+                                                    cg_tolerance, 
+                                                    estimate_logdet_std= estimate_logdet_std)
 
-    # logdet_origin = trace_estimate_original_matrix(sparse_pd_hessian_operator,
-    #                                                random_vector_number, 
-    #                                                max_tridiag_iter, 
-    #                                                cg_tolerance, 
-    #                                                estimate_logdet_std= estimate_logdet_std)
-
-    # use the logdet from spring term.
-    logdet = logdet_sp
+        logdet = logdet_origin
 
     # remove log(shifted eigval). Add log(d[0]) which is negative eigenvalue.
     shifted_positive_eigenvalues = positive_eigval  
