@@ -635,7 +635,7 @@ def compute_instanton_rate_or_splitting():
                                                         random_vector_number= random_vector_number,
                                                         max_tridiag_iter= lanczos_iteration_num,
                                                         cg_tolerance = 1e-3,
-                                                        estimate_logdet_std= trace_estimate_std_bool,
+                                                        estimate_logdet_std_bool= trace_estimate_std_bool,
                                                         control_varaite= control_varaite,
                                                         subspace_proj= subspace_projection,
                                                         proj_index= subspace_projection_index
