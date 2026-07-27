@@ -723,7 +723,7 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         # logdet(B^{-1/2} A B^{-1/2}) 
         projection_index = self.projection_index
         self.construct_projection_vector(projection_index)
-        trace_estimator = SubspaceProjTraceEstimator(self._residue_op_for_subspace_proj)
+        trace_estimator = SubspaceProjTraceEstimator(self._residue_op)
 
         # compute std of trace estimate and the average of the trace estimate.
         residue_logdet_std, residue_logdet = trace_estimator.compute_logdet_estimate_std(
@@ -965,6 +965,7 @@ def estimate_logdet(trace_estimator: BaseTraceEstimator,
     print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
     print(f"logdet of pd matrix: {logdet}")
 
+    return logdet
     
 def compute_hessian_logdet(hessian: np.ndarray,
                            bead_hessian: np.ndarray,
