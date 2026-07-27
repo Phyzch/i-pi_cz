@@ -461,11 +461,13 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         # we include the projection of low frequency modes of physical hessian in the control variate matrix.
         sp_term_tensor = self.spring_term_op.to_dense()
         sp_low_freq_modes = np.zeros((block_size * spring_low_freq_mode_num, size))
+
+        indices = range(0, size, block_size)
+        spring_tensor = sp_term_tensor[indices, :][:, indices]
+        _, eigvecs = torch.linalg.eigh(spring_tensor)
         
         for i in range(block_size):  # loop through physical dimension.
             indices = range(i, size, block_size)
-            spring_tensor = sp_term_tensor[indices, :][:, indices]
-            eigvals, eigvecs = torch.linalg.eigh(spring_tensor)
             low_freq_modes = np.zeros([spring_low_freq_mode_num, size])
             low_freq_modes[:, indices] = (eigvecs.T)[:spring_low_freq_mode_num, :]
             sp_low_freq_modes[i * spring_low_freq_mode_num: (i + 1) * spring_low_freq_mode_num] = low_freq_modes
@@ -530,6 +532,7 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         # spring term is the same along all physical dimension, so, we only compute it once.
         indices = range(0, size, block_size)
         sub_tensor = sp_term_tensor[indices, :][:, indices]
+        
         # TODO: ideally this should be evaluated in the closed form. 
         # The O(P^{3}) scaling of eigendecomposition, where P is bead number is undesirable 
         eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
