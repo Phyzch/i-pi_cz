@@ -4,12 +4,12 @@ using the linear_operator library.
 """
 import subprocess
 import sys 
-from gpytorch.settings import cg_tolerance
 import numpy as np
 import scipy 
 import torch 
 import time 
 import copy 
+import pickle 
 
 try:
     import linear_operator
@@ -83,7 +83,8 @@ class TraceEstimator(BaseTraceEstimator):
     """
     def __init__(self, linear_op):
         self.linear_op = linear_op 
-    
+        self.linear_op = self.linear_op.to(dtype= torch.float32)
+
     def info(self):
         """
         print information about the trace estimator we use.
@@ -1032,4 +1033,35 @@ def compute_hessian_logdet(hessian: np.ndarray,
     shift_value = - total_shifted_mode_number * np.log(shifted_positive_eigenvalues) + np.log(np.abs(d[0]))
     hess_logdet = logdet + shift_value
 
+    print(f"logdet for the hessian matrix (after reverting the shift) is {hess_logdet}")
     return hess_logdet
+
+if __name__ == "__main__":
+    with open("hess.pkl", "rb") as f:
+        hess_args = pickle.load(f)
+
+    # number of random vectors to use.
+    random_vector_number= 100
+    # maximum number of lanczos steps
+    max_tridiag_iter= 50
+    # tolerance of batched conjugate gradient method. We use result of cg for lanczos. Check BBMM paper for detail
+    # BBMM: GPyTorch: Blackbox Matrix-Matrix Gaussian Process Inference with GPU Acceleration
+    cg_tolerance = 1e-3
+    # whether to estimate the standard deviation of our estimate.
+    estimate_logdet_std_bool= True
+    # whether to use control variate. Currently only spirng term as control variate is used.
+    control_varaite= True
+    # whether to do subspace projection
+    subspace_proj= False
+    # projection index for low frequency modes when doing subspace projection.
+    proj_index= 2
+    
+    hess_logdet = compute_hessian_logdet(*hess_args,
+                                         random_vector_number= random_vector_number,
+                                         max_tridiag_iter= max_tridiag_iter,
+                                         cg_tolerance= cg_tolerance,
+                                         estimate_logdet_std_bool= estimate_logdet_std_bool,
+                                         control_varaite= control_varaite,
+                                         subspace_proj= subspace_proj,
+                                         proj_index= proj_index
+                                         )

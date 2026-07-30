@@ -935,7 +935,7 @@ class GPModelWithDerivativesWrapper:
         ), "train_grad_q for internal coordiante has wrong dimension"
 
         # normalize the new_train_targets
-        new_train_targets, new_train_inputs = self.Normalizer.normalization_transform(
+        new_train_targets, new_normalized_train_inputs = self.Normalizer.normalization_transform(
             new_train_targets,
             new_train_inputs
         )
@@ -948,15 +948,16 @@ class GPModelWithDerivativesWrapper:
         # )
 
         # transform numpy array into tensor.
-        (new_train_inputs, new_train_targets) = map(
-            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (new_train_inputs, new_train_targets)
+        (new_train_inputs_tensor, new_normalized_train_inputs_tensor, new_train_targets_tensor) = map(
+            lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), 
+            (new_train_inputs, new_normalized_train_inputs, new_train_targets)
         )
 
         # we only add new training data if they are not too close to each other.
         filtered_new_train_inputs_index = update_model_with_new_data(
             self.gpr_model,
-            new_train_inputs,
-            new_train_targets,
+            new_normalized_train_inputs_tensor,
+            new_train_targets_tensor,
             distance_cutoff,
             train_bool
         )
@@ -965,7 +966,7 @@ class GPModelWithDerivativesWrapper:
             self.update_training_variables(
                 filtered_new_train_inputs_index,
                 new_train_inputs,
-                new_train_inputs,
+                new_normalized_train_inputs,
                 new_train_targets,
                 new_train_x,
                 new_train_V,

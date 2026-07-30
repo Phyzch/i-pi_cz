@@ -3,7 +3,8 @@ import sys
 
 import argparse
 from ipi.utils.messages import verbosity, info
-import time 
+import time
+import pickle 
 '''
 Adapted from Instanton_postproc.py written by Y. Litman
 '''
@@ -627,6 +628,11 @@ def compute_instanton_rate_or_splitting():
             # project out translational and rotational modes.
             start_time = time.perf_counter()
             hm, detI, proj_info =  project_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
+            
+            hess_args = (hm, bead_hessian, spring_term_param, proj_info)
+            with open("hess.pkl", "wb") as f:
+                pickle.dump(hess_args, f)
+
             # use log determinant estimator to compute log determinant of the projected hessian.
             hess_logdet_estimate = compute_hessian_logdet(hm,
                                                           bead_hessian,
