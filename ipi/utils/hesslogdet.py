@@ -150,7 +150,7 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         compute the trace estimate of projected linear operator exactly.
         """
         matrix_size = self.linear_op.size()[0]
-        probe_vectors = proj_operator.to_dense()
+        probe_vectors = proj_operator.to_dense().to(dtype= torch.float32)
         probe_vector_nums = probe_vectors.shape[-1]
         # to use batched cg to get the Lanczos tri-diagonalization matrix.
         max_cg_num = 1000
@@ -192,7 +192,7 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         probe_vectors = complement_proj_linear_op.matmul(transformation_operator.matmul(random_vectors))
         # normalize the vector.
         probe_vector_norms = torch.norm(probe_vectors, p=2, dim= -2, keepdim= True)
-        probe_vectors = probe_vectors.div(probe_vector_norms)
+        probe_vectors = probe_vectors.div(probe_vector_norms).to(dtype=torch.float32)
 
 
         # factor: in slq.to_dense(). the result * matrix.shape[-1], assuming the probe vector has norm sqrt{N} (N is matrix_size)

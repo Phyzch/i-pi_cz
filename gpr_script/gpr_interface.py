@@ -982,7 +982,7 @@ class GPRHessianMapper(object):
         if (not model_hyperparameter_exists) | self.train_hessian_model_bool:
             # the hyper-parameter of the gpr hessian model does not exist.
             # or we want to train the model by setting train_hessian_model as true.
-            self.train_gpr_hessian_model(stagewise_training_bool= False)
+            self.train_gpr_hessian_model(stagewise_training_bool= True)
 
         gpr_util.analyze_train_error(self.gpr_hessian_model)
             
@@ -1419,7 +1419,7 @@ class GPRHessianMapper(object):
 
         # train the model.
         if (self.add_new_hessian_data_bool or self.add_new_grad_data_bool) and self.train_hessian_model_bool:
-            self.train_gpr_hessian_model()
+            self.train_gpr_hessian_model(stagewise_training_bool= True)
             gpr_util.analyze_train_error(self.gpr_hessian_model)
                 
         # store the computed ab inito gradient and hessian data if we compute new data point. 

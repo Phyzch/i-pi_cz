@@ -41,30 +41,22 @@ def predict_latent_function_gp_with_derivative(
     model.eval()
 
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        latent_func = model(
-            test_inputs
-        )  # MultitaskMultivariateNormal distribution object.
-
         data_num = test_inputs.shape[0]  # number of test_inputs data
 
-        test_mean = latent_func.mean
-        test_covariance = latent_func.covariance_matrix
+        # predict data point one by one to avoid constructing huge covariance matrix. 
+        test_mean = torch.empty([data_num, model.output_dim], device= model.device)
+        test_covariance_list = torch.empty([data_num, model.output_dim, model.output_dim], device= model.device)
+        test_var = torch.empty([data_num, model.output_dim], device= model.device)
 
-        # diagonal component of covariance matrix is the variance of function and gradient
-        test_var = torch.diag(test_covariance)
-        test_var = test_var.reshape(
-            [model.output_dim, data_num]
-        )  # first row is variance for f,  second row is variance for df/dx1, third row: df/dx2, ..
-        test_var = torch.transpose(test_var, 0, 1)  # now each row is one data piont.
-
-        # return covariance matrix for each data set.
-        # shape: [data_num, model.output_dim, model.output_dim]
-        test_covariance_list = torch.zeros([data_num, model.output_dim, model.output_dim], device= model.device)
-        for i in range(data_num):
-            index = torch.arange(i, model.output_dim * data_num, data_num, device= model.device)
-            index_2d = torch.meshgrid(index, index, indexing= 'ij')
-            test_data_point_covariance = test_covariance[index_2d[0], index_2d[1]]
-            test_covariance_list[i] = test_data_point_covariance
+        for index in range(data_num):
+            test_input_data = test_inputs[index]
+            predict_latent_func = model(
+                test_input_data.unsqueeze(0)
+            )
+            test_mean[index] = predict_latent_func.mean
+            test_data_covariance = predict_latent_func.covariance_matrix
+            test_covariance_list[index] = test_data_covariance
+            test_var[index] = torch.diag(test_data_covariance)
         
     if covar_bool:
         return test_mean, test_covariance_list
