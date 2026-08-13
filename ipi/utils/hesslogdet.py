@@ -527,7 +527,29 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         logdet = logdet + logdet1
 
         return logdet
-    
+
+    @staticmethod
+    def B_inv_sqrt_v(v):
+        """
+        compute B^{-1/2} v, use the fast fourier transform.
+        Here B is the hessian of coupled harmonic oscillator.
+        """
+        # number of beads
+        P = v.shape[0]
+
+        k = torch.arange(P, dtype= torch.float32)
+        eigvals = 4 * torch.square(torch.sin(torch.pi * k / P ))
+        v_fft = torch.fft.fft(v)
+
+        inv_sqrt_eigvals = torch.zeros(P)
+        inv_sqrt_eigvals[1:] = 1.0 / torch.sqrt(eigvals[1:])
+
+        w_fft = inv_sqrt_eigvals * v_fft
+
+        result = torch.fft.ifft(w_fft).real
+
+        return result 
+
     def compute_sp_eigenvecs(self):
         """
         get eigenvectors of spring term tensor.
@@ -552,6 +574,22 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         # TODO: ideally this should be evaluated in the closed form. 
         # The O(P^{3}) scaling of eigendecomposition, where P is bead number is undesirable 
         eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
+
+        # test the idea
+        scale_factor = sub_tensor[0,0] / 2 
+        v = torch.rand(nbeads)
+
+        # do it by direct inversion of matrix.
+        sqrt_inv_eigvals = torch.zeros_like(eigvals)
+        sqrt_inv_eigvals[1:] = 1.0 / torch.sqrt(eigvals[1:])
+        sqrt_inv_sub_tensor = (eigvecs) @ torch.diag(sqrt_inv_eigvals) @ eigvecs.T
+        result1 = sqrt_inv_sub_tensor @ v 
+
+        # use fft.
+        result2 = 1 / torch.sqrt(scale_factor) * self.B_inv_sqrt_v(v)
+
+        pass 
+
         
         for i in range(block_size):
             indices = range(i, size, block_size)
@@ -720,6 +758,14 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         self.construct_projection_vector(projection_index)
         trace_estimator = SubspaceProjTraceEstimator(self._residue_op)
 
+        test_matmul_scaling(self.base_linear_op, "base_linear_operator")
+
+        test_matmul_scaling(self._residue_op, "residue_operator") 
+
+        test_solve_scaling(self.base_linear_op, max_tridiag_iter, cg_tolerance, "base_linear_operator")
+
+        test_solve_scaling(self._residue_op, max_tridiag_iter, cg_tolerance, "residue_operator")
+
         with timer("residue matrix trace estimation:"):
             # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
             # We also need self.sp_eigvec_linear_op to transform the basis set into the spring vector subspace when doing trace estimation.
@@ -729,7 +775,6 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
                                                                                 max_tridiag_iter,
                                                                                 cg_tolerance)
 
-        pass 
 
         logdet = residue_logdet + control_variate_logdet
         return logdet
@@ -990,10 +1035,10 @@ def estimate_logdet(trace_estimator: BaseTraceEstimator,
 
     return logdet
 
-def test_solve_scaling(operator, max_tridiag_iter, cg_tolerance):
+def test_solve_scaling(operator, max_tridiag_iter, cg_tolerance, operator_name= "operator"):
     vector_num = 100
     torch.manual_seed(42)
-    with timer(f"test matmul scaling with {vector_num} random vectors"):
+    with timer(f"test matmul scaling with {vector_num} random vectors for {operator_name}"):
         with (linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
                linear_operator.settings.max_cg_iterations(max_tridiag_iter),
               linear_operator.settings.cg_tolerance(cg_tolerance),
@@ -1002,6 +1047,17 @@ def test_solve_scaling(operator, max_tridiag_iter, cg_tolerance):
             x = torch.rand(size, vector_num)
             _, t_mat = operator._solve(x, None, num_tridiag= vector_num)
             # logdet = operator.logdet().item()
+
+            pass
+
+def test_matmul_scaling(operator, operator_name= "operator"):
+    vector_num = 100
+    torch.manual_seed(42)
+    with timer(f"test matmul scaling with {vector_num} random vectors for {operator_name}"):
+            size = operator.size()[1]
+            for _ in range(vector_num):
+                x = torch.rand(size)
+                y = operator.matmul(x)
 
             pass
 
@@ -1041,11 +1097,6 @@ def compute_hessian_logdet(hessian: np.ndarray,
 
     nbeads = spring_term_param[0]
     spring_low_freq_index= 0
-
-    test_solve_scaling(sparse_pd_hessian_operator,
-                       max_tridiag_iter,
-                       cg_tolerance
-                       )
 
     with timer("constructing trace estimator"):
         trace_estimator = construct_trace_estimator(
