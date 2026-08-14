@@ -297,7 +297,6 @@ class SubspaceProjTraceEstimator(TraceEstimator):
 
     def complement_space_logdet_trace_estimate(self, 
                                                complement_proj_linear_op,
-                                               transformation_operator,
                                                proj_op_num,
                                                random_vector_number,
                                                max_tridiag_iter,
@@ -313,7 +312,7 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         random_vectors = random_vectors.unsqueeze(-2).transpose(0, -2).squeeze(0).mT.contiguous()
         random_vectors = random_vectors.to(complement_proj_linear_op.dtype)
         # (I - QQ^{T}) U v, here U is transformation operator.
-        probe_vectors = complement_proj_linear_op.matmul(transformation_operator.matmul(random_vectors))
+        probe_vectors = complement_proj_linear_op.matmul(random_vectors)
         # normalize the vector.
         probe_vector_norms = torch.norm(probe_vectors, p=2, dim= -2, keepdim= True)
         probe_vectors = probe_vectors.div(probe_vector_norms).to(dtype=torch.float32)
@@ -344,7 +343,6 @@ class SubspaceProjTraceEstimator(TraceEstimator):
 
     def compute_logdet_estimate(self,
                                 proj_operator, 
-                                transformation_operator,
                                 random_vector_number, 
                                 max_tridiag_iter, 
                                 cg_tolerance):
@@ -354,23 +352,20 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         :param: proj_operator: each column is an eigenvector. 
         :param: transformation_operator: do the transformation of random vectors before use it for trace estimation.
         """
-        with timer("subspace projection term calculation"):
-            # compute the exact trace estimate in projected space.
-            proj_op_logdet = self.proj_operator_logdet_calculation(proj_operator, max_tridiag_iter, cg_tolerance)
+        # compute the exact trace estimate in projected space.
+        proj_op_logdet = self.proj_operator_logdet_calculation(proj_operator, max_tridiag_iter, cg_tolerance)
 
-        with timer("complement subspace trace estimation"):
-            # compute logdet in the complement space.  (I- QQ^T) A (I-QQ^T)
-            matrix_size = self.linear_op.size()[0]
-            complement_proj_linear_op = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_operator)
-            
-            # we need separate code to implement this 
-            proj_op_num = proj_operator.size()[-1]
-            complement_op_logdet = self.complement_space_logdet_trace_estimate(complement_proj_linear_op,
-                                                                            transformation_operator,
-                                                                            proj_op_num,
-                                                                            random_vector_number,
-                                                                            max_tridiag_iter,
-                                                                            cg_tolerance)
+        # compute logdet in the complement space.  (I- QQ^T) A (I-QQ^T)
+        matrix_size = self.linear_op.size()[0]
+        complement_proj_linear_op = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_operator)
+        
+        # we need separate code to implement this 
+        proj_op_num = proj_operator.size()[-1]
+        complement_op_logdet = self.complement_space_logdet_trace_estimate(complement_proj_linear_op,
+                                                                        proj_op_num,
+                                                                        random_vector_number,
+                                                                        max_tridiag_iter,
+                                                                        cg_tolerance)
 
         logdet = proj_op_logdet + complement_op_logdet
 
@@ -382,7 +377,6 @@ class SubspaceProjTraceEstimator(TraceEstimator):
 
     def compute_logdet_estimate_std(self,
                                     proj_operator, 
-                                    transformation_operator,
                                     random_vector_number, 
                                     max_tridiag_iter, 
                                     cg_tolerance,
@@ -407,7 +401,6 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         complement_op_logdet_list = []
         for _ in range(avg_num):
             complement_op_logdet = self.complement_space_logdet_trace_estimate(complement_proj_linear_op,
-                                                                           transformation_operator,
                                                                            proj_op_num,
                                                                            random_vector_number,
                                                                            max_tridiag_iter,
@@ -671,7 +664,7 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         row_indices = []
         col_indices = []
         val_list = []
-        eigval_list = []
+        sp_eigvals = []
 
         # analytical form of eigvals.
         eigvals = torch.zeros([nbeads], dtype= torch.float32)
@@ -697,10 +690,11 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         eigvals = eigvals * scale 
 
         with timer("construct sparse eigenvector:"):
+            # TODO: This part is slow. scaling is O(P^2)
             for i in range(block_size):
                 indices = range(i, size, block_size)
                 # sp_eigvec_lists[:, i * self.nbeads: (i + 1) * self.nbeads][indices, :] = eigvecs 
-                eigval_list.append(eigvals)
+                sp_eigvals.append(eigvals)
                 for j in range(nbeads): # indices for eigenvec.
                     for k in range(nbeads):  # indices for element of eigenvec.
                         col_indices.append(i* nbeads + j)
@@ -715,18 +709,17 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
             sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, nbeads * block_size))
             sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
 
-        eigval_list = torch.tensor(np.array(eigval_list).flatten())
+        sp_eigvals = torch.tensor(np.array(sp_eigvals).flatten())
 
 
         self.sp_eigvec_linear_op = sp_eigevec_sparse_linear_operator
         self.sp_eigvec_sparse_tensor = sp_eigvec_sparse_tensor
 
-        return eigval_list, sp_eigevec_sparse_linear_operator 
+        return sp_eigvals, sp_eigevec_sparse_linear_operator 
     
     def inverse_sqrt_control_variate(self, 
-                                     eigval_list, 
-                                     sp_eigvec_sparse_linear_operator: SparseLinearOperator,
-                                     sp_basis_set= False):
+                                     sp_eigvals, 
+                                     sp_eigvec_sparse_linear_operator: SparseLinearOperator):
         """
         compute  U^{T} B^{-1/2} or B^{-1/2}. here U is the eigenvector of the spring term. 
         :param: eigval_list: a list of eigenvalues.
@@ -739,19 +732,12 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         # low frequency mode index
         low_freq_mode_index = []
         zero_mode_num = self.zero_mode_index + 1
+        sp_eigvec_num = int(sp_eigvals.shape[0] / block_size) # number of low lying eigevectors computed
         for i in range(block_size):
-            mode_index = list(range(i * nbeads, i * nbeads + zero_mode_num)) # low frequency spring eigenstate for each physical dimension.
+            mode_index = list(range(i * sp_eigvec_num, i * sp_eigvec_num + zero_mode_num)) # low frequency spring eigenstate for each physical dimension.
             low_freq_mode_index = low_freq_mode_index + mode_index
         low_freq_mode_index = np.array(low_freq_mode_index)
         low_freq_mode_num = len(low_freq_mode_index)
-
-        # pseudo-inverse of eigenvalue.
-        inv_eigval_list = torch.zeros_like(eigval_list)
-        mask = torch.ones(size, dtype= torch.bool)
-        mask[low_freq_mode_index] = False
-        inv_eigval_list[mask] = 1.0 / eigval_list[mask]
-        inv_sqrt_eigval_list = torch.sqrt(inv_eigval_list)
-        inv_sqrt_eigval_linear_operator = linear_operator.operators.DiagLinearOperator(inv_sqrt_eigval_list)
 
         # use FFT to replace the psuedo-inverse of coupled oscillator hessian matrix. 
         omega = self.spring_term_param[2]
@@ -763,14 +749,6 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         eigval_tensor = 4 * torch.square(torch.sin(torch.pi * k / P )).to(dtype= torch.float32)
         sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(eigval_tensor, nbeads, block_size, scale_factor)
     
-        # U^T U0, here U0 is eigenstate of low frequency mode.
-        row_indices = torch.tensor(np.array(low_freq_mode_index))
-        col_indices = torch.tensor(np.array(range(0, low_freq_mode_num)))
-        val_list = torch.ones(low_freq_mode_num)
-        indices = torch.stack([row_indices, col_indices], axis= 0)
-        sparse_proj_matrix = torch.sparse_coo_tensor(indices, val_list, size= (size, low_freq_mode_num))
-        low_freq_mode_proj_operator = SparseLinearOperator(sparse_proj_matrix)
-
         # U0: low freq mode eigenvec.
         sp_eigvec_sparse = sp_eigvec_sparse_linear_operator.get_sparse_matrix()
         low_freq_mode_eigvec_sparse = torch.index_select(sp_eigvec_sparse, dim= 1, index= torch.tensor(low_freq_mode_index))
@@ -783,48 +761,17 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         lcholesky_inverse = lcholesky.inverse()
         inv_sqrt_low_freq_modes_proj_linear_op = linear_operator.to_linear_operator(lcholesky_inverse)
 
-        if sp_basis_set:
-            # compute U^{T} B^{-1/2}
-            # S^{-1/2} U^{T}
-            comp1 = inv_sqrt_eigval_linear_operator.matmul(sp_eigvec_sparse_linear_operator.T)
+        # compute B^{-1/2}
+        # U S^{-1/2} U^{T}
+        # comp1 = sp_eigvec_sparse_linear_operator.matmul(inv_sqrt_eigval_linear_operator).matmul(sp_eigvec_sparse_linear_operator.T)
+        # use the fft form operator as B^{-1/2}
+        comp1 = sqrt_inverse_control_variate
 
-            # (U^{T} U0)  (U0^T H U0)^{-1/2} U0^{T} 
-            comp2 = low_freq_mode_proj_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
-            inv_sqrt_control_variate = comp1 + comp2 
-        else:
-            # compute B^{-1/2}
-            # U S^{-1/2} U^{T}
-            # comp1 = sp_eigvec_sparse_linear_operator.matmul(inv_sqrt_eigval_linear_operator).matmul(sp_eigvec_sparse_linear_operator.T)
-            # use the fft form operator as B^{-1/2}
-            comp1 = sqrt_inverse_control_variate
-
-            # U0 (U0^T H U0)^{-1/2} U0^{T} 
-            comp2 = low_freq_mode_eigvec_linear_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
-            inv_sqrt_control_variate = comp1 + comp2 
+        # U0 (U0^T H U0)^{-1/2} U0^{T} 
+        comp2 = low_freq_mode_eigvec_linear_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
+        inv_sqrt_control_variate = comp1 + comp2 
 
         return inv_sqrt_control_variate
-
-    def construct_residue_op(self):
-        sp_eigvals, sp_eigvec_op = self.compute_sp_eigenvecs()
-
-        # U^{T} B^{-1/2}
-        sp_basis_inv_sqrt_control_variate = self.inverse_sqrt_control_variate(sp_eigvals, sp_eigvec_op, sp_basis_set= True)
-        r1 = sp_basis_inv_sqrt_control_variate.matmul(self.base_linear_op)
-        r2 = r1.matmul(sp_basis_inv_sqrt_control_variate.T)
-        # U^{T} B^{-1/2} A B^{-1/2} U
-        self.residue_op = r2 
-
-        pass
-
-class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
-    def __init__(self, base_linear_op, nbeads, spring_term_op, spring_term_param, projection_index):
-        self.projection_index = projection_index
-        super().__init__(base_linear_op, nbeads, spring_term_op, spring_term_param)
-
-    def info(self):
-        print("use spring term as control variate to estimate logdet.")
-        print(f"The projection index to project out the subspace is {self.projection_index}")
-
 
     def construct_residue_op(self):
         sp_eigvals, sp_eigvec_op = self.compute_sp_eigenvecs()
@@ -836,6 +783,16 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         # used for compute trace estimation with subspace projection.
         self.residue_op = r2
 
+class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
+    def __init__(self, base_linear_op, nbeads, spring_term_op, spring_term_param, projection_index):
+        self.projection_index = projection_index
+        super().__init__(base_linear_op, nbeads, spring_term_op, spring_term_param)
+
+    def info(self):
+        print("use spring term as control variate to estimate logdet.")
+        print(f"The projection index to project out the subspace is {self.projection_index}")
+
+
     def construct_projection_vector(self, projection_index):
         """
         construct the projection vector for the subspace method.
@@ -843,14 +800,16 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         """
         # we project out the subspace that is not included in control variate construction but still overlaps with physical modes.
         sp_eig_index_for_proj = np.array(range(self.zero_mode_index + 1, projection_index + 1))
+        proj_num = projection_index + 1
         size = self.base_linear_op.size()[0]
         nbeads = self.nbeads
         block_size = int(size / self.nbeads)
 
         # indices in eigenvector space for spring term across all physical dimension.
         sp_eig_index_for_proj_all = []
+        eigvec_num = int(self.sp_eigvec_sparse_tensor.shape[1] / block_size)
         for i in range(block_size):
-            indices = (i * nbeads) + sp_eig_index_for_proj
+            indices = (i * eigvec_num) + sp_eig_index_for_proj
             indices= indices.tolist()
             sp_eig_index_for_proj_all = sp_eig_index_for_proj_all + indices
         
@@ -876,9 +835,7 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         trace_estimator = SubspaceProjTraceEstimator(self._residue_op)
 
         # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
-        # We also need self.sp_eigvec_linear_op to transform the basis set into the spring vector subspace when doing trace estimation.
         residue_logdet = trace_estimator.compute_logdet_estimate(self.sp_eigvec_for_proj_linear_op,
-                                                                            self.sp_eigvec_linear_op,
                                                                             random_vector_number,
                                                                             max_tridiag_iter,
                                                                             cg_tolerance)
@@ -904,7 +861,6 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         # compute std of trace estimate and the average of the trace estimate.
         residue_logdet_std, residue_logdet = trace_estimator.compute_logdet_estimate_std(
             self.sp_eigvec_for_proj_linear_op,
-            self.sp_eigvec_linear_op,
             random_vector_number,
             max_tridiag_iter,
             cg_tolerance,
