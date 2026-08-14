@@ -558,20 +558,22 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
     """
     We use the spring term as the control variate.
     """
-    def __init__(self, base_linear_op, nbeads, spring_term_op, spring_low_freq_index):
+    def __init__(self, base_linear_op, nbeads, spring_term_op, spring_term_param):
+        self.spring_term_param = spring_term_param
         super().__init__(base_linear_op)
         self.nbeads = nbeads
-        self.build_control_variate_decomposition(spring_term_op, spring_low_freq_index)
+        self.build_control_variate_decomposition(spring_term_op)
     
     def info(self):
         print("use spring term as control variate to estimate logdet.")
-        print(f"The low normal mode index for the subspace to include in the control variate is {self.spring_low_freq_index}")
         
-    def build_control_variate_decomposition(self, spring_term_op, spring_low_freq_index):
-        self.construct_control_variate(spring_term_op, spring_low_freq_index)
+    def build_control_variate_decomposition(self, spring_term_op):
+        # construct control variate B.
+        self.construct_control_variate(spring_term_op)
+        # construct residue operator B^{-1/2} A B^{-1/2}
         self.construct_residue_op()
 
-    def construct_control_variate(self, spring_term_op, spring_low_freq_index):
+    def construct_control_variate(self, spring_term_op):
         """
         set the spring term operator as the control covariate operator.
         """
@@ -579,31 +581,47 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         base_linear_op = self.base_linear_op
 
         # low frequency modes of spring term (coupled harmonic oscillator)
-        self.spring_low_freq_index = spring_low_freq_index
+        self.zero_mode_index = 0
 
-        spring_low_freq_mode_num = (self.spring_low_freq_index + 1)
+        zero_mode_num = 1
         size = base_linear_op.size()[0]
         block_size = int(size / self.nbeads)
 
         # low frequency modes for spring terms
         # we include the projection of low frequency modes of physical hessian in the control variate matrix.
-        sp_term_tensor = self.spring_term_op.to_dense()
-        sp_low_freq_modes = np.zeros((block_size * spring_low_freq_mode_num, size))
+        # use ifft to get eigenvectors.
+        sp_low_freq_modes = np.zeros((block_size * zero_mode_num, size))
+        selected_eigvecs = torch.zeros([self.nbeads, zero_mode_num])
+        for eig_index in range(zero_mode_num):
+            one_hot_vec = torch.zeros([self.nbeads], dtype= torch.complex64)
+            if eig_index == 0:
+                one_hot_vec[0] = 1
+            else:
+                if eig_index % 2 == 0:
+                    index = int(eig_index / 2)
+                    one_hot_vec[index] = 1
+                    one_hot_vec[self.nbeads - index] = 1
+                else:
+                    index = int((eig_index + 1) / 2)
+                    one_hot_vec[index] = 1j
+                    one_hot_vec[self.nbeads - index] = -1j  
+            vec = torch.fft.ifft(one_hot_vec)
+            vec = vec.real
+            vec = vec / torch.linalg.norm(vec)
+            selected_eigvecs[:, eig_index] = vec 
 
-        indices = range(0, size, block_size)
-        spring_tensor = sp_term_tensor[indices, :][:, indices]
-        _, eigvecs = torch.linalg.eigh(spring_tensor)
-        
+
         for i in range(block_size):  # loop through physical dimension.
             indices = range(i, size, block_size)
-            low_freq_modes = np.zeros([spring_low_freq_mode_num, size])
-            low_freq_modes[:, indices] = (eigvecs.T)[:spring_low_freq_mode_num, :]
-            sp_low_freq_modes[i * spring_low_freq_mode_num: (i + 1) * spring_low_freq_mode_num] = low_freq_modes
+            low_freq_modes = np.zeros([zero_mode_num, size])
+            low_freq_modes[:, indices] = (selected_eigvecs.T)[:zero_mode_num, :]
+            sp_low_freq_modes[i * zero_mode_num: (i + 1) * zero_mode_num] = low_freq_modes
 
         sp_low_freq_modes_tensor = torch.tensor(sp_low_freq_modes)
         low_freq_modes_proj_op = linear_operator.operators.LowRankRootLinearOperator(sp_low_freq_modes_tensor.T)
-        
-         ## U^T A U, here U^T is low frequency modes projection operator.
+
+
+        ## U^T A U, here U^T is low frequency modes projection operator.
         self.sp_low_freq_modes_proj_tensor = sp_low_freq_modes_tensor.matmul(self.base_linear_op.matmul(sp_low_freq_modes_tensor.T))
 
         phys_hess_operator = self.base_linear_op - spring_term_op 
@@ -614,26 +632,25 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         """
         use the fact that spring terms are block diagonal in each physical dimension space.
         """
-        # # zero modes.
-        # zero_modes_eigvals = torch.linalg.eigvalsh(self.sp_zero_modes_proj_tensor)
-        # logdet1 = np.sum(np.log(zero_modes_eigvals.numpy()))
-
         # low frequency proj of (physical + spring term)
         low_freq_modes_eigvals = torch.linalg.eigvalsh(self.sp_low_freq_modes_proj_tensor)
         logdet1 = np.sum(np.log(low_freq_modes_eigvals.numpy()))
 
-        # spring terms
-        sp_term_tensor = self.spring_term_op.to_dense()
         size = self.base_linear_op.size()[0]
         block_size = int(size / self.nbeads)
 
         logdet = 0
-        
-        indices = range(0, size, block_size)
-        sub_tensor = sp_term_tensor[indices, :][:, indices]
-        # TODO: We can use the analytical solution to coupled oscillators here.
-        eigvals = torch.linalg.eigvalsh(sub_tensor)
-        nonmixed_eigvals = eigvals[self.spring_low_freq_index + 1: ]
+
+        # use analytical result for eigvals of coupled oscillators.
+        omega = self.spring_term_param[2] # (1/(beta_N * hbar))^2 
+        scale = omega
+
+        P = self.nbeads 
+        k = torch.arange(P, dtype= torch.float32)
+        eigvals = 4 * torch.square(torch.sin(torch.pi * k / P )).to(dtype= torch.float32)
+        eigvals = eigvals * scale 
+
+        nonmixed_eigvals = eigvals[1: ] # delete zero mode.
         logdet = logdet + np.sum(np.log(nonmixed_eigvals.numpy())) * block_size
         
         logdet = logdet + logdet1
@@ -645,7 +662,6 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         get eigenvectors of spring term tensor.
         """
         # spring terms
-        sp_term_tensor = self.spring_term_op.to_dense()
         size = self.base_linear_op.size()[0]
         nbeads = self.nbeads
         block_size = int(size / self.nbeads)
@@ -657,36 +673,50 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         val_list = []
         eigval_list = []
 
-        # spring term is the same along all physical dimension, so, we only compute it once.
-        indices = range(0, size, block_size)
-        sub_tensor = sp_term_tensor[indices, :][:, indices]
-        
-        # TODO: ideally this should be evaluated in the closed form. 
-        # The O(P^{3}) scaling of eigendecomposition, where P is bead number is undesirable 
-        eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
-        
-        for i in range(block_size):
-            indices = range(i, size, block_size)
-            # sp_eigvec_lists[:, i * self.nbeads: (i + 1) * self.nbeads][indices, :] = eigvecs 
-            eigval_list.append(eigvals)
-            for j in range(nbeads): # indices for eigenvec.
-                for k in range(nbeads):  # indices for element of eigenvec.
-                    col_indices.append(i*nbeads + j)
-                    row_indices.append(indices[k])
-                    val_list.append(eigvecs[k, j])
+        # analytical form of eigvals.
+        eigvals = torch.zeros([nbeads], dtype= torch.float32)
+        eigvecs = torch.zeros([nbeads, nbeads], dtype= torch.float32)
 
-        # create sparse tensor.
-        value = torch.tensor(np.array(val_list))
-        row_indices = torch.tensor(np.array(row_indices))
-        col_indices = torch.tensor(np.array(col_indices))
-        indices = torch.stack([row_indices, col_indices], axis= 0)
-        sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, size))
-        sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
+        k = torch.arange(nbeads, dtype= torch.float32)
+        nbeads_t = torch.tensor(nbeads).to(torch.float32) # nbeads in tensor format.
+        for eig_index in range(nbeads):
+            if eig_index == 0:
+                index = 0
+                eigvecs[:, eig_index] = torch.ones([nbeads]) / torch.sqrt(nbeads_t)
+            elif eig_index % 2 == 0:
+                index = int(eig_index / 2)
+                eigvecs[:, eig_index] = torch.sqrt(2 / nbeads_t) * torch.cos(2 * torch.pi * index * k / nbeads_t)
+            else:
+                index = int((eig_index + 1) / 2)
+                eigvecs[:, eig_index] = torch.sqrt(2 / nbeads_t) * torch.sin(2 * torch.pi * index * k / nbeads_t)
+
+            eigvals[eig_index] = 4 * torch.square(torch.sin(torch.pi * torch.tensor(index) / nbeads_t)).to(dtype= torch.float32)
+
+        omega = self.spring_term_param[2] # omega = (1/(beta_N * hbar)^2)
+        scale = omega 
+        eigvals = eigvals * scale 
+
+        with timer("construct sparse eigenvector:"):
+            for i in range(block_size):
+                indices = range(i, size, block_size)
+                # sp_eigvec_lists[:, i * self.nbeads: (i + 1) * self.nbeads][indices, :] = eigvecs 
+                eigval_list.append(eigvals)
+                for j in range(nbeads): # indices for eigenvec.
+                    for k in range(nbeads):  # indices for element of eigenvec.
+                        col_indices.append(i* nbeads + j)
+                        row_indices.append(indices[k])
+                        val_list.append(eigvecs[k, j])
+
+            # create sparse tensor.
+            value = torch.tensor(np.array(val_list))
+            row_indices = torch.tensor(np.array(row_indices))
+            col_indices = torch.tensor(np.array(col_indices))
+            indices = torch.stack([row_indices, col_indices], axis= 0)
+            sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, nbeads * block_size))
+            sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
 
         eigval_list = torch.tensor(np.array(eigval_list).flatten())
-        # dense tensor and linear operator.
-        # sp_eigvec_tensor = torch.tensor(sp_eigvec_lists)
-        # sp_eigvec_op = linear_operator.to_linear_operator(sp_eigvec_tensor)
+
 
         self.sp_eigvec_linear_op = sp_eigevec_sparse_linear_operator
         self.sp_eigvec_sparse_tensor = sp_eigvec_sparse_tensor
@@ -708,9 +738,9 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
 
         # low frequency mode index
         low_freq_mode_index = []
-        spring_low_freq_mode_num = self.spring_low_freq_index + 1
+        zero_mode_num = self.zero_mode_index + 1
         for i in range(block_size):
-            mode_index = list(range(i * nbeads, i * nbeads + spring_low_freq_mode_num)) # low frequency spring eigenstate for each physical dimension.
+            mode_index = list(range(i * nbeads, i * nbeads + zero_mode_num)) # low frequency spring eigenstate for each physical dimension.
             low_freq_mode_index = low_freq_mode_index + mode_index
         low_freq_mode_index = np.array(low_freq_mode_index)
         low_freq_mode_num = len(low_freq_mode_index)
@@ -724,7 +754,8 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         inv_sqrt_eigval_linear_operator = linear_operator.operators.DiagLinearOperator(inv_sqrt_eigval_list)
 
         # use FFT to replace the psuedo-inverse of coupled oscillator hessian matrix. 
-        scale_factor = self.spring_term_op[0, 0].item() / 2  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
+        omega = self.spring_term_param[2]
+        scale_factor = omega  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
 
         # eigenvalue tensor for fft.
         P = nbeads
@@ -786,14 +817,14 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         pass
 
 class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
-    def __init__(self, base_linear_op, nbeads, spring_term_op, spring_low_freq_index, projection_index):
-        super().__init__(base_linear_op, nbeads, spring_term_op, spring_low_freq_index)
+    def __init__(self, base_linear_op, nbeads, spring_term_op, spring_term_param, projection_index):
         self.projection_index = projection_index
+        super().__init__(base_linear_op, nbeads, spring_term_op, spring_term_param)
 
     def info(self):
         print("use spring term as control variate to estimate logdet.")
-        print(f"The low normal mode index for the subspace to include in the control variate is {self.spring_low_freq_index}")
         print(f"The projection index to project out the subspace is {self.projection_index}")
+
 
     def construct_residue_op(self):
         sp_eigvals, sp_eigvec_op = self.compute_sp_eigenvecs()
@@ -811,7 +842,7 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         :param: projection_index: We will use eigenvector (normal mode) of spring term [1, projection_index] as projection vector.
         """
         # we project out the subspace that is not included in control variate construction but still overlaps with physical modes.
-        sp_eig_index_for_proj = np.array(range(self.spring_low_freq_index + 1, projection_index + 1))
+        sp_eig_index_for_proj = np.array(range(self.zero_mode_index + 1, projection_index + 1))
         size = self.base_linear_op.size()[0]
         nbeads = self.nbeads
         block_size = int(size / self.nbeads)
@@ -836,23 +867,21 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         and compute the orthogonal compliment space use stochastic trace estimator.
         The subspace projection version of trace estimtor is delegated to the TraceEstimation class.
         """
-        with timer("control variate logdet calculation"):
-            # logdet(B)
-            control_variate_logdet = self.compute_control_variate_logdet()
+        # logdet(B)
+        control_variate_logdet = self.compute_control_variate_logdet()
         
         projection_index = self.projection_index
         # logdet(B^{-1/2} A B^{-1/2}) 
         self.construct_projection_vector(projection_index)
         trace_estimator = SubspaceProjTraceEstimator(self._residue_op)
 
-        with timer("residue matrix trace estimation:"):
-            # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
-            # We also need self.sp_eigvec_linear_op to transform the basis set into the spring vector subspace when doing trace estimation.
-            residue_logdet = trace_estimator.compute_logdet_estimate(self.sp_eigvec_for_proj_linear_op,
-                                                                                self.sp_eigvec_linear_op,
-                                                                                random_vector_number,
-                                                                                max_tridiag_iter,
-                                                                                cg_tolerance)
+        # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
+        # We also need self.sp_eigvec_linear_op to transform the basis set into the spring vector subspace when doing trace estimation.
+        residue_logdet = trace_estimator.compute_logdet_estimate(self.sp_eigvec_for_proj_linear_op,
+                                                                            self.sp_eigvec_linear_op,
+                                                                            random_vector_number,
+                                                                            max_tridiag_iter,
+                                                                            cg_tolerance)
 
 
         logdet = residue_logdet + control_variate_logdet
@@ -1052,7 +1081,7 @@ def construct_trace_estimator(control_variate,
                               sparse_pd_hessian_operator,
                               nbeads,
                               spring_term_operator,
-                              spring_low_freq_index,
+                              spring_term_param, 
                               projection_index):
     """
     construct the trace estimator.
@@ -1066,14 +1095,14 @@ def construct_trace_estimator(control_variate,
             trace_estimator = SpringCVLogDetEstimator(sparse_pd_hessian_operator,
                                                         nbeads,
                                                         spring_term_operator,
-                                                        spring_low_freq_index)
+                                                        spring_term_param)
         else:
             # construct the trace estimator that use spring term as control variate and do subspace projection.
             trace_estimator = SpringCVSubspaceLogDetEstimator(
                 sparse_pd_hessian_operator,
                 nbeads,
                 spring_term_operator,
-                spring_low_freq_index,
+                spring_term_param,
                 projection_index
             )
     
@@ -1091,14 +1120,12 @@ def estimate_logdet(trace_estimator: BaseTraceEstimator,
     # print out the information of the trace estimator.
     trace_estimator.info()
 
-    start_time = time.perf_counter()
-    logdet = trace_estimator.compute_logdet_estimate(
-        random_vector_number,
-        max_tridiag_iter,
-        cg_tolerance
-    )
-
-    elapsed_time = (time.perf_counter() - start_time) / 60
+    with timer("log det estimation:"):
+        logdet = trace_estimator.compute_logdet_estimate(
+            random_vector_number,
+            max_tridiag_iter,
+            cg_tolerance
+        )
 
     if estimate_logdet_std:
         # if estimate logdet std, then we use the avg logdet to replace the result of the single run.
@@ -1111,7 +1138,6 @@ def estimate_logdet(trace_estimator: BaseTraceEstimator,
         )
         print(f"std from {avg_num} samples for logdet: {logdet_std}.")
 
-    print(f"Time to compute logdet in sparse form: {elapsed_time:.2f} minutes")
     print(f"logdet of pd matrix: {logdet}")
 
     return logdet
@@ -1194,7 +1220,6 @@ def compute_hessian_logdet(hessian: np.ndarray,
                                                                 shift)
 
     nbeads = spring_term_param[0]
-    spring_low_freq_index= 0
 
     with timer("constructing trace estimator"):
         trace_estimator = construct_trace_estimator(
@@ -1203,7 +1228,7 @@ def compute_hessian_logdet(hessian: np.ndarray,
             sparse_pd_hessian_operator,
             nbeads,
             projected_sp_op,
-            spring_low_freq_index,
+            spring_term_param,
             proj_index
         )
 
