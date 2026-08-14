@@ -553,6 +553,8 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
     """
     def __init__(self, base_linear_op, nbeads, spring_term_op, spring_term_param):
         self.spring_term_param = spring_term_param
+        if not hasattr(self,"projection_index"):
+            self.projection_index = 0
         super().__init__(base_linear_op)
         self.nbeads = nbeads
         self.build_control_variate_decomposition(spring_term_op)
@@ -585,24 +587,18 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         # use ifft to get eigenvectors.
         sp_low_freq_modes = np.zeros((block_size * zero_mode_num, size))
         selected_eigvecs = torch.zeros([self.nbeads, zero_mode_num])
+        k = torch.arange(self.nbeads, dtype= torch.float32)
+        nbeads_t = torch.tensor(self.nbeads).to(torch.float32) # nbeads in tensor format.
         for eig_index in range(zero_mode_num):
-            one_hot_vec = torch.zeros([self.nbeads], dtype= torch.complex64)
             if eig_index == 0:
-                one_hot_vec[0] = 1
+                index = 0
+                selected_eigvecs[:, eig_index] = torch.ones([self.nbeads]) / torch.sqrt(nbeads_t)
+            elif eig_index % 2 == 0:
+                index = int(eig_index / 2)
+                selected_eigvecs[:, eig_index] = torch.sqrt(2 / nbeads_t) * torch.cos(2 * torch.pi * index * k / nbeads_t)
             else:
-                if eig_index % 2 == 0:
-                    index = int(eig_index / 2)
-                    one_hot_vec[index] = 1
-                    one_hot_vec[self.nbeads - index] = 1
-                else:
-                    index = int((eig_index + 1) / 2)
-                    one_hot_vec[index] = 1j
-                    one_hot_vec[self.nbeads - index] = -1j  
-            vec = torch.fft.ifft(one_hot_vec)
-            vec = vec.real
-            vec = vec / torch.linalg.norm(vec)
-            selected_eigvecs[:, eig_index] = vec 
-
+                index = int((eig_index + 1) / 2)
+                selected_eigvecs[:, eig_index] = torch.sqrt(2 / nbeads_t) * torch.sin(2 * torch.pi * index * k / nbeads_t)
 
         for i in range(block_size):  # loop through physical dimension.
             indices = range(i, size, block_size)
@@ -650,9 +646,10 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
 
         return logdet
 
-    def compute_sp_eigenvecs(self):
+    def compute_low_lying_sp_eigenpairs(self):
         """
         get eigenvectors of spring term tensor.
+        Only compute the low lying eigevectors that we need.
         """
         # spring terms
         size = self.base_linear_op.size()[0]
@@ -667,12 +664,13 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         sp_eigvals = []
 
         # analytical form of eigvals.
-        eigvals = torch.zeros([nbeads], dtype= torch.float32)
-        eigvecs = torch.zeros([nbeads, nbeads], dtype= torch.float32)
+        low_lying_vec_num = self.projection_index + 1
+        eigvals = torch.zeros([low_lying_vec_num], dtype= torch.float32)
+        eigvecs = torch.zeros([nbeads, low_lying_vec_num], dtype= torch.float32)
 
         k = torch.arange(nbeads, dtype= torch.float32)
         nbeads_t = torch.tensor(nbeads).to(torch.float32) # nbeads in tensor format.
-        for eig_index in range(nbeads):
+        for eig_index in range(low_lying_vec_num):
             if eig_index == 0:
                 index = 0
                 eigvecs[:, eig_index] = torch.ones([nbeads]) / torch.sqrt(nbeads_t)
@@ -693,11 +691,10 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
             # TODO: This part is slow. scaling is O(P^2)
             for i in range(block_size):
                 indices = range(i, size, block_size)
-                # sp_eigvec_lists[:, i * self.nbeads: (i + 1) * self.nbeads][indices, :] = eigvecs 
-                sp_eigvals.append(eigvals)
-                for j in range(nbeads): # indices for eigenvec.
+                sp_eigvals.append(eigvals[:low_lying_vec_num])
+                for j in range(low_lying_vec_num): # indices for eigenvec.
                     for k in range(nbeads):  # indices for element of eigenvec.
-                        col_indices.append(i* nbeads + j)
+                        col_indices.append(i* low_lying_vec_num + j)
                         row_indices.append(indices[k])
                         val_list.append(eigvecs[k, j])
 
@@ -706,19 +703,17 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
             row_indices = torch.tensor(np.array(row_indices))
             col_indices = torch.tensor(np.array(col_indices))
             indices = torch.stack([row_indices, col_indices], axis= 0)
-            sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, nbeads * block_size))
+            sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, low_lying_vec_num * block_size))
             sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
 
         sp_eigvals = torch.tensor(np.array(sp_eigvals).flatten())
 
-
-        self.sp_eigvec_linear_op = sp_eigevec_sparse_linear_operator
         self.sp_eigvec_sparse_tensor = sp_eigvec_sparse_tensor
+        self.sp_eigvec_linear_op = sp_eigevec_sparse_linear_operator
 
         return sp_eigvals, sp_eigevec_sparse_linear_operator 
     
     def inverse_sqrt_control_variate(self, 
-                                     sp_eigvals, 
                                      sp_eigvec_sparse_linear_operator: SparseLinearOperator):
         """
         compute  U^{T} B^{-1/2} or B^{-1/2}. here U is the eigenvector of the spring term. 
@@ -728,16 +723,6 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         nbeads = self.nbeads
         size = self.base_linear_op.size()[0] 
         block_size = int(size / nbeads) # physical dimension f.
-
-        # low frequency mode index
-        low_freq_mode_index = []
-        zero_mode_num = self.zero_mode_index + 1
-        sp_eigvec_num = int(sp_eigvals.shape[0] / block_size) # number of low lying eigevectors computed
-        for i in range(block_size):
-            mode_index = list(range(i * sp_eigvec_num, i * sp_eigvec_num + zero_mode_num)) # low frequency spring eigenstate for each physical dimension.
-            low_freq_mode_index = low_freq_mode_index + mode_index
-        low_freq_mode_index = np.array(low_freq_mode_index)
-        low_freq_mode_num = len(low_freq_mode_index)
 
         # use FFT to replace the psuedo-inverse of coupled oscillator hessian matrix. 
         omega = self.spring_term_param[2]
@@ -750,6 +735,15 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(eigval_tensor, nbeads, block_size, scale_factor)
     
         # U0: low freq mode eigenvec.
+        # low frequency mode index
+        low_freq_mode_index = []
+        zero_mode_num = self.zero_mode_index + 1
+        sp_eigvec_num = int(sp_eigvec_sparse_linear_operator.shape[1] / block_size) # number of low lying eigevectors computed
+        for i in range(block_size):
+            mode_index = list(range(i * sp_eigvec_num, i * sp_eigvec_num + zero_mode_num)) # low frequency spring eigenstate for each physical dimension.
+            low_freq_mode_index = low_freq_mode_index + mode_index
+        low_freq_mode_index = np.array(low_freq_mode_index)
+
         sp_eigvec_sparse = sp_eigvec_sparse_linear_operator.get_sparse_matrix()
         low_freq_mode_eigvec_sparse = torch.index_select(sp_eigvec_sparse, dim= 1, index= torch.tensor(low_freq_mode_index))
         low_freq_mode_eigvec_linear_operator = SparseLinearOperator(low_freq_mode_eigvec_sparse)
@@ -774,9 +768,9 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         return inv_sqrt_control_variate
 
     def construct_residue_op(self):
-        sp_eigvals, sp_eigvec_op = self.compute_sp_eigenvecs()
+        sp_eigvals, sp_eigvec_op = self.compute_low_lying_sp_eigenpairs()
         # B^{-1/2}
-        inv_sqrt_control_variate = self.inverse_sqrt_control_variate(sp_eigvals, sp_eigvec_op)
+        inv_sqrt_control_variate = self.inverse_sqrt_control_variate(sp_eigvec_op)
         r1 = inv_sqrt_control_variate.matmul(self.base_linear_op)
         r2 = r1.matmul(inv_sqrt_control_variate.T)
         # B^{-1/2} A B^{-1/2}
@@ -1076,12 +1070,11 @@ def estimate_logdet(trace_estimator: BaseTraceEstimator,
     # print out the information of the trace estimator.
     trace_estimator.info()
 
-    with timer("log det estimation:"):
-        logdet = trace_estimator.compute_logdet_estimate(
-            random_vector_number,
-            max_tridiag_iter,
-            cg_tolerance
-        )
+    logdet = trace_estimator.compute_logdet_estimate(
+        random_vector_number,
+        max_tridiag_iter,
+        cg_tolerance
+    )
 
     if estimate_logdet_std:
         # if estimate logdet std, then we use the avg logdet to replace the result of the single run.
@@ -1177,7 +1170,7 @@ def compute_hessian_logdet(hessian: np.ndarray,
 
     nbeads = spring_term_param[0]
 
-    with timer("constructing trace estimator"):
+    with timer("total time for trace estimate:"):
         trace_estimator = construct_trace_estimator(
             control_varaite,
             subspace_proj,
@@ -1188,11 +1181,11 @@ def compute_hessian_logdet(hessian: np.ndarray,
             proj_index
         )
 
-    logdet = estimate_logdet(trace_estimator,
-                             random_vector_number,
-                             max_tridiag_iter,
-                             cg_tolerance,
-                             estimate_logdet_std_bool)
+        logdet = estimate_logdet(trace_estimator,
+                                random_vector_number,
+                                max_tridiag_iter,
+                                cg_tolerance,
+                                estimate_logdet_std_bool)
     
     # remove log(shifted eigval). Add log(d[0]) which is negative eigenvalue.
     shifted_positive_eigenvalues = positive_eigval  
