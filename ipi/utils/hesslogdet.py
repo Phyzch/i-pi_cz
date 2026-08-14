@@ -43,6 +43,118 @@ def timer(name="Code"):
     elapsed = time.perf_counter() - start
     print(f"{name} took {elapsed / 60:.4f} min ({elapsed:.2f} s)")
 
+class SqrtInvCoupledOscillator(LinearOperator):
+    """
+    A linear operator that computes the inverse square root of the coupled harmonic oscillator matrix.
+    The coupled harmonic oscillator matrix is a block diagonal matrix with each block being a circulant matrix.
+    The inverse square root of the coupled harmonic oscillator matrix can be computed using the fast Fourier transform (FFT).
+    """
+    def __init__(self, eigval_tensor, nbeads, transposed= False):
+        self._nbeads = nbeads
+        self.transposed = transposed
+
+        P = self._nbeads
+        k = torch.arange(P, dtype= torch.float32)
+        eigval_tensor = 4 * torch.square(torch.sin(torch.pi * k / P )).to(dtype= torch.float32)
+        self._eigval_tensor = eigval_tensor
+        super().__init__(eigval_tensor, nbeads= nbeads, transposed= transposed)
+
+    def B_inv_sqrt_v(self, v):
+        """
+        compute B^{-1/2} v, use the fast fourier transform.
+        Here B is the hessian of coupled harmonic oscillator.
+
+        v: shape: [nbeads, 1]
+        """
+        # number of beads
+        P = self._nbeads
+        assert P == v.shape[0], f"v should have shape ({P},), but got {v.shape}"
+
+        # for all eigenvalues for fft.
+        eigvals = self._eigval_tensor
+        v = v.to(eigvals.dtype)
+
+        # forward fourier transform. 
+        v_fft = torch.fft.fft(v, dim= 0)
+
+        inv_sqrt_eigvals = torch.zeros(P, dtype= v_fft.dtype)
+        inv_sqrt_eigvals[1:] = 1.0 / torch.sqrt(eigvals[1:])
+
+        # compute eigval^{-1/2} * v_fft
+        w_fft = torch.diag(inv_sqrt_eigvals) @ v_fft
+
+        # back fourier transform.
+        result = torch.fft.ifft(w_fft, dim= 0).real
+
+        result = result.to(dtype = v.dtype)
+        return result 
+    
+    def _matmul(self, rhs):
+        return self.B_inv_sqrt_v(rhs)
+
+    def _size(self) -> torch.Size:
+        return torch.Size([self._nbeads, self._nbeads])
+
+    def _transpose_nonbatch(self):
+        op = SqrtInvCoupledOscillator(self._eigval_tensor, self._nbeads, transposed= (not self.transposed))
+        return op 
+
+class SqrtInvCoupledOscillatorLinearOperator(LinearOperator):
+    """
+    A linear operator class that computes the inverse square root of coupled harmonic oscillator Hessian matrix.
+    The matrix is in block diagonalized form with size [physical_dim * nbeads], 
+    where each block has shape [physical_dim * physical_dim].
+    Along bead dimension, the matrix is a circulant matrix. The inverse square root of the matrix can be computed using the fast Fourier transform (FFT).
+    We need to scale it with 1/sqrt(scale_factor) to ensure the correct scaling of the matrix. 
+    """
+    def __init__(self, eigval_tensor, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
+        self._nbeads = nbeads
+        self._physical_dim = physical_dim
+        self._scale_factor = scale_factor
+        self.coupled_oscillator = SqrtInvCoupledOscillator(eigval_tensor, nbeads)
+        self.transposed = transposed 
+        self._eigval_tensor = self.coupled_oscillator._eigval_tensor
+
+        super().__init__(self._eigval_tensor, nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= self.transposed)
+
+    def _size(self) -> torch.Size:
+        return torch.Size([self._nbeads * self._physical_dim, self._nbeads * self._physical_dim])
+
+    def _matmul(self, rhs):
+        """
+        Compute the matrix-vector product of the inverse square root of the coupled harmonic oscillator Hessian matrix with a vector.
+        The input vector should have shape [physical_dim * nbeads].
+        The output vector will have the same shape as the input vector.
+        """
+        assert rhs.shape[0] == self._size()[1], f"rhs should have shape ({self._nbeads * self._physical_dim},), but got {rhs.shape}"
+        if rhs.ndimension() == 1:
+            rhs = rhs.unsqueeze(-1)
+        # Reshape rhs to [physical_dim, nbeads]
+        batch_dim = rhs.shape[1]
+        rhs_reshaped = rhs.view(self._nbeads, self._physical_dim, batch_dim).transpose(0, 1).contiguous()
+
+        # Apply B_inv_sqrt_v to each physical dimension
+        result_reshaped = torch.zeros_like(rhs_reshaped)
+        for i in range(self._physical_dim):
+            result_reshaped[i] = self.coupled_oscillator.matmul(rhs_reshaped[i])
+        
+        # Reshape back to [physical_dim * nbeads]
+        result = result_reshaped.transpose(0, 1).contiguous().view(rhs.shape)
+
+        result = result / torch.sqrt(torch.tensor(self._scale_factor, dtype= result.dtype))
+        return result
+
+    def _transpose_nonbatch(self):
+        op = SqrtInvCoupledOscillatorLinearOperator(self._eigval_tensor,
+                                                    self._nbeads,
+                                                    self._physical_dim,
+                                                    self._scale_factor,
+                                                    transposed= (not self.transposed)
+                                                    )
+        
+        op.coupled_oscillator = self.coupled_oscillator.T 
+        return op 
+
 class SparseLinearOperator(LinearOperator):
     """
     A linear operator that wraps a sparse matrix.
@@ -528,28 +640,6 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
 
         return logdet
 
-    @staticmethod
-    def B_inv_sqrt_v(v):
-        """
-        compute B^{-1/2} v, use the fast fourier transform.
-        Here B is the hessian of coupled harmonic oscillator.
-        """
-        # number of beads
-        P = v.shape[0]
-
-        k = torch.arange(P, dtype= torch.float32)
-        eigvals = 4 * torch.square(torch.sin(torch.pi * k / P ))
-        v_fft = torch.fft.fft(v)
-
-        inv_sqrt_eigvals = torch.zeros(P)
-        inv_sqrt_eigvals[1:] = 1.0 / torch.sqrt(eigvals[1:])
-
-        w_fft = inv_sqrt_eigvals * v_fft
-
-        result = torch.fft.ifft(w_fft).real
-
-        return result 
-
     def compute_sp_eigenvecs(self):
         """
         get eigenvectors of spring term tensor.
@@ -574,22 +664,6 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         # TODO: ideally this should be evaluated in the closed form. 
         # The O(P^{3}) scaling of eigendecomposition, where P is bead number is undesirable 
         eigvals, eigvecs = torch.linalg.eigh(sub_tensor)
-
-        # test the idea
-        scale_factor = sub_tensor[0,0] / 2 
-        v = torch.rand(nbeads)
-
-        # do it by direct inversion of matrix.
-        sqrt_inv_eigvals = torch.zeros_like(eigvals)
-        sqrt_inv_eigvals[1:] = 1.0 / torch.sqrt(eigvals[1:])
-        sqrt_inv_sub_tensor = (eigvecs) @ torch.diag(sqrt_inv_eigvals) @ eigvecs.T
-        result1 = sqrt_inv_sub_tensor @ v 
-
-        # use fft.
-        result2 = 1 / torch.sqrt(scale_factor) * self.B_inv_sqrt_v(v)
-
-        pass 
-
         
         for i in range(block_size):
             indices = range(i, size, block_size)
@@ -631,7 +705,7 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         nbeads = self.nbeads
         size = self.base_linear_op.size()[0] 
         block_size = int(size / nbeads) # physical dimension f.
-    
+
         # low frequency mode index
         low_freq_mode_index = []
         spring_low_freq_mode_num = self.spring_low_freq_index + 1
@@ -648,7 +722,16 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         inv_eigval_list[mask] = 1.0 / eigval_list[mask]
         inv_sqrt_eigval_list = torch.sqrt(inv_eigval_list)
         inv_sqrt_eigval_linear_operator = linear_operator.operators.DiagLinearOperator(inv_sqrt_eigval_list)
-        
+
+        # use FFT to replace the psuedo-inverse of coupled oscillator hessian matrix. 
+        scale_factor = self.spring_term_op[0, 0].item() / 2  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
+
+        # eigenvalue tensor for fft.
+        P = nbeads
+        k = torch.arange(P, dtype= torch.float32)
+        eigval_tensor = 4 * torch.square(torch.sin(torch.pi * k / P )).to(dtype= torch.float32)
+        sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(eigval_tensor, nbeads, block_size, scale_factor)
+    
         # U^T U0, here U0 is eigenstate of low frequency mode.
         row_indices = torch.tensor(np.array(low_freq_mode_index))
         col_indices = torch.tensor(np.array(range(0, low_freq_mode_num)))
@@ -673,13 +756,17 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
             # compute U^{T} B^{-1/2}
             # S^{-1/2} U^{T}
             comp1 = inv_sqrt_eigval_linear_operator.matmul(sp_eigvec_sparse_linear_operator.T)
+
             # (U^{T} U0)  (U0^T H U0)^{-1/2} U0^{T} 
             comp2 = low_freq_mode_proj_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
             inv_sqrt_control_variate = comp1 + comp2 
         else:
             # compute B^{-1/2}
             # U S^{-1/2} U^{T}
-            comp1 = sp_eigvec_sparse_linear_operator.matmul(inv_sqrt_eigval_linear_operator).matmul(sp_eigvec_sparse_linear_operator.T)
+            # comp1 = sp_eigvec_sparse_linear_operator.matmul(inv_sqrt_eigval_linear_operator).matmul(sp_eigvec_sparse_linear_operator.T)
+            # use the fft form operator as B^{-1/2}
+            comp1 = sqrt_inverse_control_variate
+
             # U0 (U0^T H U0)^{-1/2} U0^{T} 
             comp2 = low_freq_mode_eigvec_linear_operator.matmul(inv_sqrt_low_freq_modes_proj_linear_op).matmul(low_freq_mode_eigvec_linear_operator.T)
             inv_sqrt_control_variate = comp1 + comp2 
@@ -758,14 +845,6 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         self.construct_projection_vector(projection_index)
         trace_estimator = SubspaceProjTraceEstimator(self._residue_op)
 
-        test_matmul_scaling(self.base_linear_op, "base_linear_operator")
-
-        test_matmul_scaling(self._residue_op, "residue_operator") 
-
-        test_solve_scaling(self.base_linear_op, max_tridiag_iter, cg_tolerance, "base_linear_operator")
-
-        test_solve_scaling(self._residue_op, max_tridiag_iter, cg_tolerance, "residue_operator")
-
         with timer("residue matrix trace estimation:"):
             # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
             # We also need self.sp_eigvec_linear_op to transform the basis set into the spring vector subspace when doing trace estimation.
@@ -822,9 +901,11 @@ def solve_negative_and_zero_eigenpairs(hessian):
     trans_rot_zero_mode_number = 6
     total_mode_number = negative_mode_number + zero_mode_number + trans_rot_zero_mode_number 
 
-    d, v = scipy.linalg.eigh(hessian, subset_by_index=[0, total_mode_number - 1])
+    # translation and rotation mode is known.  
+    # shift these modes beforehand. 
+    d, v = scipy.linalg.eigh(hessian, subset_by_index=[0, total_mode_number - 1]) # need to improve. 
 
-    dd = (
+    dd = ( 
         np.sign(d) * np.absolute(d) ** 0.5 / (2 * np.pi * 3e10 * 2.4188843e-17)
     ) # convert to cm^{-1}
     
@@ -1060,6 +1141,23 @@ def test_matmul_scaling(operator, operator_name= "operator"):
                 y = operator.matmul(x)
 
             pass
+
+def test_two_operator_matmul(operator1, operator2):
+    """
+    test the matmul of two operators.
+    """
+    assert operator1.size() == operator2.size(), "The two operators must have the same size."
+
+    size = operator1.size()[1]
+    torch.manual_seed(42)
+    x = torch.rand(size)
+    y1 = operator1.matmul(x) 
+    y2 = operator2.matmul(x)
+    diff = y1 - y2 
+    print("relative error: \n")
+    print(torch.sum(torch.abs(diff)) / torch.sum(torch.abs(y1)))
+    
+    
 
 def compute_hessian_logdet(hessian: np.ndarray,
                            bead_hessian: np.ndarray,
