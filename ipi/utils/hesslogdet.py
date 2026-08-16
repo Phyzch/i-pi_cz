@@ -887,7 +887,7 @@ def compute_instanton_zero_mode(ism, pos):
 
     return zero_mode
 
-def davidson(A, tol= 1e-8):
+def davidson(A:LinearOperator, tol= 1e-8):
     """
     davidson algorithm. Solve the lowest eigenvalue and eigenvector.
     Acknowledgement: Joshua Goings.
@@ -898,37 +898,49 @@ def davidson(A, tol= 1e-8):
     neigs = 1
     k = 8					# number of initial guess vectors 
 
-    t = np.eye(n,k)			# set of k unit vectors as guess
-    V = np.zeros((n,mmax + k))		# array of zeros to hold guess vec
-    I = np.eye(n)			# identity matrix same dimen as A
+    A_diag = torch.zeros([k], dtype= A.dtype) # A[j,j]
+    for j in range(0, k):
+        one_hot = torch.zeros([1, n])
+        one_hot[0, j] = 1
+        A_diag[j] = one_hot.matmul(A.matmul(one_hot.T)).item()
 
+    t = torch.eye(n,k)			# set of k unit vectors as guess
+    V = torch.zeros((n,mmax + k))		# array of zeros to hold guess vec
+    I = linear_operator.operators.IdentityLinearOperator(n) # identity matrix same dimen as A
+    # I = torch.eye(n)			# identity matrix same dimen as A
     # Begin block Davidson routine
     for m in range(k,mmax,k):
         if m <= k:
             for j in range(0,k):
-                V[:,j] = t[:,j]/np.linalg.norm(t[:,j])
+                V[:,j] = t[:,j]/torch.linalg.norm(t[:,j])
             theta_old = 1 
         elif m > k:
             theta_old = theta[:neigs]
-        V[:,:m], _ = np.linalg.qr(V[:,:m])
-        T = np.dot(V[:,:m].T,np.dot(A,V[:,:m]))
-        THETA,S = np.linalg.eig(T)
-        idx = THETA.argsort()
+        V[:,:m], _ = torch.linalg.qr(V[:,:m])
+        T = torch.matmul(V[:,:m].T, 
+                      A.matmul(V[:, :m])
+                      )
+        THETA,S = torch.linalg.eig(T)
+        THETA = THETA.real 
+        S = S.real 
+        idx = torch.argsort(THETA)
         theta = THETA[idx]
         s = S[:,idx]
         for j in range(0,k):
-            w = np.dot((A - theta[j]*I),np.dot(V[:,:m],s[:,j])) 
-            q = w/(theta[j]-A[j,j])
+            w = (A - theta[j]*I).matmul( 
+                          torch.matmul(V[:,:m],s[:,j])
+                          ) 
+            q = w/(theta[j]-A_diag[j])
             V[:,(m+j)] = q
-        norm = np.linalg.norm(theta[:neigs] - theta_old)
+        norm = torch.linalg.norm(theta[:neigs] - theta_old)
         if norm < tol:
             break
 
     print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, tolerance {tol}")
 
     eigvals = theta[:neigs]
-    eigvecs = np.dot(V[:, :m], s[:,:neigs])
-    eigvecs = eigvecs / np.linalg.norm(eigvecs, axis= 0)
+    eigvecs = torch.matmul(V[:, :m], s[:,:neigs])
+    eigvecs = eigvecs / torch.linalg.norm(eigvecs, axis= 0)
 
     return eigvals, eigvecs
 
@@ -936,28 +948,16 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, trans_rot_vec,
     """
     Use Davidson method to approximately solve the few lowest eigenvalue and eigenvector.
     """
-    # TODO: We first do it with numpy. Then we optimize it using the linear operator to use the sparse matrix property of the hessian operator.
     negative_mode_number = 1
     instanton_zero_mode_number = 1 
     trans_rot_zero_mode_number = 6
 
     # translation and rotation mode is known.  
-    # shift these modes beforehand. 
-    hessian = hessian_operator.to_dense()
+    # # shift the zero modes.
+    shifted_hessian_operator = hessian_operator + LowRankRootLinearOperator(torch.tensor(trans_rot_vec).T)
 
-    # shift the zero modes.
-    shifted_hessian = hessian + positive_eigval * trans_rot_vec.T @ trans_rot_vec 
-    neigs_to_solve = negative_mode_number
-
-    d = np.zeros([neigs_to_solve])
-    v = np.zeros([hessian.shape[0], neigs_to_solve])
-    for i in range(neigs_to_solve):
-        tol = 1e-7
-        d_lowest, v_lowest = davidson(shifted_hessian, tol)
-        d[i] = d_lowest
-        v[:, i] = v_lowest[:, 0]
-        # shift lowest eigenvalue to the positive val. So the second lowest eigenvalue becomes the lowest one.
-        shifted_hessian = shifted_hessian + (positive_eigval - d_lowest) * v_lowest @ v_lowest.T
+    tol = 1e-7
+    d, v = davidson(shifted_hessian_operator, tol)
 
     d = np.concatenate([d, np.array([0] * (trans_rot_zero_mode_number + instanton_zero_mode_number))], axis= 0)
     v = np.concatenate([v, zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
