@@ -629,7 +629,7 @@ def compute_instanton_rate_or_splitting():
             start_time = time.perf_counter()
             hm, detI, proj_info =  project_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
             
-            hess_args = (hm, bead_hessian, spring_term_param, proj_info)
+            hess_args = (hm, bead_hessian, spring_term_param, proj_info, pos)
             with open("hess.pkl", "wb") as f:
                 pickle.dump(hess_args, f)
 
@@ -638,6 +638,7 @@ def compute_instanton_rate_or_splitting():
                                                           bead_hessian,
                                                           spring_term_param,
                                                           proj_info, 
+                                                          pos,
                                                         random_vector_number= random_vector_number,
                                                         max_tridiag_iter= lanczos_iteration_num,
                                                         cg_tolerance = 1e-3,

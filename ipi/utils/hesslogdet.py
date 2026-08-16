@@ -30,7 +30,7 @@ from linear_operator import LinearOperator
 from linear_operator.operators import LowRankRootLinearOperator 
 from linear_operator.utils.stochastic_lq import StochasticLQ
 
-positive_freq = 300 #shift negative frequency and zero frequency to this frequency value.
+positive_freq = 3000 #shift negative frequency and zero frequency to this frequency value.
 factor = 2 * np.pi * 3e10 * 2.4188843e-17 # convert to hartree
 positive_eigval = (factor * positive_freq) ** 2 # convert to hartree
 
@@ -867,20 +867,78 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         return logdet_std, logdet
 
 
+def compute_instanton_zero_mode(ism, pos):
+    """
+    uses mass scaled velocity to approximate zero mode.
+    omega = 1/(beta_N * hbar) = 1/(imag time between beads)
+    """
+    sm = 1/ism
+    nbeads, phys_dim = pos.shape
+    sm = sm.reshape((nbeads, phys_dim))
+    mscaled_pos = pos * sm 
+    mscaled_vel = np.zeros_like(mscaled_pos)
+    # first order method.
+    mscaled_vel[0] = (mscaled_pos[1] - mscaled_pos[-1]) / 2
+    mscaled_vel[-1] = (mscaled_pos[0] - mscaled_pos[-2] )/ 2
+    mscaled_vel[1:-1] = (mscaled_pos[2:] - mscaled_pos[:-2]) / 2 
 
-def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, trans_rot_eigvec):
+    zero_mode = mscaled_vel.flatten()
+    zero_mode = zero_mode / np.linalg.norm(zero_mode)
+
+    return zero_mode
+
+def davidson(A, tol= 1e-8):
+    """
+    davidson algorithm. Solve the lowest eigenvalue and eigenvector.
+    Acknowledgement: Joshua Goings.
+    https://joshuagoings.com/2013/08/23/davidsons-method/
+    """
+    n = A.shape[0]					# Dimension of matrix
+    mmax = n//2				# Maximum number of iterations
+    neigs = 1
+    k = 8					# number of initial guess vectors 
+
+    t = np.eye(n,k)			# set of k unit vectors as guess
+    V = np.zeros((n,mmax + k))		# array of zeros to hold guess vec
+    I = np.eye(n)			# identity matrix same dimen as A
+
+    # Begin block Davidson routine
+    for m in range(k,mmax,k):
+        if m <= k:
+            for j in range(0,k):
+                V[:,j] = t[:,j]/np.linalg.norm(t[:,j])
+            theta_old = 1 
+        elif m > k:
+            theta_old = theta[:neigs]
+        V[:,:m], _ = np.linalg.qr(V[:,:m])
+        T = np.dot(V[:,:m].T,np.dot(A,V[:,:m]))
+        THETA,S = np.linalg.eig(T)
+        idx = THETA.argsort()
+        theta = THETA[idx]
+        s = S[:,idx]
+        for j in range(0,k):
+            w = np.dot((A - theta[j]*I),np.dot(V[:,:m],s[:,j])) 
+            q = w/(theta[j]-A[j,j])
+            V[:,(m+j)] = q
+        norm = np.linalg.norm(theta[:neigs] - theta_old)
+        if norm < tol:
+            break
+
+    print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, tolerance {tol}")
+
+    eigvals = theta[:neigs]
+    eigvecs = np.dot(V[:, :m], s[:,:neigs])
+    eigvecs = eigvecs / np.linalg.norm(eigvecs, axis= 0)
+
+    return eigvals, eigvecs
+
+def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, trans_rot_vec, zero_mode):
     """
     Use Davidson method to approximately solve the few lowest eigenvalue and eigenvector.
     """
-
-def solve_negative_and_zero_eigenpairs(hessian_operator, proj_vec):
-    """
-    solve the negative and zero eigenpairs of ring polymer hessian matrix.
-    There will be 1 negative eigenmode, 1 zero eigenmode, and 6 extra zero modes corresponding to translation and rotation.
-    proj_vec: shape: [6, ndim]
-    """
+    # TODO: We first do it with numpy. Then we optimize it using the linear operator to use the sparse matrix property of the hessian operator.
     negative_mode_number = 1
-    zero_mode_number = 1 
+    instanton_zero_mode_number = 1 
     trans_rot_zero_mode_number = 6
 
     # translation and rotation mode is known.  
@@ -888,12 +946,56 @@ def solve_negative_and_zero_eigenpairs(hessian_operator, proj_vec):
     hessian = hessian_operator.to_dense()
 
     # shift the zero modes.
-    shifted_hessian = hessian + positive_eigval * proj_vec.T @ proj_vec 
-    with timer("scipy"):
-        d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, negative_mode_number + zero_mode_number - 1])
+    shifted_hessian = hessian + positive_eigval * trans_rot_vec.T @ trans_rot_vec 
+    neigs_to_solve = negative_mode_number
 
-    d = np.concatenate([d, np.array([0] * trans_rot_zero_mode_number)], axis= 0)
-    v = np.concatenate([v, proj_vec.T], axis= 1)
+    d = np.zeros([neigs_to_solve])
+    v = np.zeros([hessian.shape[0], neigs_to_solve])
+    for i in range(neigs_to_solve):
+        tol = 1e-7
+        d_lowest, v_lowest = davidson(shifted_hessian, tol)
+        d[i] = d_lowest
+        v[:, i] = v_lowest[:, 0]
+        # shift lowest eigenvalue to the positive val. So the second lowest eigenvalue becomes the lowest one.
+        shifted_hessian = shifted_hessian + (positive_eigval - d_lowest) * v_lowest @ v_lowest.T
+
+    d = np.concatenate([d, np.array([0] * (trans_rot_zero_mode_number + instanton_zero_mode_number))], axis= 0)
+    v = np.concatenate([v, zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
+
+    # shift_values for eigenvalues
+    shift = positive_eigval - d
+
+    return d, v, shift  
+
+def solve_negative_and_zero_eigenpairs(hessian_operator, trans_rot_vec, zero_mode):
+    """
+    solve the negative and zero eigenpairs of ring polymer hessian matrix.
+    There will be 1 negative eigenmode, 1 zero eigenmode, and 6 extra zero modes corresponding to translation and rotation.
+    proj_vec: shape: [6, ndim]
+    Scaling is O(N^3) with scipy.linalg.eigh. 
+    """
+    negative_mode_number = 1
+    instanton_zero_mode_number = 1 
+    trans_rot_zero_mode_number = 6
+
+    # translation and rotation mode is known.  
+    # shift these modes beforehand. 
+    hessian = hessian_operator.to_dense()
+
+    # shift the zero modes.
+    shifted_hessian = hessian + positive_eigval * trans_rot_vec.T @ trans_rot_vec 
+
+    with timer("scipy"):
+        d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, 0])
+
+    d = np.concatenate([d, np.array([0] * (trans_rot_zero_mode_number + instanton_zero_mode_number))], axis= 0)
+    v = np.concatenate([v, zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
+
+    # with timer("scipy"):
+    #     d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, 1])
+
+    # d = np.concatenate([d, np.array([0] * trans_rot_zero_mode_number )], axis= 0)
+    # v = np.concatenate([v, trans_rot_vec.T], axis= 1)
 
     # shift_values for eigenvalues
     shift = positive_eigval - d
@@ -1132,13 +1234,12 @@ def test_two_operator_matmul(operator1, operator2):
     diff = y1 - y2 
     print("relative error: \n")
     print(torch.sum(torch.abs(diff)) / torch.sum(torch.abs(y1)))
-    
-    
 
 def compute_hessian_logdet(hessian: np.ndarray,
                            bead_hessian: np.ndarray,
                            spring_term_param: tuple,
                            proj_info: tuple,
+                           pos: np.ndarray,
                            random_vector_number= 1000,
                            max_tridiag_iter= 50,
                            cg_tolerance = 1e-3,
@@ -1158,14 +1259,23 @@ def compute_hessian_logdet(hessian: np.ndarray,
     bead_hessian_operator = create_block_diag_linear_operator(bead_hessian)
     rp_sparse_linear_operator = create_spring_term_linear_operator(spring_term_param)
 
-    projected_hessian_operator, projected_sp_op = proj_hessian_operator(bead_hessian_operator,
+    projected_hessian_operator, projected_sp_op = proj_hessian_operator(
+                                              bead_hessian_operator,
                                               rp_sparse_linear_operator,
-                                              proj_info)
+                                              proj_info
+                                              )
 
-    _, proj_vec = proj_info 
+    ism , proj_vec = proj_info 
+    
+    zero_mode = compute_instanton_zero_mode(ism, pos)
     with timer("solving negative and zero eigenpairs"):
-        d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
-                                                         proj_vec)
+        # d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
+        #                                                  proj_vec,
+        #                                                  zero_mode)
+
+        d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
+                                                                  proj_vec,
+                                                                  zero_mode)
     
     sparse_pd_hessian_operator = create_shifted_linear_operator(projected_hessian_operator,
                                                                 v,
