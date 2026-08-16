@@ -11,7 +11,7 @@ import time
 import copy 
 import pickle 
 from contextlib import contextmanager
-
+import scipy.sparse.linalg as sl
 try:
     import linear_operator
 
@@ -868,31 +868,32 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
 
 
 
+def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, trans_rot_eigvec):
+    """
+    Use Davidson method to approximately solve the few lowest eigenvalue and eigenvector.
+    """
 
-
-def solve_negative_and_zero_eigenpairs(hessian):
+def solve_negative_and_zero_eigenpairs(hessian_operator, proj_vec):
     """
     solve the negative and zero eigenpairs of ring polymer hessian matrix.
     There will be 1 negative eigenmode, 1 zero eigenmode, and 6 extra zero modes corresponding to translation and rotation.
+    proj_vec: shape: [6, ndim]
     """
     negative_mode_number = 1
     zero_mode_number = 1 
     trans_rot_zero_mode_number = 6
-    total_mode_number = negative_mode_number + zero_mode_number + trans_rot_zero_mode_number 
 
     # translation and rotation mode is known.  
     # shift these modes beforehand. 
-    d, v = scipy.linalg.eigh(hessian, subset_by_index=[0, total_mode_number - 1]) # need to improve. 
+    hessian = hessian_operator.to_dense()
 
-    dd = ( 
-        np.sign(d) * np.absolute(d) ** 0.5 / (2 * np.pi * 3e10 * 2.4188843e-17)
-    ) # convert to cm^{-1}
-    
-    # Zeros
-    cut0 = 0.01  # Note that dd[] units are cm^1
-    condition = np.abs(dd) < cut0
-    nzero = np.extract(condition, dd)
-    print(f"Number of zero eigenvalues: {len(nzero)}")
+    # shift the zero modes.
+    shifted_hessian = hessian + positive_eigval * proj_vec.T @ proj_vec 
+    with timer("scipy"):
+        d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, negative_mode_number + zero_mode_number - 1])
+
+    d = np.concatenate([d, np.array([0] * trans_rot_zero_mode_number)], axis= 0)
+    v = np.concatenate([v, proj_vec.T], axis= 1)
 
     # shift_values for eigenvalues
     shift = positive_eigval - d
@@ -1150,9 +1151,6 @@ def compute_hessian_logdet(hessian: np.ndarray,
     Remove zero eigenvalue, use the absolute value of negative eigenvalue.
     """
     print(f"random vector number for trace estimation {random_vector_number}")
-    
-    with timer("solving negative and zero eigenpairs"):
-        d, v, shift = solve_negative_and_zero_eigenpairs(hessian)
 
     # construct the positive defintie hessian matrix.
     # bead + spring term. Then mass weighted & project out zero mode.
@@ -1163,6 +1161,11 @@ def compute_hessian_logdet(hessian: np.ndarray,
     projected_hessian_operator, projected_sp_op = proj_hessian_operator(bead_hessian_operator,
                                               rp_sparse_linear_operator,
                                               proj_info)
+
+    _, proj_vec = proj_info 
+    with timer("solving negative and zero eigenpairs"):
+        d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
+                                                         proj_vec)
     
     sparse_pd_hessian_operator = create_shifted_linear_operator(projected_hessian_operator,
                                                                 v,
