@@ -45,11 +45,12 @@ def timer(name="Code"):
 
 class BaseCoupledOscillator(LinearOperator):
     """
-    A linear operator that computes the inverse square root of the coupled harmonic oscillator matrix.
+    A linear operator that computes a given function of the coupled harmonic oscillator matrix.
     The coupled harmonic oscillator matrix is a block diagonal matrix with each block being a circulant matrix.
-    The inverse square root of the coupled harmonic oscillator matrix can be computed using the fast Fourier transform (FFT).
+    The func of the coupled harmonic oscillator matrix can be computed using the fast Fourier transform (FFT).
+    Specific function used is defined in the func(). 
     """
-    def __init__(self, eigval_tensor, nbeads, transposed= False):
+    def __init__(self, nbeads, transposed= False):
         self._nbeads = nbeads
         self.transposed = transposed
 
@@ -57,10 +58,10 @@ class BaseCoupledOscillator(LinearOperator):
         k = torch.arange(P, dtype= torch.float32)
         eigval_tensor = 4 * torch.square(torch.sin(torch.pi * k / P )).to(dtype= torch.float32)
         self._eigval_tensor = eigval_tensor
-        super().__init__(eigval_tensor, nbeads= nbeads, transposed= transposed)
+        super().__init__(nbeads= nbeads, transposed= transposed)
 
     def func(self, nonzero_eigvals, *args):
-        NotImplementedError("Need to oveerwrite functions.")
+        NotImplementedError("Need to oveerwrite functions used in the CoupledOscillator.")
 
     def matrix_func_v(self, v, *args):
         """
@@ -99,7 +100,7 @@ class BaseCoupledOscillator(LinearOperator):
         return torch.Size([self._nbeads, self._nbeads])
 
     def _transpose_nonbatch(self):
-        op = type(self)(self._eigval_tensor, self._nbeads, transposed= (not self.transposed))
+        op = type(self)(self._nbeads, transposed= (not self.transposed))
         return op 
 
 class SqrtInvCoupledOscillator(BaseCoupledOscillator):
@@ -108,31 +109,32 @@ class SqrtInvCoupledOscillator(BaseCoupledOscillator):
     The coupled harmonic oscillator matrix is a block diagonal matrix with each block being a circulant matrix.
     The inverse square root of the coupled harmonic oscillator matrix can be computed using the fast Fourier transform (FFT).
     """
-    def __init__(self, eigval_tensor, nbeads, transposed= False):
-        super().__init__(eigval_tensor, nbeads= nbeads, transposed= transposed)
+    def __init__(self, nbeads, transposed= False):
+        super().__init__(nbeads= nbeads, transposed= transposed)
 
     def func(self, nonzero_eigvals, *args):
         return 1.0 / torch.sqrt(nonzero_eigvals)
+
     
 class BaseCoupledOscillatorLinearOperator(LinearOperator):
     """
-    A linear operator class that computes the inverse square root of coupled harmonic oscillator Hessian matrix.
+    A linear operator class that computes the operation of the coupled harmonic oscillator Hessian matrix.
+    the specific operation depends on the func defined in BaseCoupledOscillator() class assigned to self.coupled_oscillator.
     The matrix is in block diagonalized form with size [physical_dim * nbeads], 
     where each block has shape [physical_dim * physical_dim].
     Along bead dimension, the matrix is a circulant matrix. The inverse square root of the matrix can be computed using the fast Fourier transform (FFT).
     We need to scale it with 1/sqrt(scale_factor) to ensure the correct scaling of the matrix. 
     """
-    def __init__(self, eigval_tensor, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
-        self._eigval_tensor = eigval_tensor
+    def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
         self._nbeads = nbeads
         self._physical_dim = physical_dim
         self._scale_factor = scale_factor
         self.transposed = transposed 
         self._set_coupled_oscillator()
-        super().__init__(eigval_tensor, nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
+        super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
-        self.coupled_oscillator = BaseCoupledOscillator(self._eigval_tensor, self._nbeads)
+        self.coupled_oscillator = BaseCoupledOscillator(self._nbeads)
 
     def _size(self) -> torch.Size:
         return torch.Size([self._nbeads * self._physical_dim, self._nbeads * self._physical_dim])
@@ -163,7 +165,6 @@ class BaseCoupledOscillatorLinearOperator(LinearOperator):
 
     def _transpose_nonbatch(self):
         op = type(self)(
-                        self._eigval_tensor,
                         self._nbeads,
                         self._physical_dim,
                         self._scale_factor,
@@ -182,11 +183,11 @@ class SqrtInvCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOperator
     Along bead dimension, the matrix is a circulant matrix. The inverse square root of the matrix can be computed using the fast Fourier transform (FFT).
     We need to scale it with 1/sqrt(scale_factor) to ensure the correct scaling of the matrix. 
     """
-    def __init__(self, eigval_tensor, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
-        super().__init__(eigval_tensor, nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
+    def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
+        super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
-        self.coupled_oscillator = SqrtInvCoupledOscillator(self._eigval_tensor, self._nbeads)
+        self.coupled_oscillator = SqrtInvCoupledOscillator(self._nbeads)
 
 class SparseLinearOperator(LinearOperator):
     """
@@ -762,10 +763,7 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         scale_factor = omega  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
 
         # eigenvalue tensor for fft.
-        P = nbeads
-        k = torch.arange(P, dtype= torch.float32)
-        eigval_tensor = 4 * torch.square(torch.sin(torch.pi * k / P )).to(dtype= torch.float32)
-        sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(eigval_tensor, nbeads, block_size, scale_factor)
+        sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(nbeads, block_size, scale_factor)
     
         # U0: zero mode eigenvec.
         zero_mode_index = []
