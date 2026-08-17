@@ -887,22 +887,18 @@ def compute_instanton_zero_mode(ism, pos):
 
     return zero_mode
 
-def davidson(A:LinearOperator, tol= 1e-8):
+def davidson(A:LinearOperator, A_diag: torch.Tensor, rtol= 0.05):
     """
     davidson algorithm. Solve the lowest eigenvalue and eigenvector.
     Acknowledgement: Joshua Goings.
     https://joshuagoings.com/2013/08/23/davidsons-method/
+    rtol: relative error of the eigenvalue.
     """
     n = A.shape[0]					# Dimension of matrix
     mmax = n//2				# Maximum number of iterations
     neigs = 1
-    k = 8					# number of initial guess vectors 
-
-    A_diag = torch.zeros([k], dtype= A.dtype) # A[j,j]
-    for j in range(0, k):
-        one_hot = torch.zeros([1, n])
-        one_hot[0, j] = 1
-        A_diag[j] = one_hot.matmul(A.matmul(one_hot.T)).item()
+    # k = 8				# number of initial guess vectors 
+    k = int(n/10)
 
     t = torch.eye(n,k)			# set of k unit vectors as guess
     V = torch.zeros((n,mmax + k))		# array of zeros to hold guess vec
@@ -920,7 +916,7 @@ def davidson(A:LinearOperator, tol= 1e-8):
         T = torch.matmul(V[:,:m].T, 
                       A.matmul(V[:, :m])
                       )
-        THETA,S = torch.linalg.eig(T)
+        THETA,S = torch.linalg.eigh(T)
         THETA = THETA.real 
         S = S.real 
         idx = torch.argsort(THETA)
@@ -930,13 +926,13 @@ def davidson(A:LinearOperator, tol= 1e-8):
             w = (A - theta[j]*I).matmul( 
                           torch.matmul(V[:,:m],s[:,j])
                           ) 
-            q = w/(theta[j]-A_diag[j])
+            q = w/(theta[j]-A_diag)
             V[:,(m+j)] = q
-        norm = torch.linalg.norm(theta[:neigs] - theta_old)
-        if norm < tol:
+        norm = torch.linalg.norm(theta[:neigs] - theta_old) / np.linalg.norm(theta_old)
+        if norm < rtol:
             break
 
-    print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, tolerance {tol}")
+    print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, relative error tolerance {rtol}")
 
     eigvals = theta[:neigs]
     eigvecs = torch.matmul(V[:, :m], s[:,:neigs])
@@ -944,7 +940,7 @@ def davidson(A:LinearOperator, tol= 1e-8):
 
     return eigvals, eigvecs
 
-def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, trans_rot_vec, zero_mode):
+def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, trans_rot_vec, instanton_zero_mode):
     """
     Use Davidson method to approximately solve the few lowest eigenvalue and eigenvector.
     """
@@ -956,11 +952,13 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, trans_rot_vec,
     # # shift the zero modes.
     shifted_hessian_operator = hessian_operator + LowRankRootLinearOperator(torch.tensor(trans_rot_vec).T)
 
-    tol = 1e-7
-    d, v = davidson(shifted_hessian_operator, tol)
+    hessian_diag = torch.tensor(np.diag(hessian))
+
+    rtol = 0.05
+    d, v = davidson(shifted_hessian_operator, hessian_diag, rtol)
 
     d = np.concatenate([d, np.array([0] * (trans_rot_zero_mode_number + instanton_zero_mode_number))], axis= 0)
-    v = np.concatenate([v, zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
+    v = np.concatenate([v, instanton_zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
 
     # shift_values for eigenvalues
     shift = positive_eigval - d
@@ -1274,6 +1272,7 @@ def compute_hessian_logdet(hessian: np.ndarray,
         #                                                  zero_mode)
 
         d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
+                                                                  hessian,
                                                                   proj_vec,
                                                                   zero_mode)
     
