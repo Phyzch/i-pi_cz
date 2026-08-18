@@ -743,24 +743,22 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         scale = omega 
         eigvals = eigvals * scale 
 
-        with timer("construct sparse eigenvector:"):
-            # TODO: This part is slow. scaling is O(P^2)
-            for i in range(block_size):
-                indices = range(i, size, block_size)
-                sp_eigvals.append(eigvals[:low_lying_vec_num])
-                for j in range(low_lying_vec_num): # indices for eigenvec.
-                    for k in range(nbeads):  # indices for element of eigenvec.
-                        col_indices.append(i* low_lying_vec_num + j)
-                        row_indices.append(indices[k])
-                        val_list.append(eigvecs[k, j])
+        for i in range(block_size):
+            indices = range(i, size, block_size)
+            sp_eigvals.append(eigvals[:low_lying_vec_num])
+            for j in range(low_lying_vec_num): # indices for eigenvec.
+                for k in range(nbeads):  # indices for element of eigenvec.
+                    col_indices.append(i* low_lying_vec_num + j)
+                    row_indices.append(indices[k])
+                    val_list.append(eigvecs[k, j])
 
-            # create sparse tensor.
-            value = torch.tensor(np.array(val_list))
-            row_indices = torch.tensor(np.array(row_indices))
-            col_indices = torch.tensor(np.array(col_indices))
-            indices = torch.stack([row_indices, col_indices], axis= 0)
-            sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, low_lying_vec_num * block_size))
-            sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
+        # create sparse tensor.
+        value = torch.tensor(np.array(val_list))
+        row_indices = torch.tensor(np.array(row_indices))
+        col_indices = torch.tensor(np.array(col_indices))
+        indices = torch.stack([row_indices, col_indices], axis= 0)
+        sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, low_lying_vec_num * block_size))
+        sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
 
         sp_eigvals = torch.tensor(np.array(sp_eigvals).flatten())
 
@@ -998,7 +996,7 @@ class DavidsonPreconditioner():
         result = result1 + result2 
         return result 
 
-def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05):
+def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05, atol=1e-6):
     """
     davidson algorithm. Solve the lowest eigenvalue and eigenvector.
     Acknowledgement: Joshua Goings.
@@ -1011,7 +1009,8 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05):
     k = 8				# number of initial guess vectors 
     # k = int(n/10)
 
-    t = torch.eye(n,k)			# set of k unit vectors as guess
+    # t = torch.eye(n,k)			# set of k unit vectors as guess
+    t = torch.normal(0, 1, size= (n, k)) # set of k unit vectors as guess
     V = torch.zeros((n,mmax + k))		# array of zeros to hold guess vec
     I = linear_operator.operators.IdentityLinearOperator(n) # identity matrix same dimen as A
     # I = torch.eye(n)			# identity matrix same dimen as A
@@ -1042,11 +1041,13 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05):
             q = precond.precond_inverse(w, theta[j])
 
             V[:,(m+j)] = q
-        norm = torch.linalg.norm(theta[:neigs] - theta_old) / np.linalg.norm(theta_old)
-        if norm < rtol:
+        rnorm = torch.linalg.norm(theta[:neigs] - theta_old) / np.linalg.norm(theta_old)
+        norm = torch.linalg.norm(theta[:neigs] - theta_old) 
+        if rnorm < rtol and norm < atol:
             break
+        # pass 
 
-    print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, relative error tolerance {rtol}")
+    print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, relative error tolerance {rtol}, absolute error tolerance {atol}")
 
     eigvals = theta[:neigs]
     eigvecs = torch.matmul(V[:, :m], s[:,:neigs])
@@ -1077,9 +1078,10 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, sprin
     precond = DavidsonPreconditioner(nbeads, phys_dim, shifted_hessian_operator)
 
     rtol = 0.05
-
-    d, v = davidson(hessian_operator, hessian_diag, precond, rtol)
-
+    atol = 1e-6
+    d, v = davidson(shifted_hessian_operator, hessian_diag, precond, rtol, atol)
+    d_freq = np.sign(d[0]) * np.sqrt(np.abs(d[0])) / factor
+    print(f"negative eigenvalue solved: {d_freq} cm^{-1}")
     # # lobpcg method:
     # hessian = hessian_operator.to_dense()
     # d, v = torch.lobpcg(hessian,k=1, largest= False)
@@ -1386,14 +1388,15 @@ def compute_hessian_logdet(hessian: np.ndarray,
     rp_sparse_linear_operator = create_spring_term_linear_operator(spring_term_param)
 
     projected_hessian_operator, projected_sp_op = proj_hessian_operator(
-                                              bead_hessian_operator,
-                                              rp_sparse_linear_operator,
-                                              proj_info
-                                              )
+                                            bead_hessian_operator,
+                                            rp_sparse_linear_operator,
+                                            proj_info
+                                            )
 
     ism , proj_vec = proj_info 
-    
+
     zero_mode = compute_instanton_zero_mode(ism, pos)
+
     with timer("solving negative and zero eigenpairs"):
         # d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
         #                                                  proj_vec,
@@ -1404,7 +1407,8 @@ def compute_hessian_logdet(hessian: np.ndarray,
                                                                   spring_term_param,
                                                                   proj_vec,
                                                                   zero_mode)
-    
+
+
     sparse_pd_hessian_operator = create_shifted_linear_operator(projected_hessian_operator,
                                                                 v,
                                                                 shift)
@@ -1427,7 +1431,7 @@ def compute_hessian_logdet(hessian: np.ndarray,
                                 max_tridiag_iter,
                                 cg_tolerance,
                                 estimate_logdet_std_bool)
-    
+
     # remove log(shifted eigval). Add log(d[0]) which is negative eigenvalue.
     shifted_positive_eigenvalues = positive_eigval  
     total_shifted_mode_number = d.shape[0] 
