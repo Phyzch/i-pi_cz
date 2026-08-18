@@ -115,7 +115,19 @@ class SqrtInvCoupledOscillator(BaseCoupledOscillator):
     def func(self, nonzero_eigvals, *args):
         return 1.0 / torch.sqrt(nonzero_eigvals)
 
-    
+class InvShiftedCoupledOscillator(BaseCoupledOscillator):
+    """
+     A linear operator that computes the (A - theta I)^{-1} of the coupled harmonic oscillator matrix.
+    """
+    def __init__(self, nbeads, transposed= False):
+        super().__init__(nbeads= nbeads, transposed= transposed)
+
+    def func(self, nonzero_eigvals, *args):
+        theta = args[0]
+        if type(theta) is np.ndarray:
+            theta = torch.tensor(theta)
+        return 1.0 / (nonzero_eigvals - theta)
+
 class BaseCoupledOscillatorLinearOperator(LinearOperator):
     """
     A linear operator class that computes the operation of the coupled harmonic oscillator Hessian matrix.
@@ -123,7 +135,7 @@ class BaseCoupledOscillatorLinearOperator(LinearOperator):
     The matrix is in block diagonalized form with size [physical_dim * nbeads], 
     where each block has shape [physical_dim * physical_dim].
     Along bead dimension, the matrix is a circulant matrix. The inverse square root of the matrix can be computed using the fast Fourier transform (FFT).
-    We need to scale it with 1/sqrt(scale_factor) to ensure the correct scaling of the matrix. 
+    We need to scale it * scale_factor to ensure the correct scaling of the matrix. 
     """
     def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
         self._nbeads = nbeads
@@ -160,7 +172,7 @@ class BaseCoupledOscillatorLinearOperator(LinearOperator):
         # Reshape back to [physical_dim * nbeads]
         result = result_reshaped.transpose(0, 1).contiguous().view(rhs.shape)
 
-        result = result / torch.sqrt(torch.tensor(self._scale_factor, dtype= result.dtype))
+        result = result * torch.tensor(self._scale_factor, dtype= result.dtype)
         return result
 
     def _transpose_nonbatch(self):
@@ -188,6 +200,16 @@ class SqrtInvCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOperator
 
     def _set_coupled_oscillator(self):
         self.coupled_oscillator = SqrtInvCoupledOscillator(self._nbeads)
+
+class InvShiftedCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOperator):
+    """
+    A linear operator class that computes (A - theta I)^{-1} of coupled harmonic oscillator Hessian matrix.
+    """
+    def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
+        super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
+
+    def _set_coupled_oscillator(self):
+        self.coupled_oscillator = InvShiftedCoupledOscillator(self._nbeads)
 
 class SparseLinearOperator(LinearOperator):
     """
@@ -760,7 +782,7 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
 
         # use FFT to replace the psuedo-inverse of coupled oscillator hessian matrix. 
         omega = self.spring_term_param[2]
-        scale_factor = omega  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
+        scale_factor = 1/np.sqrt(omega)  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
 
         # eigenvalue tensor for fft.
         sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(nbeads, block_size, scale_factor)
@@ -917,7 +939,66 @@ def compute_instanton_zero_mode(ism, pos):
 
     return zero_mode
 
-def davidson(A:LinearOperator, A_diag: torch.Tensor, rtol= 0.05):
+class DavidsonPreconditioner():
+    def __init__(self, nbeads, physical_dim, A: LinearOperator):
+        """
+        Preconditioner for Davidson's algorithm.
+        We use (A_sp + P_0 A P_0)^{-1} as preconditioner. 
+        """
+        self.base_operator = A 
+        self.size = A.shape[0]
+        self.nbeads= nbeads
+        self.physical_dim = physical_dim 
+        self.compute_zero_mode_proj()
+        self.inv_shifted_coupled_oscillator = InvShiftedCoupledOscillatorLinearOperator(self.nbeads, self.physical_dim)
+        super().__init__()
+
+    def compute_zero_mode_proj(self):
+        """
+        construct translation zero modes along each physical dimension.
+        """
+        trans_modes = torch.zeros([self.physical_dim, self.size])
+        for i in range(self.physical_dim):
+            indices = range(i, self.size, self.physical_dim)
+            trans_modes[i, indices] = 1
+            trans_modes[i] = trans_modes[i] / np.linalg.norm(trans_modes[i])
+
+        self.trans_modes = trans_modes
+
+        zero_mode_proj = torch.matmul(self.trans_modes, self.base_operator.matmul(self.trans_modes.T))
+        # U0^{T} A U0
+        self.zero_mode_proj = zero_mode_proj 
+        # Identity matrix I
+        self.zero_mode_identity = torch.eye(self.physical_dim)
+
+    def zero_mode_inverse(self, rhs, theta):
+        """
+        inverse of the zero mode projection component. 
+        """
+        a = self.zero_mode_proj - self.zero_mode_identity * theta 
+        a_inverse = torch.inverse(a)
+        result = (self.trans_modes.T).matmul(
+            a_inverse.matmul(
+                self.trans_modes.matmul(
+                    rhs
+                    )
+                )
+        )
+        return result
+
+    def precond_inverse(self, rhs, theta):
+        """
+        rhs: right hand side vectors.
+        theta: approximate eigenvalue solved. 
+        """
+        result1 = self.inv_shifted_coupled_oscillator._matmul(rhs, (theta))
+        result1 = result1.squeeze(-1)
+        result2 = self.zero_mode_inverse(rhs, theta)
+
+        result = result1 + result2 
+        return result 
+
+def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05):
     """
     davidson algorithm. Solve the lowest eigenvalue and eigenvector.
     Acknowledgement: Joshua Goings.
@@ -927,8 +1008,8 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, rtol= 0.05):
     n = A.shape[0]					# Dimension of matrix
     mmax = n//2				# Maximum number of iterations
     neigs = 1
-    # k = 8				# number of initial guess vectors 
-    k = int(n/10)
+    k = 8				# number of initial guess vectors 
+    # k = int(n/10)
 
     t = torch.eye(n,k)			# set of k unit vectors as guess
     V = torch.zeros((n,mmax + k))		# array of zeros to hold guess vec
@@ -939,7 +1020,7 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, rtol= 0.05):
         if m <= k:
             for j in range(0,k):
                 V[:,j] = t[:,j]/torch.linalg.norm(t[:,j])
-            theta_old = 1 
+            theta_old = -1 
         elif m > k:
             theta_old = theta[:neigs]
         V[:,:m], _ = torch.linalg.qr(V[:,:m])
@@ -957,7 +1038,9 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, rtol= 0.05):
                           torch.matmul(V[:,:m],s[:,j])
                           )  # w is the residue.
             # need a good conditioner 
-            q = w/(theta[j]-A_diag)
+            # q = w/(theta[j]-A_diag)
+            q = precond.precond_inverse(w, theta[j])
+
             V[:,(m+j)] = q
         norm = torch.linalg.norm(theta[:neigs] - theta_old) / np.linalg.norm(theta_old)
         if norm < rtol:
@@ -971,13 +1054,14 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, rtol= 0.05):
 
     return eigvals, eigvecs
 
-def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, trans_rot_vec, instanton_zero_mode):
+def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, spring_term_param, trans_rot_vec, instanton_zero_mode):
     """
     Use Davidson method to approximately solve the few lowest eigenvalue and eigenvector.
     """
     negative_mode_number = 1
     instanton_zero_mode_number = 1 
     trans_rot_zero_mode_number = 6
+
 
     # translation and rotation mode is known.  
     # # shift the zero modes.
@@ -988,9 +1072,19 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, trans
 
     hessian_diag = torch.tensor(np.diag(hessian))
 
-    rtol = 0.05
-    d, v = davidson(shifted_hessian_operator, hessian_diag, rtol)
+    nbeads, natoms, _, _ = spring_term_param
+    phys_dim = natoms * 3 
+    precond = DavidsonPreconditioner(nbeads, phys_dim, shifted_hessian_operator)
 
+    rtol = 0.05
+
+    d, v = davidson(hessian_operator, hessian_diag, precond, rtol)
+
+    # # lobpcg method:
+    # hessian = hessian_operator.to_dense()
+    # d, v = torch.lobpcg(hessian,k=1, largest= False)
+
+    # lanczos method:
     d = np.concatenate([d, np.array([0] * (trans_rot_zero_mode_number + instanton_zero_mode_number))], axis= 0)
     v = np.concatenate([v, instanton_zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
 
@@ -1307,6 +1401,7 @@ def compute_hessian_logdet(hessian: np.ndarray,
 
         d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
                                                                   hessian,
+                                                                  spring_term_param,
                                                                   proj_vec,
                                                                   zero_mode)
     
