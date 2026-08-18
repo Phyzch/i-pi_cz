@@ -50,15 +50,16 @@ class BaseCoupledOscillator(LinearOperator):
     The func of the coupled harmonic oscillator matrix can be computed using the fast Fourier transform (FFT).
     Specific function used is defined in the func(). 
     """
-    def __init__(self, nbeads, transposed= False):
+    def __init__(self, nbeads, transposed= False, scale_factor= 1):
         self._nbeads = nbeads
         self.transposed = transposed
-
+        self._scale_factor = scale_factor
         P = self._nbeads
         k = torch.arange(P, dtype= torch.float32)
         eigval_tensor = 4 * torch.square(torch.sin(torch.pi * k / P )).to(dtype= torch.float32)
+        eigval_tensor = eigval_tensor * torch.tensor(scale_factor)
         self._eigval_tensor = eigval_tensor
-        super().__init__(nbeads= nbeads, transposed= transposed)
+        super().__init__(nbeads= nbeads, transposed= transposed, scaled_factor= scale_factor)
 
     def func(self, nonzero_eigvals, *args):
         NotImplementedError("Need to oveerwrite functions used in the CoupledOscillator.")
@@ -100,7 +101,7 @@ class BaseCoupledOscillator(LinearOperator):
         return torch.Size([self._nbeads, self._nbeads])
 
     def _transpose_nonbatch(self):
-        op = type(self)(self._nbeads, transposed= (not self.transposed))
+        op = type(self)(self._nbeads, transposed= (not self.transposed), scale_factor= self._scale_factor)
         return op 
 
 class SqrtInvCoupledOscillator(BaseCoupledOscillator):
@@ -109,8 +110,8 @@ class SqrtInvCoupledOscillator(BaseCoupledOscillator):
     The coupled harmonic oscillator matrix is a block diagonal matrix with each block being a circulant matrix.
     The inverse square root of the coupled harmonic oscillator matrix can be computed using the fast Fourier transform (FFT).
     """
-    def __init__(self, nbeads, transposed= False):
-        super().__init__(nbeads= nbeads, transposed= transposed)
+    def __init__(self, nbeads, transposed= False, scale_factor= 1):
+        super().__init__(nbeads= nbeads, transposed= transposed, scale_factor= scale_factor)
 
     def func(self, nonzero_eigvals, *args):
         return 1.0 / torch.sqrt(nonzero_eigvals)
@@ -118,9 +119,10 @@ class SqrtInvCoupledOscillator(BaseCoupledOscillator):
 class InvShiftedCoupledOscillator(BaseCoupledOscillator):
     """
      A linear operator that computes the (A - theta I)^{-1} of the coupled harmonic oscillator matrix.
+     scale_factor is used to scale the eigenvalue.
     """
-    def __init__(self, nbeads, transposed= False):
-        super().__init__(nbeads= nbeads, transposed= transposed)
+    def __init__(self, nbeads, transposed= False, scale_factor= 1):
+        super().__init__(nbeads= nbeads, transposed= transposed, scale_factor= scale_factor)
 
     def func(self, nonzero_eigvals, *args):
         theta = args[0]
@@ -140,13 +142,13 @@ class BaseCoupledOscillatorLinearOperator(LinearOperator):
     def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
         self._nbeads = nbeads
         self._physical_dim = physical_dim
-        self._scale_factor = scale_factor
+        self._scale_factor = scale_factor # scale for eigenvalue.
         self.transposed = transposed 
         self._set_coupled_oscillator()
         super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
-        self.coupled_oscillator = BaseCoupledOscillator(self._nbeads)
+        self.coupled_oscillator = BaseCoupledOscillator(self._nbeads, scale_factor= self._scale_factor)
 
     def _size(self) -> torch.Size:
         return torch.Size([self._nbeads * self._physical_dim, self._nbeads * self._physical_dim])
@@ -172,7 +174,6 @@ class BaseCoupledOscillatorLinearOperator(LinearOperator):
         # Reshape back to [physical_dim * nbeads]
         result = result_reshaped.transpose(0, 1).contiguous().view(rhs.shape)
 
-        result = result * torch.tensor(self._scale_factor, dtype= result.dtype)
         return result
 
     def _transpose_nonbatch(self):
@@ -199,7 +200,7 @@ class SqrtInvCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOperator
         super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
-        self.coupled_oscillator = SqrtInvCoupledOscillator(self._nbeads)
+        self.coupled_oscillator = SqrtInvCoupledOscillator(self._nbeads, scale_factor= self._scale_factor)
 
 class InvShiftedCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOperator):
     """
@@ -209,7 +210,7 @@ class InvShiftedCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOpera
         super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
-        self.coupled_oscillator = InvShiftedCoupledOscillator(self._nbeads)
+        self.coupled_oscillator = InvShiftedCoupledOscillator(self._nbeads, scale_factor= self._scale_factor)
 
 class SparseLinearOperator(LinearOperator):
     """
@@ -779,8 +780,8 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         block_size = int(size / nbeads) # physical dimension f.
 
         # use FFT to replace the psuedo-inverse of coupled oscillator hessian matrix. 
-        omega = self.spring_term_param[2]
-        scale_factor = 1/np.sqrt(omega)  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
+        omega2 = self.spring_term_param[2]
+        scale_factor = omega2  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
 
         # eigenvalue tensor for fft.
         sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(nbeads, block_size, scale_factor)
@@ -938,7 +939,7 @@ def compute_instanton_zero_mode(ism, pos):
     return zero_mode
 
 class DavidsonPreconditioner():
-    def __init__(self, nbeads, physical_dim, A: LinearOperator):
+    def __init__(self, nbeads, physical_dim, A: LinearOperator, scale_factor= 1):
         """
         Preconditioner for Davidson's algorithm.
         We use (A_sp + P_0 A P_0)^{-1} as preconditioner. 
@@ -946,9 +947,10 @@ class DavidsonPreconditioner():
         self.base_operator = A 
         self.size = A.shape[0]
         self.nbeads= nbeads
-        self.physical_dim = physical_dim 
+        self.physical_dim = physical_dim
+        self.scale_factor= scale_factor 
         self.compute_zero_mode_proj()
-        self.inv_shifted_coupled_oscillator = InvShiftedCoupledOscillatorLinearOperator(self.nbeads, self.physical_dim)
+        self.inv_shifted_coupled_oscillator = InvShiftedCoupledOscillatorLinearOperator(self.nbeads, self.physical_dim, scale_factor= self.scale_factor)
         super().__init__()
 
     def compute_zero_mode_proj(self):
@@ -996,7 +998,7 @@ class DavidsonPreconditioner():
         result = result1 + result2 
         return result 
 
-def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05, atol=1e-6):
+def davidson(A:LinearOperator, precond, rtol= 0.05, atol=1e-8):
     """
     davidson algorithm. Solve the lowest eigenvalue and eigenvector.
     Acknowledgement: Joshua Goings.
@@ -1007,7 +1009,6 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05, atol=1
     mmax = n//2				# Maximum number of iterations
     neigs = 1
     k = 8				# number of initial guess vectors 
-    # k = int(n/10)
 
     # t = torch.eye(n,k)			# set of k unit vectors as guess
     t = torch.normal(0, 1, size= (n, k)) # set of k unit vectors as guess
@@ -1015,6 +1016,7 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05, atol=1
     I = linear_operator.operators.IdentityLinearOperator(n) # identity matrix same dimen as A
     # I = torch.eye(n)			# identity matrix same dimen as A
     # Begin block Davidson routine
+    lowest_eigval_list = []
     for m in range(k,mmax,k):
         if m <= k:
             for j in range(0,k):
@@ -1043,13 +1045,17 @@ def davidson(A:LinearOperator, A_diag: torch.Tensor, precond, rtol= 0.05, atol=1
             V[:,(m+j)] = q
         rnorm = torch.linalg.norm(theta[:neigs] - theta_old) / np.linalg.norm(theta_old)
         norm = torch.linalg.norm(theta[:neigs] - theta_old) 
+        lowest_eigval_list.append(theta[0].item())
         if rnorm < rtol and norm < atol:
             break
-        # pass 
+
+        if m > 800:
+            pass
 
     print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, relative error tolerance {rtol}, absolute error tolerance {atol}")
-
+    print(lowest_eigval_list)
     eigvals = theta[:neigs]
+    assert eigvals[0] < 0, "the lowest eigenvalue is not negative."
     eigvecs = torch.matmul(V[:, :m], s[:,:neigs])
     eigvecs = eigvecs / torch.linalg.norm(eigvecs, axis= 0)
 
@@ -1071,15 +1077,14 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, sprin
                                 + LowRankRootLinearOperator(torch.tensor(instanton_zero_mode[:, np.newaxis])) * positive_eigval) 
     
 
-    hessian_diag = torch.tensor(np.diag(hessian))
-
-    nbeads, natoms, _, _ = spring_term_param
+    nbeads, natoms, omega2, _ = spring_term_param
     phys_dim = natoms * 3 
-    precond = DavidsonPreconditioner(nbeads, phys_dim, shifted_hessian_operator)
+    scale_factor = omega2
+    precond = DavidsonPreconditioner(nbeads, phys_dim, shifted_hessian_operator, scale_factor= scale_factor)
 
     rtol = 0.05
-    atol = 1e-6
-    d, v = davidson(shifted_hessian_operator, hessian_diag, precond, rtol, atol)
+    atol = 1e-8
+    d, v = davidson(shifted_hessian_operator, precond, rtol, atol)
     d_freq = np.sign(d[0]) * np.sqrt(np.abs(d[0])) / factor
     print(f"negative eigenvalue solved: {d_freq} cm^{-1}")
     # # lobpcg method:

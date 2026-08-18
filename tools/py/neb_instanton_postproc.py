@@ -636,8 +636,12 @@ def project_hessian(h, q, natoms, nbeads, m, m3, asr, mofi= False):
             for k in range(3):
                 D[k] = D[k] / np.linalg.norm(D[k])
             # Computes the transformation matrix.
-            transfmatrix = np.eye(3 * ii) - np.dot(D.T, D)
-            hm = np.dot(transfmatrix.T, np.dot(dynmat, transfmatrix))
+            identity_operator = linear_operator.operators.IdentityLinearOperator(3 * ii)
+            projection_D = linear_operator.operators.LowRankRootLinearOperator(torch.tensor(D.T))
+            transfer_tensor = identity_operator - projection_D
+            dynmat_tensor = torch.from_numpy(dynmat)
+            hm = (transfer_tensor.T).matmul(dynmat_tensor).matmul(transfer_tensor)
+            hm = hm.numpy()
 
     # Symmetrize to use linalg.eigh
     hmT = hm.T
