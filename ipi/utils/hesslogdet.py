@@ -939,7 +939,7 @@ def compute_instanton_zero_mode(ism, pos):
     return zero_mode
 
 class DavidsonPreconditioner():
-    def __init__(self, nbeads, physical_dim, A: LinearOperator, scale_factor= 1):
+    def __init__(self, nbeads, physical_dim, A: LinearOperator, spring_scale_factor= 1., precond_scaling_factor = 1.0):
         """
         Preconditioner for Davidson's algorithm.
         We use (A_sp + P_0 A P_0)^{-1} as preconditioner. 
@@ -948,9 +948,10 @@ class DavidsonPreconditioner():
         self.size = A.shape[0]
         self.nbeads= nbeads
         self.physical_dim = physical_dim
-        self.scale_factor= scale_factor 
+        self.precond_scaling_factor = precond_scaling_factor
+        self.spring_scale_factor= spring_scale_factor * self.precond_scaling_factor
         self.compute_zero_mode_proj()
-        self.inv_shifted_coupled_oscillator = InvShiftedCoupledOscillatorLinearOperator(self.nbeads, self.physical_dim, scale_factor= self.scale_factor)
+        self.inv_shifted_coupled_oscillator = InvShiftedCoupledOscillatorLinearOperator(self.nbeads, self.physical_dim, scale_factor= self.spring_scale_factor)
         super().__init__()
 
     def compute_zero_mode_proj(self):
@@ -976,7 +977,7 @@ class DavidsonPreconditioner():
         inverse of the zero mode projection component. 
         """
         a = self.zero_mode_proj - self.zero_mode_identity * theta 
-        a_inverse = torch.inverse(a)
+        a_inverse = torch.inverse(a) * self.precond_scaling_factor
         result = (self.trans_modes.T).matmul(
             a_inverse.matmul(
                 self.trans_modes.matmul(
@@ -993,7 +994,7 @@ class DavidsonPreconditioner():
         """
         result1 = self.inv_shifted_coupled_oscillator._matmul(rhs, (theta))
         result1 = result1.squeeze(-1)
-        result2 = self.zero_mode_inverse(rhs, theta)
+        result2 = self.zero_mode_inverse(rhs, theta) 
 
         result = result1 + result2 
         return result 
@@ -1053,7 +1054,7 @@ def davidson(A:LinearOperator, precond, rtol= 0.05, atol=1e-8):
             pass
 
     print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, relative error tolerance {rtol}, absolute error tolerance {atol}")
-    print(lowest_eigval_list)
+    # print(lowest_eigval_list)
     eigvals = theta[:neigs]
     assert eigvals[0] < 0, "the lowest eigenvalue is not negative."
     eigvecs = torch.matmul(V[:, :m], s[:,:neigs])
@@ -1079,8 +1080,11 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, sprin
 
     nbeads, natoms, omega2, _ = spring_term_param
     phys_dim = natoms * 3 
-    scale_factor = omega2
-    precond = DavidsonPreconditioner(nbeads, phys_dim, shifted_hessian_operator, scale_factor= scale_factor)
+    spring_eigval_scale_factor = omega2 
+    precond_scaling_factor = 100.0
+    precond = DavidsonPreconditioner(nbeads, phys_dim, shifted_hessian_operator, 
+                                     spring_scale_factor= spring_eigval_scale_factor,
+                                     precond_scaling_factor= precond_scaling_factor)
 
     rtol = 0.05
     atol = 1e-8
