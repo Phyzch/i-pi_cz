@@ -1007,7 +1007,7 @@ def davidson(A:LinearOperator, precond, rtol= 0.05, atol=1e-8):
     rtol: relative error of the eigenvalue.
     """
     n = A.shape[0]					# Dimension of matrix
-    mmax = n//2				# Maximum number of iterations
+    mmax = int(max([n//2, 1000]))				# Maximum number of iterations
     neigs = 1
     k = 8				# number of initial guess vectors 
 
@@ -1047,12 +1047,13 @@ def davidson(A:LinearOperator, precond, rtol= 0.05, atol=1e-8):
         rnorm = torch.linalg.norm(theta[:neigs] - theta_old) / np.linalg.norm(theta_old)
         norm = torch.linalg.norm(theta[:neigs] - theta_old) 
         lowest_eigval_list.append(theta[0].item())
-        if rnorm < rtol and norm < atol:
+        if rnorm < rtol and norm < atol and theta[0] < 0:
             break
 
         if m > 800:
             pass
-
+    print("found lowest eigenvalues in each iteration:")
+    print(lowest_eigval_list)
     print(f"Davidson info: matrix dimension {n}, subspace dim that reach the convergence: {m}, relative error tolerance {rtol}, absolute error tolerance {atol}")
     # print(lowest_eigval_list)
     eigvals = theta[:neigs]
@@ -1062,7 +1063,7 @@ def davidson(A:LinearOperator, precond, rtol= 0.05, atol=1e-8):
 
     return eigvals, eigvecs
 
-def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, hessian, spring_term_param, trans_rot_vec, instanton_zero_mode):
+def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, spring_term_param, trans_rot_vec, instanton_zero_mode):
     """
     Use Davidson method to approximately solve the few lowest eigenvalue and eigenvector.
     """
@@ -1372,8 +1373,7 @@ def test_two_operator_matmul(operator1, operator2):
     print("relative error: \n")
     print(torch.sum(torch.abs(diff)) / torch.sum(torch.abs(y1)))
 
-def compute_hessian_logdet(hessian: np.ndarray,
-                           bead_hessian: np.ndarray,
+def compute_hessian_logdet(bead_hessian: np.ndarray,
                            spring_term_param: tuple,
                            proj_info: tuple,
                            pos: np.ndarray,
@@ -1412,7 +1412,6 @@ def compute_hessian_logdet(hessian: np.ndarray,
         #                                                  zero_mode)
 
         d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
-                                                                  hessian,
                                                                   spring_term_param,
                                                                   proj_vec,
                                                                   zero_mode)

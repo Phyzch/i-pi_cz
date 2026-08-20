@@ -557,7 +557,7 @@ def print_instanton_path(nbeads, natoms, names, bead_q ,pots, filename = "instan
                         + str(q[bead_index][atom_index * 3 + 2]) + "\n"
                         )  # coordinate
 
-def project_hessian(h, q, natoms, nbeads, m, m3, asr, mofi= False):
+def get_proj_info(q, natoms, nbeads, m, m3, asr, mofi= False):
     """
     Adapted from clean hessian.
     Rewrite use LinearOperator for the sparse matrix.
@@ -571,12 +571,11 @@ def project_hessian(h, q, natoms, nbeads, m, m3, asr, mofi= False):
         mm[i] = m       # m here is a 1d array with size [natoms]. Therefore, this repeat mass nbeads times.
     mm = mm.reshape(ii)
     ism = m3.reshape((ii * 3, 1)) ** (-0.5)  # ism: inverse square root of m3. 
-    dynmat = np.multiply(ism.T, np.multiply(h, ism))  # dynmat is mass weighted hessian.
-    # ismm = np.outer(ism, ism)
-    # dynmat = np.multiply(h, ismm)
+    # dynmat = np.multiply(ism.T, np.multiply(h, ism))  # dynmat is mass weighted hessian.
+    
 
     if asr == "none" or asr is None:
-        hm = dynmat
+        pass 
     else:
         # Computes the centre of mass.
         com = np.dot(np.transpose(q.reshape((ii, 3))), mm) / mm.sum()  # for 3d array, q should be [nbeads, natoms, 3]
@@ -615,15 +614,6 @@ def project_hessian(h, q, natoms, nbeads, m, m3, asr, mofi= False):
 
             for k in range(6):
                 D[k] = D[k] / np.linalg.norm(D[k])
-            # Computes the transformation matrix.
-            identity_operator = linear_operator.operators.IdentityLinearOperator(3 * ii)
-            projection_D = linear_operator.operators.LowRankRootLinearOperator(torch.tensor(D.T))
-            transfer_tensor = identity_operator - projection_D
-            dynmat_tensor = torch.from_numpy(dynmat)
-            hm = (transfer_tensor.T).matmul(dynmat_tensor).matmul(transfer_tensor)
-            hm = hm.numpy()
-            # transfmatrix = np.eye(3 * ii) - np.dot(D.T, D)  # this is the projection operator that projects out translation and rotation dof.
-            # hm = np.dot(transfmatrix.T, np.dot(dynmat, transfmatrix))
 
         elif asr == "crystal":
             # Computes the vectors along translations.
@@ -635,27 +625,16 @@ def project_hessian(h, q, natoms, nbeads, m, m3, asr, mofi= False):
 
             for k in range(3):
                 D[k] = D[k] / np.linalg.norm(D[k])
-            # Computes the transformation matrix.
-            identity_operator = linear_operator.operators.IdentityLinearOperator(3 * ii)
-            projection_D = linear_operator.operators.LowRankRootLinearOperator(torch.tensor(D.T))
-            transfer_tensor = identity_operator - projection_D
-            dynmat_tensor = torch.from_numpy(dynmat)
-            hm = (transfer_tensor.T).matmul(dynmat_tensor).matmul(transfer_tensor)
-            hm = hm.numpy()
-
-    # Symmetrize to use linalg.eigh
-    hmT = hm.T
-    hm = (hmT + hm) / 2.0
 
     proj_vec = D  
     proj_info = (ism, proj_vec) # info required to transform hessian into dynmat 
     if mofi:
         if asr == "poly":
-            return hm, np.prod(I), proj_info
+            return np.prod(I), proj_info
         else:
-            return hm, 1.0, proj_info
+            return 1.0, proj_info
     else:
-        return hm, proj_info
+        return proj_info
 
 
 
@@ -728,17 +707,15 @@ def compute_instanton_rate_or_splitting():
         else:
             # compute log determinant using the trace estimator in hesslogdet.py.
             # project out translational and rotational modes.
-
-            hm, detI, proj_info =  project_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
+            detI, proj_info =  get_proj_info(pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
             
-            # hess_args = (hm, bead_hessian, spring_term_param, proj_info, pos)
+            # hess_args = (bead_hessian, spring_term_param, proj_info, pos)
             # with open("hess.pkl", "wb") as f:
             #     pickle.dump(hess_args, f)
 
             start_time = time.perf_counter()
             # use log determinant estimator to compute log determinant of the projected hessian.
-            hess_logdet_estimate = compute_hessian_logdet(hm,
-                                                          bead_hessian,
+            hess_logdet_estimate = compute_hessian_logdet(bead_hessian,
                                                           spring_term_param,
                                                           proj_info, 
                                                           pos,
@@ -792,7 +769,7 @@ def compute_instanton_rate_or_splitting():
                 )
             else:
                 # use logdet from trace estimator.
-                size1 = hm.shape[0] - (6 + 1)
+                size1 = h.shape[0] - (6 + 1)
                 logQvib = (
                     - np.log(betaP * hbar) * size1 - 0.5 * hess_logdet_estimate
                     + nzeros * np.log(nbeads)
