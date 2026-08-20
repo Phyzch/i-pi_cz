@@ -86,7 +86,7 @@ class BaseCoupledOscillator(LinearOperator):
         func_eigvals[1:] = self.func(eigvals[1:], *args) # apply func to non-zero eigenvalues.
 
         # compute func_eigvals * v_fft
-        w_fft = torch.diag(func_eigvals) @ v_fft
+        w_fft = func_eigvals.unsqueeze(-1) * v_fft
 
         # back fourier transform.
         result = torch.fft.ifft(w_fft, dim= 0).real
@@ -332,7 +332,7 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         compute the trace estimate of projected linear operator exactly.
         """
         matrix_size = self.linear_op.size()[0]
-        probe_vectors = proj_operator.to_dense().to(dtype= torch.float32)
+        probe_vectors = proj_operator.to_dense().to(dtype= proj_operator.dtype)
         probe_vector_nums = probe_vectors.shape[-1]
         # to use batched cg to get the Lanczos tri-diagonalization matrix.
         with (linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
@@ -372,7 +372,7 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         probe_vectors = complement_proj_linear_op.matmul(random_vectors)
         # normalize the vector.
         probe_vector_norms = torch.norm(probe_vectors, p=2, dim= -2, keepdim= True)
-        probe_vectors = probe_vectors.div(probe_vector_norms).to(dtype=torch.float32)
+        probe_vectors = probe_vectors.div(probe_vector_norms).to(dtype=complement_proj_linear_op.dtype)
 
 
         # factor: in slq.to_dense(). the result * matrix.shape[-1], assuming the probe vector has norm sqrt{N} (N is matrix_size)
