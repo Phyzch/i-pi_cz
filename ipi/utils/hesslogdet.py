@@ -139,13 +139,14 @@ class BaseCoupledOscillatorLinearOperator(LinearOperator):
     Along bead dimension, the matrix is a circulant matrix. The inverse square root of the matrix can be computed using the fast Fourier transform (FFT).
     We need to scale it * scale_factor to ensure the correct scaling of the matrix. 
     """
-    def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
+    def __init__(self, zero_tensor, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
         self._nbeads = nbeads
         self._physical_dim = physical_dim
         self._scale_factor = scale_factor # scale for eigenvalue.
         self.transposed = transposed 
+        self._zero_tensor = zero_tensor
         self._set_coupled_oscillator()
-        super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
+        super().__init__(zero_tensor, nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
         self.coupled_oscillator = BaseCoupledOscillator(self._nbeads, scale_factor= self._scale_factor)
@@ -178,6 +179,7 @@ class BaseCoupledOscillatorLinearOperator(LinearOperator):
 
     def _transpose_nonbatch(self):
         op = type(self)(
+                        self._zero_tensor,
                         self._nbeads,
                         self._physical_dim,
                         self._scale_factor,
@@ -196,8 +198,8 @@ class SqrtInvCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOperator
     Along bead dimension, the matrix is a circulant matrix. The inverse square root of the matrix can be computed using the fast Fourier transform (FFT).
     We need to scale it with 1/sqrt(scale_factor) to ensure the correct scaling of the matrix. 
     """
-    def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
-        super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
+    def __init__(self, zero_tensor, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
+        super().__init__(zero_tensor, nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
         self.coupled_oscillator = SqrtInvCoupledOscillator(self._nbeads, scale_factor= self._scale_factor)
@@ -206,8 +208,8 @@ class InvShiftedCoupledOscillatorLinearOperator(BaseCoupledOscillatorLinearOpera
     """
     A linear operator class that computes (A - theta I)^{-1} of coupled harmonic oscillator Hessian matrix.
     """
-    def __init__(self, nbeads, physical_dim, scale_factor= 1.0, transposed= False):
-        super().__init__(nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
+    def __init__(self, zero_tensor,  nbeads, physical_dim, scale_factor= 1.0, transposed= False):
+        super().__init__(zero_tensor, nbeads= nbeads, physical_dim= physical_dim, scale_factor= scale_factor, transposed= transposed)
 
     def _set_coupled_oscillator(self):
         self.coupled_oscillator = InvShiftedCoupledOscillator(self._nbeads, scale_factor= self._scale_factor)
@@ -262,7 +264,7 @@ class TraceEstimator(BaseTraceEstimator):
     """
     def __init__(self, linear_op):
         self.linear_op = linear_op 
-        self.linear_op = self.linear_op.to(dtype= torch.float32)
+        # self.linear_op = self.linear_op.to(dtype= torch.float32)
 
     def info(self):
         """
@@ -333,11 +335,9 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         probe_vectors = proj_operator.to_dense().to(dtype= torch.float32)
         probe_vector_nums = probe_vectors.shape[-1]
         # to use batched cg to get the Lanczos tri-diagonalization matrix.
-        max_cg_num = 1000
         with (linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
               linear_operator.settings.max_cg_iterations(max_tridiag_iter),
-              linear_operator.settings.cg_tolerance(cg_tolerance),
-              linear_operator.settings.max_cg_iterations(max_cg_num)):
+              linear_operator.settings.cg_tolerance(cg_tolerance)):
             _, t_mat = self.linear_op._solve(probe_vectors, None, num_tridiag= probe_vector_nums)
             eigenvalues, eigenvectors = linear_operator.utils.lanczos.lanczos_tridiag_to_diag(t_mat)
             slq = linear_operator.utils.stochastic_lq.StochasticLQ()
@@ -380,12 +380,10 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         # factor should be (N- proj_op_num) / N
         factor = (size - proj_op_num) / size
 
-        max_cg_num = 1000
         # to use batched cg to get the Lanczos tri-diagonalization matrix. 
         with (linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
               linear_operator.settings.max_cg_iterations(max_tridiag_iter),
-            linear_operator.settings.cg_tolerance(cg_tolerance),
-            linear_operator.settings.max_cg_iterations(max_cg_num)):
+            linear_operator.settings.cg_tolerance(cg_tolerance)):
             _, t_mat = self.linear_op._solve(probe_vectors, None, num_tridiag= random_vector_number)
             eigenvalues, eigenvectors = linear_operator.utils.lanczos.lanczos_tridiag_to_diag(t_mat)
             slq = linear_operator.utils.stochastic_lq.StochasticLQ()
@@ -416,7 +414,7 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         matrix_size = self.linear_op.size()[0]
         complement_proj_linear_op = linear_operator.operators.IdentityLinearOperator(matrix_size) - LowRankRootLinearOperator(proj_operator)
         
-        # we need separate code to implement this 
+        # we need separate code to implement this
         proj_op_num = proj_operator.size()[-1]
         complement_op_logdet = self.complement_space_logdet_trace_estimate(complement_proj_linear_op,
                                                                         proj_op_num,
@@ -758,10 +756,10 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         row_indices = torch.tensor(np.array(row_indices))
         col_indices = torch.tensor(np.array(col_indices))
         indices = torch.stack([row_indices, col_indices], axis= 0)
-        sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, low_lying_vec_num * block_size))
+        sp_eigvec_sparse_tensor = torch.sparse_coo_tensor(indices, value, size= (size, low_lying_vec_num * block_size), dtype= self.base_linear_op.dtype)
         sp_eigevec_sparse_linear_operator = SparseLinearOperator(sp_eigvec_sparse_tensor)
 
-        sp_eigvals = torch.tensor(np.array(sp_eigvals).flatten())
+        sp_eigvals = torch.tensor(np.array(sp_eigvals).flatten()).to(dtype= self.base_linear_op.dtype)
 
         self.sp_eigvec_sparse_tensor = sp_eigvec_sparse_tensor
         self.sp_eigvec_linear_op = sp_eigevec_sparse_linear_operator
@@ -784,7 +782,8 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         scale_factor = omega2  # (1/ beta_P * hbar)^2. This is scaling factor for spring term with respect to the standard coupled harmonic oscillator.
 
         # eigenvalue tensor for fft.
-        sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(nbeads, block_size, scale_factor)
+        zero_tensor = torch.zeros(size=(nbeads, 1), dtype= self.base_linear_op.dtype)
+        sqrt_inverse_control_variate = SqrtInvCoupledOscillatorLinearOperator(zero_tensor, nbeads, block_size, scale_factor)
     
         # U0: zero mode eigenvec.
         zero_mode_index = []
@@ -822,6 +821,7 @@ class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
         sp_eigvals, sp_eigvec_op = self.compute_low_lying_sp_eigenpairs()
         # B^{-1/2}
         inv_sqrt_control_variate = self.inverse_sqrt_control_variate(sp_eigvec_op)
+        self.base_linear_op = self.base_linear_op.to(dtype= inv_sqrt_control_variate.dtype)
         r1 = inv_sqrt_control_variate.matmul(self.base_linear_op)
         r2 = r1.matmul(inv_sqrt_control_variate.T)
         # B^{-1/2} A B^{-1/2}
@@ -878,6 +878,9 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         # logdet(B^{-1/2} A B^{-1/2}) 
         self.construct_projection_vector(projection_index)
         trace_estimator = SubspaceProjTraceEstimator(self._residue_op)
+
+        # TODO: Test scaling of matrix vector multiplication.
+        test_matmul_scaling(self._residue_op, "residue operator")
 
         # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
         residue_logdet = trace_estimator.compute_logdet_estimate(self.sp_eigvec_for_proj_linear_op,
@@ -951,7 +954,13 @@ class DavidsonPreconditioner():
         self.precond_scaling_factor = precond_scaling_factor
         self.spring_scale_factor= spring_scale_factor * self.precond_scaling_factor
         self.compute_zero_mode_proj()
-        self.inv_shifted_coupled_oscillator = InvShiftedCoupledOscillatorLinearOperator(self.nbeads, self.physical_dim, scale_factor= self.spring_scale_factor)
+        zero_tensor = torch.zeros(size=(nbeads, 1))
+        self.inv_shifted_coupled_oscillator = InvShiftedCoupledOscillatorLinearOperator(
+                                                                                        zero_tensor, 
+                                                                                        self.nbeads, 
+                                                                                        self.physical_dim, 
+                                                                                        scale_factor= self.spring_scale_factor
+                                                                                        )
         super().__init__()
 
     def compute_zero_mode_proj(self):
@@ -1353,7 +1362,7 @@ def test_matmul_scaling(operator, operator_name= "operator"):
     with timer(f"test matmul scaling with {vector_num} random vectors for {operator_name}"):
             size = operator.size()[1]
             for _ in range(vector_num):
-                x = torch.rand(size)
+                x = torch.rand(size, dtype= operator.dtype)
                 y = operator.matmul(x)
 
             pass
