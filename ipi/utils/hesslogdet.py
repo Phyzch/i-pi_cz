@@ -879,9 +879,6 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         self.construct_projection_vector(projection_index)
         trace_estimator = SubspaceProjTraceEstimator(self._residue_op)
 
-        # TODO: Test scaling of matrix vector multiplication.
-        test_matmul_scaling(self._residue_op, "residue operator")
-
         # here we use the subspace projection method to compute the logdet of residue operator B^{-1/2} A B^{-1/2}.
         residue_logdet = trace_estimator.compute_logdet_estimate(self.sp_eigvec_for_proj_linear_op,
                                                                             random_vector_number,
@@ -1092,6 +1089,8 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, spring_term_pa
     phys_dim = natoms * 3 
     spring_eigval_scale_factor = omega2 
     precond_scaling_factor = 100.0
+    # #TODO: for debug.
+    # precond_scaling_factor = 1000000
     precond = DavidsonPreconditioner(nbeads, phys_dim, shifted_hessian_operator, 
                                      spring_scale_factor= spring_eigval_scale_factor,
                                      precond_scaling_factor= precond_scaling_factor)
@@ -1132,17 +1131,17 @@ def solve_negative_and_zero_eigenpairs(hessian_operator, trans_rot_vec, zero_mod
     # shift the zero modes.
     shifted_hessian = hessian + positive_eigval * trans_rot_vec.T @ trans_rot_vec 
 
-    with timer("scipy"):
-        d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, 0])
-
-    d = np.concatenate([d, np.array([0] * (trans_rot_zero_mode_number + instanton_zero_mode_number))], axis= 0)
-    v = np.concatenate([v, zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
-
     # with timer("scipy"):
-    #     d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, 1])
+    #     d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, 0])
 
-    # d = np.concatenate([d, np.array([0] * trans_rot_zero_mode_number )], axis= 0)
-    # v = np.concatenate([v, trans_rot_vec.T], axis= 1)
+    # d = np.concatenate([d, np.array([0] * (trans_rot_zero_mode_number + instanton_zero_mode_number))], axis= 0)
+    # v = np.concatenate([v, zero_mode[:, np.newaxis], trans_rot_vec.T], axis= 1)
+
+    with timer("scipy"):
+        d, v = scipy.linalg.eigh(shifted_hessian, subset_by_index=[0, 1])
+
+    d = np.concatenate([d, np.array([0] * trans_rot_zero_mode_number )], axis= 0)
+    v = np.concatenate([v, trans_rot_vec.T], axis= 1)
 
     # shift_values for eigenvalues
     shift = positive_eigval - d
@@ -1161,7 +1160,7 @@ def create_shifted_linear_operator(hessian_operator: linear_operator.LinearOpera
     C = torch.tensor(C, dtype=dtype)
     shift_operator = LowRankRootLinearOperator(C)
 
-    pd_hessian_operator = hessian_operator + shift_operator # positive definite hessian in linear operator form. s
+    pd_hessian_operator = shift_operator + hessian_operator # positive definite hessian in linear operator form. s
     
     return pd_hessian_operator
 
@@ -1416,14 +1415,14 @@ def compute_hessian_logdet(bead_hessian: np.ndarray,
     zero_mode = compute_instanton_zero_mode(ism, pos)
 
     with timer("solving negative and zero eigenpairs"):
-        # d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
-        #                                                  proj_vec,
-        #                                                  zero_mode)
+        d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
+                                                         proj_vec,
+                                                         zero_mode)
 
-        d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
-                                                                  spring_term_param,
-                                                                  proj_vec,
-                                                                  zero_mode)
+        # d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
+        #                                                           spring_term_param,
+        #                                                           proj_vec,
+        #                                                           zero_mode)
 
 
     sparse_pd_hessian_operator = create_shifted_linear_operator(projected_hessian_operator,
