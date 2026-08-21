@@ -284,7 +284,10 @@ class TraceEstimator(BaseTraceEstimator):
         with (linear_operator.settings.num_trace_samples(random_vector_number),
             linear_operator.settings.max_lanczos_quadrature_iterations(max_tridiag_iter),
             linear_operator.settings.max_cg_iterations(max_tridiag_iter),
-            linear_operator.settings.cg_tolerance(cg_tolerance)):
+            linear_operator.settings.cg_tolerance(cg_tolerance),
+            linear_operator.settings.fast_computations(log_prob= True),
+            linear_operator.settings.max_cholesky_size(1) # this will force the linear_operator to use the trace estimate method instead of Cholesky.
+            ):
             logdet = op.logdet().item() 
         
         return logdet
@@ -561,46 +564,6 @@ class ControlVariateLogDetEstimator(BaseTraceEstimator):
     @residue_op.setter
     def residue_op(self, op):
         self._residue_op = op
-
-class BlockDiagCVLogDetEstimator(ControlVariateLogDetEstimator):
-    """
-    Use block diagonal part of base_linear_op as the control variate.
-    """
-    def __init__(self, base_linear_op, nbeads):
-        super().__init__(base_linear_op)
-        self.nbeads = nbeads
-        self.build_control_variate_decomposition()
-
-    def info(self):
-        print("compute log det use block diagonal matrix as control variate")
-
-    def construct_control_variate(self):
-        nbeads = self.nbeads
-
-        pd_matrix = self.base_linear_op.to_dense()        
-        block_size = int(pd_matrix.shape[0] / nbeads)
-        block_matrix = np.zeros((nbeads, block_size, block_size))
-        for i in range(nbeads):
-            block_indices = range(i * block_size, (i + 1) * block_size)
-            block = pd_matrix[:, block_indices][block_indices, :]
-            block_matrix[i] = block 
-        
-        # use BlockDiagLinearOperator to construct block matrix.
-        block_tensor_op = linear_operator.operators.BlockDiagLinearOperator(torch.tensor(block_matrix))
-
-        self.control_variate_op = block_tensor_op
-    
-    def compute_control_variate_logdet(self):
-        block_tensor = self.control_variate_op.base_linear_op.to_dense()
-        block_number = self.control_variate_op.num_blocks
-        block_matrix = block_tensor.numpy()
-        logdet = 0
-        for i in range(block_number):
-            block = block_matrix[i]
-            eigvals = np.linalg.eigvalsh(block)
-            logdet = logdet + np.sum(np.log(eigvals))
-
-        return logdet  
 
 class SpringCVLogDetEstimator(ControlVariateLogDetEstimator):
     """
@@ -1080,9 +1043,9 @@ def solve_negative_and_zero_eigenpairs_davidson(hessian_operator, spring_term_pa
 
     # translation and rotation mode is known.  
     # # shift the zero modes.
-    shifted_hessian_operator = (hessian_operator 
-                                + LowRankRootLinearOperator(torch.tensor(trans_rot_vec).T) * positive_eigval
-                                + LowRankRootLinearOperator(torch.tensor(instanton_zero_mode[:, np.newaxis])) * positive_eigval) 
+    shifted_hessian_operator = (LowRankRootLinearOperator(torch.tensor(trans_rot_vec).T) * positive_eigval
+                                + LowRankRootLinearOperator(torch.tensor(instanton_zero_mode[:, np.newaxis])) * positive_eigval
+                                + hessian_operator) 
     
 
     nbeads, natoms, omega2, _ = spring_term_param
@@ -1415,14 +1378,14 @@ def compute_hessian_logdet(bead_hessian: np.ndarray,
     zero_mode = compute_instanton_zero_mode(ism, pos)
 
     with timer("solving negative and zero eigenpairs"):
-        d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
-                                                         proj_vec,
-                                                         zero_mode)
+        # d, v, shift = solve_negative_and_zero_eigenpairs(projected_hessian_operator,
+        #                                                  proj_vec,
+        #                                                  zero_mode)
 
-        # d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
-        #                                                           spring_term_param,
-        #                                                           proj_vec,
-        #                                                           zero_mode)
+        d, v, shift = solve_negative_and_zero_eigenpairs_davidson(projected_hessian_operator,
+                                                                  spring_term_param,
+                                                                  proj_vec,
+                                                                  zero_mode)
 
 
     sparse_pd_hessian_operator = create_shifted_linear_operator(projected_hessian_operator,
