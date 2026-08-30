@@ -927,7 +927,7 @@ class DavidsonPreconditioner():
         """
         construct translation zero modes along each physical dimension.
         """
-        trans_modes = torch.zeros([self.physical_dim, self.size])
+        trans_modes = torch.zeros([self.physical_dim, self.size], dtype= self.base_operator.dtype)
         for i in range(self.physical_dim):
             indices = range(i, self.size, self.physical_dim)
             trans_modes[i, indices] = 1
@@ -981,9 +981,9 @@ def davidson(A:LinearOperator, precond, rtol= 0.05, atol=1e-8):
     k = 8				# number of initial guess vectors 
 
     # t = torch.eye(n,k)			# set of k unit vectors as guess
-    t = torch.normal(0, 1, size= (n, k)) # set of k unit vectors as guess
-    V = torch.zeros((n,mmax + k))		# array of zeros to hold guess vec
-    I = linear_operator.operators.IdentityLinearOperator(n) # identity matrix same dimen as A
+    t = torch.normal(0, 1, size= (n, k), dtype= A.dtype) # set of k unit vectors as guess
+    V = torch.zeros((n,mmax + k), dtype= A.dtype)		# array of zeros to hold guess vec
+    I = linear_operator.operators.IdentityLinearOperator(n).to(dtype= A.dtype) # identity matrix same dimen as A
     # I = torch.eye(n)			# identity matrix same dimen as A
     # Begin block Davidson routine
     lowest_eigval_list = []

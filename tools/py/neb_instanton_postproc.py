@@ -673,7 +673,7 @@ def compute_instanton_rate_or_splitting():
     exact_diag_bool = args.exact_diagonal
 
     if not quiet:
-        print("Diagonalization ... \n\n")
+
         if cal_type == "rate":
             m3_for_hessian = m3
         else:
@@ -681,6 +681,7 @@ def compute_instanton_rate_or_splitting():
 
         # use exact diagonalization to solve eigenvalue and eigenvector.
         if exact_diag_bool:
+            print("Diagonalization ... \n\n")
             start_time = time.perf_counter()         
             hess_eigval, hess_eigvec, detI = clean_hessian(h, pos, natoms, nbeads, m, m3_for_hessian, asr, mofi=True)  # remove the  translational and rotational modes.
             end_time = time.perf_counter() 
@@ -709,9 +710,9 @@ def compute_instanton_rate_or_splitting():
             # project out translational and rotational modes.
             detI, proj_info =  get_proj_info(pos, natoms, nbeads, m, m3_for_hessian, asr, mofi= True)
             
-            # hess_args = (bead_hessian, spring_term_param, proj_info, pos)
-            # with open("hess.pkl", "wb") as f:
-            #     pickle.dump(hess_args, f)
+            hess_args = (bead_hessian, spring_term_param, proj_info, pos)
+            with open("hess.pkl", "wb") as f:
+                pickle.dump(hess_args, f)
 
             start_time = time.perf_counter()
             # use log determinant estimator to compute log determinant of the projected hessian.
