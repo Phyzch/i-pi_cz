@@ -12,6 +12,7 @@ import copy
 import pickle 
 from contextlib import contextmanager
 import scipy.sparse.linalg as sl
+from scipy.linalg import null_space 
 try:
     import linear_operator
 
@@ -258,19 +259,32 @@ class BaseTraceEstimator():
     def info(self):
         NotImplementedError("Info func not implemented")
 
+    def compute_cond_number(self):
+        """
+        compute the condition number of the matrix.
+        """
+        NotImplementedError("condition number calculation is not implemented.")
+
 class TraceEstimator(BaseTraceEstimator):
     """
     Perform the stochastic trace estimation of the operator.
     """
     def __init__(self, linear_op):
         self.linear_op = linear_op 
-        # self.linear_op = self.linear_op.to(dtype= torch.float32)
 
     def info(self):
         """
         print information about the trace estimator we use.
         """
         print("Basic Trace Estimator on original matrix.")
+
+    def compute_cond_number(self):
+        """
+        compute the condition number of the linear operator.
+        """
+        matrix = self.linear_op.to_dense()
+        cond = torch.linalg.cond(matrix)
+        print(f"condition number for the operator: {cond}")
 
     @staticmethod
     def _compute_logdet(op, random_vector_number, max_tridiag_iter, cg_tolerance):
@@ -398,6 +412,17 @@ class SubspaceProjTraceEstimator(TraceEstimator):
         logdet = logdet_term.item()
         return logdet 
 
+    def compute_cond_number(self, proj_operator):
+        """
+        Compute the condition number of the matrix after we project out low frequency modes.
+        """
+         # compute logdet in the complement space.  (I- QQ^T) A (I-QQ^T)
+        A = self.linear_op.to_dense().numpy()
+        Q = proj_operator.to_dense().numpy()
+        Q_perp = null_space(Q.T)       # [N, N-m]
+        A_perp = Q_perp.T @ A @ Q_perp 
+        cond_number = np.linalg.cond(A_perp)
+        print(f"the condition number for subspace projected linear operator {cond_number}")
 
     def compute_logdet_estimate(self,
                                 proj_operator, 
@@ -484,6 +509,20 @@ class ControlVariateLogDetEstimator(BaseTraceEstimator):
     
     def info(self):
         print("use control variate method to compute the trace estimate.")
+
+    def compute_cond_number(self):
+        """
+        compute the condition number of a matrix.
+        """
+        base_matrix = self.base_linear_op.to_dense()
+        base_mat_cond_number = torch.linalg.cond(base_matrix)
+
+        residue_matrix = self.residue_op.to_dense()
+        residue_mat_cond_number = torch.linalg.cond(residue_matrix)
+
+        print(f"condition number for the base matrix: {base_mat_cond_number}")
+        print(f"condition number for the residue matrix: {residue_mat_cond_number}")
+
 
     def build_control_variate_decomposition(self):
         self.construct_control_variate()
@@ -800,7 +839,21 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         print("use spring term as control variate to estimate logdet.")
         print(f"The projection index to project out the subspace is {self.projection_index}")
 
+    def compute_cond_number(self):
+        """
+        compute the condition number of base linear operator, residue operator and residue operator in subspace.
+        """
+        super(SpringCVSubspaceLogDetEstimator, self).compute_cond_number()
+        # compute condition number in complement subspace.
+        projection_index = self.projection_index
+        # logdet(B^{-1/2} A B^{-1/2}) 
+        self.construct_projection_vector(projection_index)
+        proj_operator = self.sp_eigvec_for_proj_linear_op
 
+        trace_estimator = SubspaceProjTraceEstimator(self.residue_op)
+
+        trace_estimator.compute_cond_number(proj_operator)
+        
     def construct_projection_vector(self, projection_index):
         """
         construct the projection vector for the subspace method.
@@ -826,6 +879,7 @@ class SpringCVSubspaceLogDetEstimator(SpringCVLogDetEstimator):
         sp_eigvec_for_proj = torch.index_select(self.sp_eigvec_sparse_tensor, dim= 1, index= torch.tensor(sp_eig_index_for_proj_all))
 
         self.sp_eigvec_for_proj_linear_op = SparseLinearOperator(sp_eigvec_for_proj)
+
 
    # The code below delegate the trace estimation with subspace projection to the TraceEstimator class.
     def compute_logdet_estimate(self, random_vector_number, max_tridiag_iter, cg_tolerance):
@@ -1288,6 +1342,9 @@ def estimate_logdet(trace_estimator: BaseTraceEstimator,
         cg_tolerance
     )
 
+    # compute the condition number of the matrix to be evaluated by the trace estiimator.
+    #trace_estimator.compute_cond_number()
+
     if estimate_logdet_std:
         # if estimate logdet std, then we use the avg logdet to replace the result of the single run.
         avg_num = 20
@@ -1303,6 +1360,9 @@ def estimate_logdet(trace_estimator: BaseTraceEstimator,
 
     return logdet
 
+"""
+Test code:
+"""
 def test_solve_scaling(operator, max_tridiag_iter, cg_tolerance, operator_name= "operator"):
     vector_num = 100
     torch.manual_seed(42)
