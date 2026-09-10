@@ -363,7 +363,7 @@ class GPRForceMapper(object):
             # update the gpr model (subroutine).
             self._update_gpr_model(new_training_x, new_ab_initio_pots, new_ab_initio_forces)
             # check force error after update the gpr model.
-            self.after_gpr_update_force_error(new_training_x, new_ab_initio_forces)
+            self.after_gpr_update_force_error(new_training_x, new_ab_initio_forces, step)
             # output info about gpr force error.
             self.output_force_error_info(step)
 
@@ -442,7 +442,7 @@ class GPRForceMapper(object):
         distance_cutoff = self.motion.options["distance_cutoff_for_training_data"]
         train_grad_model_bool = self.motion.options["train_grad_model_bool"]
         # FIXME: See if we fix the gpr model parameter during data point update, will the issue be resolved.
-        train_grad_model_bool= False
+        # train_grad_model_bool= False
 
         new_shifted_pots = new_ab_initio_pots - self.energy_shift
         new_ab_initio_grads = - new_ab_initio_forces
@@ -455,7 +455,7 @@ class GPRForceMapper(object):
             train_grad_model_bool
         )
     
-    def after_gpr_update_force_error(self, new_training_x, new_ab_initio_forces):
+    def after_gpr_update_force_error(self, new_training_x, new_ab_initio_forces, step):
         """
         compute the force error after update the gpr model.
         """
@@ -472,15 +472,16 @@ class GPRForceMapper(object):
         )
 
         # # check the uncertainty of force for the updated potential.
-        # # increase the gpr_force_uncertainty criterion if it is not met after we have updated the pot.
-        # beads_q = self.motion.beads.q 
-        # _, _, _, var_grad_x_uncertainty = self.gpr_model.predict_latent_function(beads_q)
-        # max_std_grad_x_uncertainty = np.max(np.sqrt(var_grad_x_uncertainty))
-        # if max_std_grad_x_uncertainty > self.motion.optarrays["gpr_force_uncertainty_criterion"]:
-        #     print("@Warning: The uncertainty of gpr prediction is still higher than cutoff criterion after update the model.")
-        #     print(f"max std force uncertainty: {max_std_grad_x_uncertainty}")
-        #     print(f"The force uncertainty criterion will be increased to {max_std_grad_x_uncertainty}")
-        #     self.motion.optarrays["gpr_force_uncertainty_criterion"] = max_std_grad_x_uncertainty
+        # increase the gpr_force_uncertainty criterion if it is not met after we have updated the pot.
+        _, _, _, var_grad_x_uncertainty = self.gpr_model.predict_latent_function(new_training_x)
+        max_std_grad_x_uncertainty = np.max(np.sqrt(var_grad_x_uncertainty))
+        if max_std_grad_x_uncertainty > self.motion.optarrays["gpr_force_uncertainty_criterion"]:
+            print("@Warning: The uncertainty of gpr prediction is higher than cutoff criterion after update the model.")
+            print("Now stop the program to check the reason. You can either increase cutoff criterion or clean the data.")
+            print(f"max std force uncertainty: {max_std_grad_x_uncertainty}")
+            print("gpr_force_uncertainty_criterion: " + str(self.motion.optarrays["gpr_force_uncertainty_criterion"]))
+            self.motion.neb_stage_exit_step(step)
+            self.exit_neb_stage()
 
     def output_force_error_info(self, step):
         """

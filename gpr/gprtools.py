@@ -280,9 +280,9 @@ class FixInternalDofs(object):
         # code that use the change in forces as criterion to select dofs to include in GPR model.
         grad_q = train_targets[:, 1:]
         grad_q_change = np.max(grad_q, axis = 0) - np.min(grad_q, axis= 0)
-        grad_q_change_cutoff = np.max(grad_q_change) / np.power(10.0, 2)
-
-        fixed_internal_dofs_grad_criterion = np.arange(self.input_dim)[ grad_q_change <= grad_q_change_cutoff ]
+        scaled_grad_q_change = grad_q_change * train_inputs_change
+        scaled_grad_q_change_cutoff = np.max(scaled_grad_q_change) * 1e-2
+        fixed_internal_dofs_grad_criterion = np.arange(self.input_dim)[ scaled_grad_q_change <= scaled_grad_q_change_cutoff]
         
         self.fixed_internal_dofs = np.union1d(fixed_internal_dofs_inputs_change_criterion, fixed_internal_dofs_grad_criterion).astype(int)
 
