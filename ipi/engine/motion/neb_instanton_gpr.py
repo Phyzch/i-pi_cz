@@ -103,7 +103,7 @@ class MAPNEBGPRMover(Motion):
         gpr_force_uncertainty_criterion = 0.001,
         gpr_trust_region=0.1,
         minimum_trust_region= 0.1,
-        distance_cutoff_for_training_data= 0.1,
+        distance_cutoff_for_training_data= 0.01,
         gpr_kernel_outputscale=np.ones(0, float),
         gpr_kernel_outputscale_constraint = {
             "min": 0.0,

@@ -278,14 +278,15 @@ class FixInternalDofs(object):
 
         
         # code that use the change in forces as criterion to select dofs to include in GPR model.
-        # grad_q = train_targets[:, 1:]
-        # grad_q_change = np.max(grad_q, axis = 0) - np.min(grad_q, axis= 0)
-        # grad_q_change_cutoff = np.max(grad_q_change) / np.power(10.0, 3)
+        grad_q = train_targets[:, 1:]
+        grad_q_change = np.max(grad_q, axis = 0) - np.min(grad_q, axis= 0)
+        grad_q_change_cutoff = np.max(grad_q_change) / np.power(10.0, 2)
 
-        # fixed_internal_dofs_grad_criterion = np.arange(self.input_dim)[ grad_q_change <= grad_q_change_cutoff ]
+        fixed_internal_dofs_grad_criterion = np.arange(self.input_dim)[ grad_q_change <= grad_q_change_cutoff ]
         
-        # self.fixed_internal_dofs = np.union1d(fixed_internal_dofs_inputs_change_criterion, fixed_internal_dofs_grad_criterion).astype(int)
-        self.fixed_internal_dofs = fixed_internal_dofs_inputs_change_criterion.astype(int)
+        self.fixed_internal_dofs = np.union1d(fixed_internal_dofs_inputs_change_criterion, fixed_internal_dofs_grad_criterion).astype(int)
+
+        # self.fixed_internal_dofs = fixed_internal_dofs_inputs_change_criterion.astype(int)
 
         # load the fixed internal dofs from the folder.
         if gpr_fixed_internal_dofs is not None:
@@ -657,9 +658,9 @@ class GPModelWithDerivativesWrapper:
         # training outputs in internal coordinates q. (V, dV/dq)
         self.normalized_train_targets = train_targets  
 
-        # train_inputs, train_targets, likelihood_noise_variance = self.fix_internal_dofs(
-        #     train_inputs, train_targets, likelihood_noise_variance
-        # )
+        train_inputs, train_targets, likelihood_noise_variance = self.fix_internal_dofs(
+            train_inputs, train_targets, likelihood_noise_variance
+        )
 
         # ------- transform input from numpy array to torch.tensor -----------
         (train_inputs, train_targets) = map(
@@ -832,11 +833,11 @@ class GPModelWithDerivativesWrapper:
         )
 
         # attach test_mean and test_var (0) of fixed dofs
-        # test_mean, test_covar_matrix = (
-        #     self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
-        #         test_mean, test_covar_matrix
-        #     )
-        # )
+        test_mean, test_covar_matrix = (
+            self.FixingDofs.transform_from_free_moving_dofs_to_full_dofs(
+                test_mean, test_covar_matrix
+            )
+        )
 
         # inverse the normalization procedure for mean value and variance.
         test_covar_matrix_q = self.Normalizer.inverse_normalize_noise_covar_matrix(
@@ -933,23 +934,23 @@ class GPModelWithDerivativesWrapper:
         )
 
         # fix certain dofs from input and targets, not including it in our gpr model.
-        # new_train_inputs, new_train_targets = (
-        #     self.FixingDofs.transform_training_data_to_free_moving_dofs(
-        #         new_train_inputs, new_train_targets
-        #     )
-        # )
+        new_normalized_free_moving_train_inputs, new_free_moving_train_targets = (
+            self.FixingDofs.transform_training_data_to_free_moving_dofs(
+                new_normalized_train_inputs, new_train_targets
+            )
+        )
 
         # transform numpy array into tensor.
-        (new_train_inputs_tensor, new_normalized_train_inputs_tensor, new_train_targets_tensor) = map(
+        (new_normalized_free_moving_train_inputs_tensor, new_free_moving_train_targets_tensor) = map(
             lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), 
-            (new_train_inputs, new_normalized_train_inputs, new_train_targets)
+            (new_normalized_free_moving_train_inputs, new_free_moving_train_targets)
         )
 
         # we only add new training data if they are not too close to each other.
         filtered_new_train_inputs_index = update_model_with_new_data(
             self.gpr_model,
-            new_normalized_train_inputs_tensor,
-            new_train_targets_tensor,
+            new_normalized_free_moving_train_inputs_tensor,
+            new_free_moving_train_targets_tensor,
             distance_cutoff,
             train_bool
         )
@@ -1105,6 +1106,11 @@ class GPModelWithDerivativesWrapper:
         fixed_internal_dofs = np.copy(self.FixingDofs.fixed_internal_dofs)
         return fixed_internal_dofs
 
+    def compute_covar_matrix_condition_number(self):
+        """
+        compute the condition number of the covariance matrix K.
+        """
+        return self.gpr_model.compute_covar_matrix_condition_number()
 
     def get_free_moving_internal_coordinate(self, beads_x):
         """
@@ -1121,11 +1127,11 @@ class GPModelWithDerivativesWrapper:
             )
         )
 
-        # beads_internal_coordinate = (
-        #     self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
-        #         beads_internal_coordinate
-        #     )
-        # )
+        beads_internal_coordinate = (
+            self.FixingDofs.transform_training_inputs_to_free_moving_dofs(
+                beads_internal_coordinate
+            )
+        )
 
         return beads_internal_coordinate
 

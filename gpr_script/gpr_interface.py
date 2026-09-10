@@ -389,6 +389,7 @@ class GPRForceMapper(object):
             _, _, _, var_grad_x_trace_list = self.gpr_model.predict_latent_function(beads_q)
 
             force_uncertainty = np.sqrt(var_grad_x_trace_list)
+            print("@update GPR model. Force uncertainty for all beads: " + str(force_uncertainty))
 
             large_uncertainty_bool = (force_uncertainty > force_uncertainty_cutoff)
             large_uncertainty_bead_index = np.arange(nbeads)[large_uncertainty_bool]
@@ -403,8 +404,10 @@ class GPRForceMapper(object):
         Also compute the ab initio forces for the new data.
         """
         # ML learned forces.
-        _, beads_grads, _, _ = self.gpr_model.predict_latent_function(new_training_x)
+        _, beads_grads, _, beads_grads_var = self.gpr_model.predict_latent_function(new_training_x)
         gpr_beads_forces = - beads_grads
+        beads_grads_uncertainty = np.sqrt(beads_grads_var)
+        self.force_uncertainty_list = beads_grads_uncertainty
         
         # ab initio forces.
         bead_number = new_training_x.shape[0]
@@ -438,6 +441,8 @@ class GPRForceMapper(object):
         """
         distance_cutoff = self.motion.options["distance_cutoff_for_training_data"]
         train_grad_model_bool = self.motion.options["train_grad_model_bool"]
+        # FIXME: See if we fix the gpr model parameter during data point update, will the issue be resolved.
+        train_grad_model_bool= False
 
         new_shifted_pots = new_ab_initio_pots - self.energy_shift
         new_ab_initio_grads = - new_ab_initio_forces
@@ -455,25 +460,27 @@ class GPRForceMapper(object):
         compute the force error after update the gpr model.
         """
          # ML learned forces.
-        _, beads_grads, _, _ = self.gpr_model.predict_latent_function(new_training_x)
+        _, beads_grads, _, beads_grads_var = self.gpr_model.predict_latent_function(new_training_x)
         gpr_beads_forces = - beads_grads
-
+        beads_force_uncertainty = np.sqrt(beads_grads_var)
+        self.force_uncertainty_after_update_list = beads_force_uncertainty
+        
         force_diff = gpr_beads_forces - new_ab_initio_forces
         self.force_diff_amplitude_after_update_list = np.linalg.norm(force_diff, axis= 1)
         self.force_diff_ratio_after_update_list = (
             self.force_diff_amplitude_after_update_list / self.ab_initio_force_amplitude_list
         )
 
-        # check the uncertainty of force for the updated potential.
-        # increase the gpr_force_uncertainty criterion if it is not met after we have updated the pot.
-        beads_q = self.motion.beads.q 
-        _, _, _, var_grad_x_uncertainty = self.gpr_model.predict_latent_function(beads_q)
-        max_std_grad_x_uncertainty = np.max(np.sqrt(var_grad_x_uncertainty))
-        if max_std_grad_x_uncertainty > self.motion.optarrays["gpr_force_uncertainty_criterion"]:
-            print("@Warning: The uncertainty of gpr prediction is still higher than cutoff criterion after update the model.")
-            print(f"max std force uncertainty: {max_std_grad_x_uncertainty}")
-            print(f"The force uncertainty criterion will be increased to {max_std_grad_x_uncertainty}")
-            self.motion.optarrays["gpr_force_uncertainty_criterion"] = max_std_grad_x_uncertainty
+        # # check the uncertainty of force for the updated potential.
+        # # increase the gpr_force_uncertainty criterion if it is not met after we have updated the pot.
+        # beads_q = self.motion.beads.q 
+        # _, _, _, var_grad_x_uncertainty = self.gpr_model.predict_latent_function(beads_q)
+        # max_std_grad_x_uncertainty = np.max(np.sqrt(var_grad_x_uncertainty))
+        # if max_std_grad_x_uncertainty > self.motion.optarrays["gpr_force_uncertainty_criterion"]:
+        #     print("@Warning: The uncertainty of gpr prediction is still higher than cutoff criterion after update the model.")
+        #     print(f"max std force uncertainty: {max_std_grad_x_uncertainty}")
+        #     print(f"The force uncertainty criterion will be increased to {max_std_grad_x_uncertainty}")
+        #     self.motion.optarrays["gpr_force_uncertainty_criterion"] = max_std_grad_x_uncertainty
 
     def output_force_error_info(self, step):
         """
@@ -497,12 +504,13 @@ class GPRForceMapper(object):
             print(
                 "@Outerloop Exit info: |f_GPR -f| :" + str(self.force_diff_amplitude_list)
             )
-
+            print("@Outerloop Exit info: |f_GPR| uncertainty given by GPR model:" + str(self.force_uncertainty_list))
             print("After update:")
             print("@Outerloop Exit info: |f_GPR -f|/|f|:" + str(self.force_diff_ratio_after_update_list))
             print(
                 "@Outerloop Exit info: |f_GPR -f| :" + str(self.force_diff_amplitude_after_update_list)
             )
+            print("@Outlerloop Exit info: |f_GPR| uncertainty given by GPR model:" + str(self.force_uncertainty_after_update_list))
 
             print("Finish Outerloop: " + str(step))
             print("\n")

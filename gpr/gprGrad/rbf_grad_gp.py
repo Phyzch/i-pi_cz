@@ -210,17 +210,17 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             length_scale_min_cutoff = length_scale_min_cutoff * lengthscale_rescale_factor 
             length_scale_max_cutoff = length_scale_max_cutoff * lengthscale_rescale_factor
 
-            if self.FixingDofs is not None:
-                if i == 0:
-                    irrelevant_dofs = fixed_dofs
-                elif i == 1:
-                    irrelevant_dofs = free_moving_dofs
-                else:
-                    irrelevant_dofs = torch.tensor([]) 
-                if len(irrelevant_dofs) > 0:
-                    length_scale[irrelevant_dofs] = irrelevant_lengthscale_ratio * 2 * train_inputs_range[irrelevant_dofs]
-                    length_scale_min_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * train_inputs_range[irrelevant_dofs]
-                    length_scale_max_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * 10 * train_inputs_range[irrelevant_dofs]
+            # if self.FixingDofs is not None:
+            #     if i == 0:
+            #         irrelevant_dofs = fixed_dofs
+            #     elif i == 1:
+            #         irrelevant_dofs = free_moving_dofs
+            #     else:
+            #         irrelevant_dofs = torch.tensor([]) 
+            #     if len(irrelevant_dofs) > 0:
+            #         length_scale[irrelevant_dofs] = irrelevant_lengthscale_ratio * 2 * train_inputs_range[irrelevant_dofs]
+            #         length_scale_min_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * train_inputs_range[irrelevant_dofs]
+            #         length_scale_max_cutoff[irrelevant_dofs] = irrelevant_lengthscale_ratio * 10 * train_inputs_range[irrelevant_dofs]
 
             length_gamma_beta = torch.div(
                 length_gamma_alpha, length_scale
@@ -230,9 +230,6 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
             lengthscale_prior = gpytorch.priors.GammaPrior(
                 length_gamma_alpha, length_gamma_beta
             )
-
-            #FIXME: set lengthscale prior to None
-            # lengthscale_prior = None 
 
             lengthscale_constraint = gpytorch.constraints.Interval(
                 length_scale_min_cutoff, length_scale_max_cutoff
@@ -332,6 +329,18 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         force_noises = task_noises_std[1:]
 
         return V_noises, force_noises
+
+    def compute_covar_matrix_condition_number(self):
+        """
+        compute the condition number of the covariance matrix K.
+        We include the noise in the likelihood.
+        """
+        prediction_strategy = self.prediction_strategy
+        covar_matrix = prediction_strategy.lik_train_train_covar
+        covar_matrix = covar_matrix.to_dense()
+        condition_number = torch.linalg.cond(covar_matrix)
+        condition_number = condition_number.cpu().detach().numpy()
+        return condition_number
 
     # __call__ function in Gpytorch code. 
     # We need to change the prediction strategy to use pseudo-inverse when inverse the covariance matrix. 

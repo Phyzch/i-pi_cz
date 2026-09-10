@@ -453,7 +453,7 @@ class InputNebInstGPR(InputDictionary):
             InputValue,
             {
                 "dtype": float,
-                "default": 0.1,
+                "default": 0.01,
                 "help": """ To avoid ill-conditioning of covariance matrix in the Gaussian Process Regression 
                 model, we have to avoid adding data points too close to existing training data points in the 
                 model. This distance cutoff will throw away data points too close to existing data. 
