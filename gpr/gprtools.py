@@ -629,22 +629,7 @@ class GPModelWithDerivativesWrapper:
         self.Normalizer = NormalizeTrainingData(train_targets,
                                                 train_inputs
                                                 )
-
-
-        # -------- Fixing certain dofs ----------------
-        # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
-        # To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
-        self.FixingDofs = FixInternalDofs(train_x,
-                                          train_inputs, 
-                                          train_targets,
-                                          cartesian_fix_dofs,
-                                          coordinate_transformer,
-                                          gpr_fix_internal_dofs_bool,
-                                          gpr_fix_internal_dofs_cutoff,
-                                          self.coordinate_transformer.internal_coord_type,
-                                          gpr_fixed_internal_dofs
-                                          )
-        
+                
         train_inputs, train_targets, likelihood_noise_variance = self.normalize_data(
             train_inputs,
             train_targets,
@@ -657,6 +642,20 @@ class GPModelWithDerivativesWrapper:
 
         # training outputs in internal coordinates q. (V, dV/dq)
         self.normalized_train_targets = train_targets  
+
+        # -------- Fixing certain dofs ----------------
+        # For the case we have to fix certain internal dofs. Apply a filter to fix some internal dofs
+        # To filter internal dofs, we still use the initial train_inputs as criterion. (not the re-scaled one.)
+        self.FixingDofs = FixInternalDofs(train_x,
+                                          self.train_inputs, 
+                                          self.normalized_train_targets,
+                                          cartesian_fix_dofs,
+                                          coordinate_transformer,
+                                          gpr_fix_internal_dofs_bool,
+                                          gpr_fix_internal_dofs_cutoff,
+                                          self.coordinate_transformer.internal_coord_type,
+                                          gpr_fixed_internal_dofs
+                                          )
 
         train_inputs, train_targets, likelihood_noise_variance = self.fix_internal_dofs(
             train_inputs, train_targets, likelihood_noise_variance
