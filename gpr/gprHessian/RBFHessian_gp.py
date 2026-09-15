@@ -728,20 +728,6 @@ def train_gpr_model(
     loss_prior_list = []
     loss_mll_list = []
 
-    # FIXME: new feature. add loss function - log(log(outputscale_max ^2) - log(outputscale))
-    outputscale_prior_weight = 1.0 * (1 + ndofs)
-
-    def compute_outputscale_loss(model):
-        loss = 0.0
-        if model.gpr_SE_kernel_number == 1:
-            outputscale = model.covar_module.outputscale
-            loss = -outputscale_prior_weight * torch.log(torch.log(model.outputscale_max) - torch.log(outputscale)) 
-        else:
-             for i in range(model.gpr_SE_kernel_number):
-                 outputscale = model.covar_module_component_list[i].outputscale
-                 loss = loss + (-outputscale_prior_weight * torch.log(torch.log(model.outputscale_max) - torch.log(outputscale)))
-        return loss 
-
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),
            gpytorch.settings.max_cg_iterations(model.train_max_cg_iteration),
            gpytorch.settings.cg_tolerance(model.train_cg_tolerance)):
@@ -772,16 +758,12 @@ def train_gpr_model(
 
             loss = with_hessian_weight * loss_with_hessian + without_hessian_weight * loss_without_hessian
 
-            # add additional prior 
-            outputscale_loss = compute_outputscale_loss(model)
-            loss  = loss + outputscale_loss
-
             loss_value = loss.item()
 
             # prior contribution to the loss function. This is the regularization term. 
             loss_prior = torch.tensor(0.0, device= model.device)
             loss_prior = -mll._add_other_terms(loss_prior, []) / train_size
-            loss_prior = loss_prior * (with_hessian_weight + without_hessian_weight) + outputscale_loss
+            loss_prior = loss_prior * (with_hessian_weight + without_hessian_weight) 
             loss_prior_list.append(loss_prior.item())
 
             # loss function from probability distribution. No contribution from prior. 
@@ -807,9 +789,8 @@ def train_gpr_model(
                     loss_cpu = loss.detach().cpu() 
                     loss_mll_cpu = loss_mll.detach().cpu()
                     loss_prior_cpu = loss_prior.detach().cpu()
-                    outputscale_loss_cpu = outputscale_loss.detach().cpu()
-                    print("Iter %d - Loss: %.3f, mll: %.3f, prior: %.3f, outputscale_loss: %.3f" % (train_counts, loss_cpu.item(), 
-                                                                                                    loss_mll_cpu, loss_prior_cpu, outputscale_loss_cpu))
+                    print("Iter %d - Loss: %.3f, mll: %.3f, prior: %.3f" % (train_counts, loss_cpu.item(), 
+                                                                            loss_mll_cpu, loss_prior_cpu))
 
     if output_training_info:
         print("Iter %d - Loss: %.3f" % (train_counts, loss.item()))

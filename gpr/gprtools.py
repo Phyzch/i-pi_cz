@@ -281,7 +281,7 @@ class FixInternalDofs(object):
         grad_q = train_targets[:, 1:]
         grad_q_change = np.max(grad_q, axis = 0) - np.min(grad_q, axis= 0)
         scaled_grad_q_change = grad_q_change * train_inputs_change
-        scaled_grad_q_change_cutoff = np.max(scaled_grad_q_change) * 1e-2
+        scaled_grad_q_change_cutoff = np.max(scaled_grad_q_change) * (2e-3)
         fixed_internal_dofs_grad_criterion = np.arange(self.input_dim)[ scaled_grad_q_change <= scaled_grad_q_change_cutoff]
         
         self.fixed_internal_dofs = np.union1d(fixed_internal_dofs_inputs_change_criterion, fixed_internal_dofs_grad_criterion).astype(int)
