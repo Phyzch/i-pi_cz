@@ -823,7 +823,7 @@ class GPModelWithHessiansWrapper:
         ref_mean_V: np.ndarray = np.array([]),
         ref_mean_grad_x: np.ndarray = np.array([]),
         ref_mean_hessian_x: np.ndarray = np.array([]),
-        train_bool= True,
+        train_settings= (True, True, True), # (train_bool, stagewise_training, cholesky_bool)
         gpr_rigid_internal_dofs_bool= False,
         gpr_rigid_internal_dofs_cutoff= 5e-2,
         gpr_rigid_internal_dofs= None,
@@ -1044,6 +1044,34 @@ class GPModelWithHessiansWrapper:
             ref_mean_x, ref_mean_V, ref_mean_grad_x, ref_mean_hessian_x
         )
 
+        kernel_param = (gpr_SE_kernel_number, 
+                        kernel_outputscale, 
+                        kernel_outputscale_constraint,\
+                        kernel_lengthscale_ratio, 
+                        kernel_lengthscale_ratio_constraint)
+
+        noise_param = (
+            pot_noise_var,
+            grad_noise_var,
+            hessian_noise_var,
+            force_noise_rank,
+            hessian_noise_rank,
+            noise_covar_factor_pot_grad_array,
+            noise_covar_factor_with_hessian_array,
+        )
+
+        mean_func_param = (
+            constant_mean_func_bool,
+            ref_mean_q_tensor,
+            ref_mean_V_tensor,
+            ref_mean_grad_q_tensor,
+            ref_mean_hessian_q_upper_triag_tensor
+        )
+
+        (train_bool, stagewise_training, cholesky_bool) = train_settings
+        self.stagewise_training = stagewise_training
+        self.cholesky_bool= cholesky_bool
+
         # initialize the gaussian process regression model with input training data.
         # GPModelWithHessians are Gaussian Process Regression model that capable of using hessian as training data and also predicting hessians.
         # It transforms the potential, force & hessian into 1d data set. See eq.(4 - 9) in J. Chem. Theory Comput. 2024, 20, 3766−3778 for the set up.
@@ -1052,27 +1080,14 @@ class GPModelWithHessiansWrapper:
             train_targets_tensor,
             hessian_data_point_index_tensor,
             hessian_fixdofs_tensor,
-            gpr_SE_kernel_number,
-            kernel_outputscale,
-            kernel_outputscale_constraint,
-            kernel_lengthscale_ratio,
-            kernel_lengthscale_ratio_constraint,
-            pot_noise_var,
-            grad_noise_var,
-            hessian_noise_var,
-            force_noise_rank,
-            hessian_noise_rank,
-            noise_covar_factor_pot_grad_array,
-            noise_covar_factor_with_hessian_array,
-            constant_mean_func_bool,
-            ref_mean_q_tensor,
-            ref_mean_V_tensor,
-            ref_mean_grad_q_tensor,
-            ref_mean_hessian_q_upper_triag_tensor,
+            kernel_param,
+            noise_param,
+            mean_func_param,
             nugget= singular_value_cutoff
         )
 
         self.gpr_model = self.gpr_model.to(device= self.device)
+
 
         if train_bool:
             # train the gaussian process regression model.
@@ -1802,11 +1817,11 @@ class GPModelWithHessiansWrapper:
             retrain_bool=retrain_bool,
         )
     
-    def train_model(self, stagewise_training_bool= False):
+    def train_model(self):
         """
         function that trains the model
         """
-        if stagewise_training_bool:
+        if self.stagewise_training:
             # first train the model with only potential and gradient information. 
             print("stagewise training for GPR model.")
             print("first stage: train the model with only potential and gradient information:")

@@ -853,7 +853,7 @@ class GPRHessianMapper(object):
                 ridge_regularization_alpha= self.ridge_regularization_alpha["hessian"]
             )
 
-    def train_gpr_hessian_model(self, stagewise_training_bool= False):
+    def train_gpr_hessian_model(self):
         """
         train the gpr hessian model:
         (1) train the model
@@ -865,7 +865,7 @@ class GPRHessianMapper(object):
                 This can be expensive. To add data without training the model, set train_hessian_model_bool= False ")
             start_t = timer()
 
-            self.gpr_hessian_model.train_model(stagewise_training_bool= stagewise_training_bool)
+            self.gpr_hessian_model.train_model()
 
             end_t = timer()
             time_elapsed = (end_t - start_t) / 60
@@ -952,6 +952,11 @@ class GPRHessianMapper(object):
             np.array([ref_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
         )
 
+        stage_wise_training = True 
+        cholesky_bool = True 
+        train_bool = False 
+        train_settings = (train_bool, stage_wise_training, cholesky_bool)
+
         self.gpr_hessian_model = (
             gpr.gpr_hessian_tools.GPModelWithHessiansWrapper(
                 train_x,
@@ -973,7 +978,7 @@ class GPRHessianMapper(object):
                 ref_mean_V=ref_V_shifted,
                 ref_mean_grad_x=ref_grads,
                 ref_mean_hessian_x=ref_hessians,
-                train_bool= False,
+                train_settings= train_settings,
                 gpr_rigid_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
                 gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
                 gpr_rigid_internal_dofs= gpr_rigid_internal_dofs,
@@ -991,7 +996,7 @@ class GPRHessianMapper(object):
         if (not model_hyperparameter_exists) | self.train_hessian_model_bool:
             # the hyper-parameter of the gpr hessian model does not exist.
             # or we want to train the model by setting train_hessian_model as true.
-            self.train_gpr_hessian_model(stagewise_training_bool= True)
+            self.train_gpr_hessian_model()
 
         gpr_util.analyze_train_error(self.gpr_hessian_model)
             
@@ -1428,7 +1433,7 @@ class GPRHessianMapper(object):
 
         # train the model.
         if (self.add_new_hessian_data_bool or self.add_new_grad_data_bool) and self.train_hessian_model_bool:
-            self.train_gpr_hessian_model(stagewise_training_bool= True)
+            self.train_gpr_hessian_model()
             gpr_util.analyze_train_error(self.gpr_hessian_model)
                 
         # store the computed ab inito gradient and hessian data if we compute new data point. 

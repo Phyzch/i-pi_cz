@@ -20,11 +20,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         train_targets: torch.Tensor,
         ard_num_dims: int,
         output_dims: int,
-        gpr_SE_kernel_number: int,
-        kernel_outputscale,
-        kernel_outputscale_constraint: dict,
-        kernel_lengthscale_ratio,
-        kernel_lengthscale_ratio_constraint: dict,
+        kernel_param, 
         likelihood_noise_variance,
         nugget,
         FixingDofs= None 
@@ -67,11 +63,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         self._set_gpr_kernel(
             ard_num_dims,
             train_inputs,
-            gpr_SE_kernel_number,
-            kernel_outputscale,
-            kernel_outputscale_constraint,
-            kernel_lengthscale_ratio,
-            kernel_lengthscale_ratio_constraint
+            kernel_param
         )
 
     def _set_likelihood_noise_prior(self, output_dims, likelihood_noise_variance):
@@ -143,11 +135,7 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         self,
         ard_num_dims,
         train_inputs,
-        gpr_SE_kernel_number,
-        kernel_outputscale,
-        kernel_outputscale_constraint,
-        kernel_lengthscale_ratio,
-        kernel_lengthscale_ratio_constraint
+        kernel_param 
     ):
         """
         set the kernel for the Gaussian Process Regression.
@@ -158,6 +146,14 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         :param: kernel_outputscale: the output scale of the gpr kernel. Here kernel_outputscale = (sigma_m) ^2
         :param: kernel_lengthscale_ratio: l_i / |q_i^{max} - q_i^{min}|.  The ratio of the kernel length scale and the range of initial training data along dim i.
         """
+        (
+            gpr_SE_kernel_number,
+            kernel_outputscale,
+            kernel_outputscale_constraint,
+            kernel_lengthscale_ratio,
+            kernel_lengthscale_ratio_constraint
+        ) = kernel_param
+
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
 
         covar_module_component_list = []

@@ -666,22 +666,25 @@ class GPModelWithDerivativesWrapper:
             lambda x: torch.from_numpy(x).to(device= self.device, dtype=torch.float64), (train_inputs, train_targets)
         )
 
-
+        kernel_param = (            
+            gpr_SE_kernel_number,
+            kernel_outputscale,
+            kernel_outputscale_constraint,
+            kernel_lengthscale_ratio,
+            kernel_lengthscale_ratio_constraint
+            )
         # initialize the gaussian process regression model with input training data.
         self.gpr_model = GPModelWithDerivatives(
             train_inputs,
             train_targets,
             self.gpr_input_dim,
             self.gpr_output_dim,
-            gpr_SE_kernel_number,
-            kernel_outputscale,
-            kernel_outputscale_constraint,
-            kernel_lengthscale_ratio,
-            kernel_lengthscale_ratio_constraint,
+            kernel_param, 
             likelihood_noise_variance,
             nugget= singular_value_cutoff,
             FixingDofs= self.FixingDofs 
         )
+        
         self.gpr_model = self.gpr_model.to(device= self.device)
 
         if train_bool:   

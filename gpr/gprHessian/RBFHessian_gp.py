@@ -27,23 +27,9 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         train_targets: torch.Tensor,
         training_data_hessian_data_point_index: torch.Tensor,
         hessian_fixdofs: torch.Tensor,
-        gpr_SE_kernel_number: int,
-        kernel_outputscale: np.ndarray,
-        kernel_outputscale_constraint: dict,
-        kernel_lengthscale_ratio: np.ndarray,
-        kernel_lengthscale_ratio_constraint: dict,
-        likelihood_pot_noise_var: np.ndarray,
-        likelihood_force_noise_var: np.ndarray,
-        likelihood_hessian_noise_var: np.ndarray,
-        likelihood_force_noise_rank: int,
-        likelihood_hessian_noise_rank: int,
-        noise_covar_factor_pot_grad_array: torch.Tensor,
-        noise_covar_factor_with_hessian_array: torch.Tensor,
-        constant_mean_func_bool=True,
-        ref_mean_coordinate: torch.Tensor = torch.Tensor([]),
-        ref_mean_pot: torch.Tensor = torch.Tensor([]),
-        ref_mean_grad: torch.Tensor = torch.Tensor([]),
-        ref_mean_hessian: torch.Tensor = torch.Tensor([]),
+        kernel_param: tuple,
+        noise_param: tuple,
+        mean_func_param: tuple, 
         nugget = 1e-8
     ):
         """
@@ -92,6 +78,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         :param: ref_mean_coordinate, ref_mean_V, ref_mean_grad, ref_mean_hessian (upper triangle):
                 this is the coordinate / V / gradient / hessians of reference point which be used to set mean function of GPR model.
         """
+
         # settings for evaluation of training. cg is used for (K + noise)^{-1}
         # set cg tolerance and max iteration.
         self.max_cg_iteration = int(pow(10.0, 5))
@@ -101,9 +88,6 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         # the tolerance is looser because training involves multiple iterations and can be expensive to do.
         self.train_max_cg_iteration = int(pow(10.0, 4))
         self.train_cg_tolerance = 1e-2
-
-        # constraint for output scale. max value.
-        self.outputscale_max = torch.tensor(kernel_outputscale_constraint['max'])
 
         # the data point index that contains the hessian information.
         self.training_data_hessian_data_point_index = (
@@ -133,13 +117,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         # set the likelihood function for Gaussian Process Regression model. Likelihood function describe the noise in data.
         likelihood = self._set_likelihood_noise_prior(
             train_inputs,
-            likelihood_pot_noise_var,
-            likelihood_force_noise_var,
-            likelihood_hessian_noise_var,
-            likelihood_force_noise_rank,
-            likelihood_hessian_noise_rank,
-            noise_covar_factor_pot_grad_array,
-            noise_covar_factor_with_hessian_array,
+            noise_param
         )
 
         super(GPModelWithHessians, self).__init__(
@@ -150,38 +128,32 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         self._set_mean_function(
             train_inputs,
             train_targets,
-            constant_mean_func_bool,
-            ref_mean_coordinate,
-            ref_mean_pot,
-            ref_mean_grad,
-            ref_mean_hessian,
+            mean_func_param
         )
 
         # set the covariance function (kernel) for Gaussian Process regression.
         self._set_gpr_kernel(
             train_inputs,
-            gpr_SE_kernel_number,
-            kernel_outputscale,
-            kernel_outputscale_constraint,
-            kernel_lengthscale_ratio,
-            kernel_lengthscale_ratio_constraint
+            kernel_param
         )
 
     def _set_mean_function(
         self,
         train_inputs,
         train_targets,
-        constant_mean_bool,
-        ref_mean_coordinate,
-        ref_mean_pot,
-        ref_mean_grad,
-        ref_mean_hessian,
+        mean_func_param
     ):
         """
         set the mean function for the Gaussian Process Regression.
         If constant_mean_bool = True, we will set the mean function as constant potential function.
         If constant_mean_bool = False, we will set the mean function as Taylor expansion around the reference point to second order.
         """
+        (constant_mean_bool,
+                ref_mean_coordinate,
+                ref_mean_pot,
+                ref_mean_grad,
+                ref_mean_hessian) = mean_func_param 
+        
         data_num = train_inputs.shape[-2]
 
         if constant_mean_bool:
@@ -208,11 +180,7 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
     def _set_gpr_kernel(
         self,
         train_inputs,
-        gpr_SE_kernel_number,
-        kernel_outputscale,
-        kernel_outputscale_constraint,
-        kernel_lengthscale_ratio,
-        kernel_lengthscale_ratio_constraint
+        kernel_param
     ):
         """
         set the kernel for the Gaussian Process Regression.
@@ -220,6 +188,10 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         If kernel_lengthscale_initio_value is given (typically inherit from previous gpr model training), we will use this value.
         Otherwise, we use the length scale value computed from kernel_length_scale_ratio.
         """
+        (gpr_SE_kernel_number,
+         kernel_outputscale, kernel_outputscale_constraint,\
+         kernel_lengthscale_ratio, kernel_lengthscale_ratio_constraint) = kernel_param 
+         
         self.gpr_SE_kernel_number = gpr_SE_kernel_number
 
         ard_num_dims = train_inputs.shape[-1]
@@ -317,18 +289,20 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
     def _set_likelihood_noise_prior(
         self,
         train_inputs,
-        likelihood_pot_noise_var,
-        likelihood_force_noise_var,
-        likelihood_hessian_noise_var,
-        likelihood_force_noise_rank,
-        likelihood_hessian_noise_rank,
-        noise_covar_factor_pot_grad_array,
-        noise_covar_factor_with_hessian_array,
+        noise_param
     ):
         """
         set the prior and constraint for the noise of GPR model.
         The information will be contained in likelihood class: RBFHessianGaussianLikelihood.
         """
+        (likelihood_pot_noise_var,
+        likelihood_force_noise_var,
+        likelihood_hessian_noise_var,
+        likelihood_force_noise_rank,
+        likelihood_hessian_noise_rank,
+        noise_covar_factor_pot_grad_array,
+        noise_covar_factor_with_hessian_array) = noise_param
+
         ard_num_dims = train_inputs.shape[-1]
         batch_shape = train_inputs.shape[:-2]
 
