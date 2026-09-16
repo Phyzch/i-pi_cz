@@ -213,8 +213,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         ard_num_dims = self.ard_num_dims
         force = self.train_targets[data_num: data_num * (1 + ard_num_dims)].reshape(data_num, ard_num_dims)
         force_range = torch.max(force, dim=0).values - torch.min(force, dim=0).values
-        force_range_ratio = force_range / torch.max(force_range)
-        lengthscale_rescale_factor = 1.0 / force_range_ratio
+        # new code
+        lengthscale_rescale_factor = 1.0 / force_range
 
         for i in range(gpr_SE_kernel_number):
             # The prior distribution of the length scale of the parameter is decided by the initial training inputs (we only provides the ratio).
