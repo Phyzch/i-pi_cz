@@ -153,17 +153,36 @@ class GPRForceMapper(object):
         # load parameters for the gpr model initialization. 
         # TODO: need a cleaner interface for gpr input parameter.
         neb_final_gpr_folder = "neb_final_gpr_training"
-        fix_dofs = self.motion.optarrays["fix_dofs"]
+        cartesian_fix_dofs = self.motion.optarrays["fix_dofs"]
         natoms = self.motion.beads.natoms 
+
         gpr_SE_kernel_number = self.motion.options["gpr_SE_kernel_number"]
         kernel_output_scale = self.motion.optarrays["gpr_kernel_outputscale"]
         kernel_output_scale_constraint = self.motion.optarrays["gpr_kernel_outputscale_constraint"]
         kernel_lengthscale_ratio = self.motion.optarrays["gpr_kernel_lengthscale_ratio"]
         kernel_lengthscale_ratio_constraint = self.motion.optarrays["gpr_kernel_lengthscale_ratio_constraint"]
+
+        gpr_kernel_param = (
+            gpr_SE_kernel_number,
+            kernel_output_scale,
+            kernel_output_scale_constraint,
+            kernel_lengthscale_ratio,
+            kernel_lengthscale_ratio_constraint
+        )
+
         gpr_noise_std = self.motion.optarrays["gpr_noise_std"]
+
         gpr_fix_internal_dofs_bool = self.motion.options["gpr_fix_internal_dofs_bool"]
         gpr_fix_internal_dofs_cutoff = self.motion.options["gpr_fix_internal_dofs_cutoff"]
         gpr_fixed_internal_dofs = gpr_util.read_fixed_internal_dofs(prefix= "neb_final_gpr_training")
+
+        gpr_fix_dofs_param = (
+            cartesian_fix_dofs,
+            gpr_fix_internal_dofs_bool,
+            gpr_fix_internal_dofs_cutoff,
+            gpr_fixed_internal_dofs
+        )
+
         gpr_covar_inverse_nugget = self.motion.optarrays["gpr_covar_inverse_nugget"]
 
         gpr_model = gpr.gprtools.GPModelWithDerivativesWrapper(
@@ -172,17 +191,10 @@ class GPRForceMapper(object):
             train_grad,
             natoms,
             coordinate_transformer,
-            fix_dofs,
-            gpr_SE_kernel_number,
-            kernel_output_scale,
-            kernel_output_scale_constraint,
-            kernel_lengthscale_ratio,
-            kernel_lengthscale_ratio_constraint,
+            gpr_kernel_param,
             gpr_noise_std,
             train_bool= False,
-            gpr_fix_internal_dofs_bool= gpr_fix_internal_dofs_bool,
-            gpr_fix_internal_dofs_cutoff= gpr_fix_internal_dofs_cutoff,
-            gpr_fixed_internal_dofs= gpr_fixed_internal_dofs,
+            gpr_fix_dofs_param= gpr_fix_dofs_param,
             singular_value_cutoff= gpr_covar_inverse_nugget
         )
 
@@ -957,6 +969,26 @@ class GPRHessianMapper(object):
         train_bool = False 
         train_settings = (train_bool, stage_wise_training, cholesky_bool)
 
+        kernel_param = (self.gpr_SE_kernel_number,
+                        self.gpr_kernel_outputscale,
+                        self.gpr_kernel_outputscale_constraint, 
+                        self.gpr_kernel_lengthscale_ratio,
+                        self.gpr_kernel_lengthscale_ratio_constraint)
+
+        constant_mean_func_bool= False
+
+        mean_func_param = (constant_mean_func_bool,
+        ref_x,
+        ref_V_shifted,
+        ref_grads,
+        ref_hessians) 
+
+        rigid_dofs_param = (
+            self.gpr_fix_internal_dofs_bool,
+            self.gpr_rigid_internal_dofs_cutoff,
+            gpr_rigid_internal_dofs
+        ) 
+
         self.gpr_hessian_model = (
             gpr.gpr_hessian_tools.GPModelWithHessiansWrapper(
                 train_x,
@@ -967,21 +999,11 @@ class GPRHessianMapper(object):
                 self.motion.beads.natoms,
                 self.coordinate_transformer,
                 self.fix_dofs,
-                self.gpr_SE_kernel_number,
-                self.gpr_kernel_outputscale,
-                self.gpr_kernel_outputscale_constraint, 
-                self.gpr_kernel_lengthscale_ratio,
-                self.gpr_kernel_lengthscale_ratio_constraint,
+                kernel_param, 
                 self.gpr_noise_std,
-                constant_mean_func_bool= False,
-                ref_mean_x=ref_x,
-                ref_mean_V=ref_V_shifted,
-                ref_mean_grad_x=ref_grads,
-                ref_mean_hessian_x=ref_hessians,
+                mean_func_param,
                 train_settings= train_settings,
-                gpr_rigid_internal_dofs_bool= self.gpr_fix_internal_dofs_bool,
-                gpr_rigid_internal_dofs_cutoff = self.gpr_rigid_internal_dofs_cutoff,
-                gpr_rigid_internal_dofs= gpr_rigid_internal_dofs,
+                rigid_dofs_param= rigid_dofs_param,
                 ridge_regularization_alpha= self.ridge_regularization_alpha,
                 singular_value_cutoff= self.gpr_covar_inverse_nugget
             )

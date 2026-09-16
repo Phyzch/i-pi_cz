@@ -528,17 +528,10 @@ class GPModelWithDerivativesWrapper:
         train_grad_x: np.ndarray,
         natom: int,
         coordinate_transformer: non_redundant_coordinate_transformer,
-        cartesian_fix_dofs: np.ndarray,
-        gpr_SE_kernel_number: int,
-        kernel_outputscale: np.ndarray,
-        kernel_outputscale_constraint: dict,
-        kernel_lengthscale_ratio: np.ndarray,
-        kernel_lengthscale_ratio_constraint: dict,
+        gpr_kernel_param: tuple,
         noise_std,
         train_bool= True,
-        gpr_fix_internal_dofs_bool= False,
-        gpr_fix_internal_dofs_cutoff = 1e-4,
-        gpr_fixed_internal_dofs= None,
+        gpr_fix_dofs_param: tuple = (True, 1e-3, []),
         singular_value_cutoff = 1e-8
     ):
         """
@@ -567,6 +560,21 @@ class GPModelWithDerivativesWrapper:
         ), "dim of gradients for input data is not 3 * natom, this is wrong. train_grad shape:{}, 3 * natom: {}".format(
             np.shape(train_grad_x)[1], 3 * natom
         )
+
+        (
+        gpr_SE_kernel_number,
+        kernel_outputscale,
+        kernel_outputscale_constraint,
+        kernel_lengthscale_ratio,
+        kernel_lengthscale_ratio_constraint
+        ) = gpr_kernel_param 
+
+        (
+        cartesian_fix_dofs,
+        gpr_fix_internal_dofs_bool,
+        gpr_fix_internal_dofs_cutoff,
+        gpr_fixed_internal_dofs
+        ) = gpr_fix_dofs_param
 
         self.natom = natom
         self.gpr_SE_kernel_number = gpr_SE_kernel_number

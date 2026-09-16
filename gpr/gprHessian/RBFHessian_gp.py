@@ -30,7 +30,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         kernel_param: tuple,
         noise_param: tuple,
         mean_func_param: tuple, 
-        nugget = 1e-8
+        nugget = 1e-8,
+        cholesky_bool= False
     ):
         """
         :param: train_inputs: input coordinate of training data.
@@ -95,6 +96,8 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         )
 
         self.nugget = nugget
+        # whether to use cholesky decomposition to compute the inverse and logdet of covariance matrix.
+        self.cholesky_bool = cholesky_bool 
         # dofs that we will not include in hessian calculations.
         self.hessian_fixdofs = hessian_fixdofs
         ard_num_dims = train_inputs.shape[-1]
@@ -702,9 +705,17 @@ def train_gpr_model(
     loss_prior_list = []
     loss_mll_list = []
 
+    if model.cholesky_bool:
+        # train with cholesky method
+        cholesky_size = train_targets.shape[0] + 10
+    else:
+        # train with BBMM.
+        cholesky_size = 1
+
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),
            gpytorch.settings.max_cg_iterations(model.train_max_cg_iteration),
-           gpytorch.settings.cg_tolerance(model.train_cg_tolerance)):
+           gpytorch.settings.cg_tolerance(model.train_cg_tolerance),
+           gpytorch.settings.max_cholesky_size(cholesky_size)):
         while loss_func_change > training_error_cutoff:
             # reset the gradients of all optimized torch.Tensor
             optimizer.zero_grad()

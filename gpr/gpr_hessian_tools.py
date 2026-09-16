@@ -812,21 +812,11 @@ class GPModelWithHessiansWrapper:
         natom: int,
         coordinate_transformer: non_redundant_coordinate_transformer,
         cartesian_fix_dofs: np.ndarray,
-        gpr_SE_kernel_number: int,
-        kernel_outputscale: np.ndarray,
-        kernel_outputscale_constraint: dict,
-        kernel_lengthscale_ratio: np.ndarray,
-        kernel_lengthscale_ratio_constraint: dict,
+        kernel_param: tuple,
         noise_std,
-        constant_mean_func_bool=True,
-        ref_mean_x: np.ndarray = np.array([]),
-        ref_mean_V: np.ndarray = np.array([]),
-        ref_mean_grad_x: np.ndarray = np.array([]),
-        ref_mean_hessian_x: np.ndarray = np.array([]),
+        mean_func_param: tuple,
         train_settings= (True, True, True), # (train_bool, stagewise_training, cholesky_bool)
-        gpr_rigid_internal_dofs_bool= False,
-        gpr_rigid_internal_dofs_cutoff= 5e-2,
-        gpr_rigid_internal_dofs= None,
+        rigid_dofs_param = (True, 1e-2, []),
         ridge_regularization_alpha= {
                 "force": 0.1,
                 "hessian": 0.5,
@@ -881,6 +871,23 @@ class GPModelWithHessiansWrapper:
             print(f"GPU Name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
         else:
             print("CUDA is not available. Running Gpytorch on CPU.")
+
+        (gpr_SE_kernel_number,
+        kernel_outputscale,
+        kernel_outputscale_constraint,
+        kernel_lengthscale_ratio,
+        kernel_lengthscale_ratio_constraint) = kernel_param 
+
+        (constant_mean_func_bool,
+        ref_mean_x,
+        ref_mean_V,
+        ref_mean_grad_x,
+        ref_mean_hessian_x) = mean_func_param
+
+        (gpr_rigid_internal_dofs_bool,
+        gpr_rigid_internal_dofs_cutoff,
+        gpr_rigid_internal_dofs,
+        ) = rigid_dofs_param
 
         M_H = len(training_data_hessian_data_point_index_array)
         hessian_fixdofs = np.array([])
@@ -1083,11 +1090,11 @@ class GPModelWithHessiansWrapper:
             kernel_param,
             noise_param,
             mean_func_param,
-            nugget= singular_value_cutoff
+            nugget= singular_value_cutoff,
+            cholesky_bool= cholesky_bool
         )
 
         self.gpr_model = self.gpr_model.to(device= self.device)
-
 
         if train_bool:
             # train the gaussian process regression model.
