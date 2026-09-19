@@ -175,7 +175,6 @@ class GPModelWithDerivatives(gpytorch.models.ExactGP):
         # scale the length scale and length scale constraint according to the force range of the training data.
         force = self.train_targets[:, 1:]
         force_range = torch.max(force, dim=0).values - torch.min(force, dim=0).values
-        # new code
         lengthscale_rescale_factor = 1.0 / force_range
 
         for i in range(gpr_SE_kernel_number):

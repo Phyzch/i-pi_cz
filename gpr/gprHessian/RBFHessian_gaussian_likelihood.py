@@ -19,7 +19,7 @@ from gpytorch.lazy import LazyEvaluatedKernelTensor
 import gpytorch
 
 from linear_operator.operators import LinearOperator, DiagLinearOperator
-
+import linear_operator
 
 class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
     r"""
@@ -461,7 +461,7 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
 
         # compute the covariance matrix of the noise.
         noise_covar = self._shaped_noise_covar(train_size, hessian_data_point_index_array)
-         
+        noise_covar =  linear_operator.to_linear_operator(noise_covar)
         include_hessian = kwargs.get('include_hessian', True)
         if include_hessian == False:
             # we do not include hessian part in the likelihood function. 
@@ -471,8 +471,10 @@ class RBFHessianGaussianLikelihood(_GaussianLikelihoodBase):
             noise_covar = noise_covar[..., :pot_grad_size, :pot_grad_size] 
 
         # compute the largest eigenval of covariance matrix.
+        # It's important to add diagonal_nugget here, this will make full_covar as linear_operator.AddedDiagLinearOperator object,
+        # which enables the preconditioned Cholesky decomposition as preconditioner .
         eigval_max = power_iteration(covar, num_iters= 20)
-        diagonal_nugget = torch.diag(torch.ones(covar.shape[0])).to(device= covar.device) * self.nugget * eigval_max
+        diagonal_nugget = DiagLinearOperator(torch.ones(covar.shape[0])).to(device= covar.device) * self.nugget * eigval_max
 
         full_covar = covar + noise_covar + diagonal_nugget 
 

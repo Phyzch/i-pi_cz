@@ -964,10 +964,10 @@ class GPRHessianMapper(object):
             np.array([ref_x]), np.array([ref_grads]), np.array([ref_hessians]), self.coordinate_transformer
         )
 
-        stage_wise_training = True 
+        hessian_free_training = False 
         cholesky_bool = True 
         train_bool = False 
-        train_settings = (train_bool, stage_wise_training, cholesky_bool)
+        train_settings = (train_bool, hessian_free_training, cholesky_bool)
 
         kernel_param = (self.gpr_SE_kernel_number,
                         self.gpr_kernel_outputscale,

@@ -1075,8 +1075,8 @@ class GPModelWithHessiansWrapper:
             ref_mean_hessian_q_upper_triag_tensor
         )
 
-        (train_bool, stagewise_training, cholesky_bool) = train_settings
-        self.stagewise_training = stagewise_training
+        (train_bool, hessian_free_training, cholesky_bool) = train_settings
+        self.hessian_free_training = hessian_free_training
         self.cholesky_bool= cholesky_bool
 
         # initialize the gaussian process regression model with input training data.
@@ -1828,13 +1828,12 @@ class GPModelWithHessiansWrapper:
         """
         function that trains the model
         """
-        if self.stagewise_training:
-            # first train the model with only potential and gradient information. 
-            print("stagewise training for GPR model.")
-            print("first stage: train the model with only potential and gradient information:")
+        if self.hessian_free_training:
+            # train the model with only potential and gradient information. 
+            print("hessian free training for GPR model.")
+            print("train the model with only potential and gradient information:")
             train_gpr_model(self.gpr_model, without_hessian_weight= 1.0, with_hessian_weight= 0.0)
             
-            # print("second stage: train the model with hessian information:")
             # # then train the model that includes hessian information.
             # train_gpr_model(self.gpr_model, without_hessian_weight= 0.0, with_hessian_weight= 1.0)
             

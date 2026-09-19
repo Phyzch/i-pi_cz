@@ -208,12 +208,13 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
         length_gamma_alpha = 3.0
         output_gamma_alpha = 3.0
 
+        set_physical_kernel = True
+
         train_inputs = self.train_inputs[0]
         data_num = train_inputs.shape[-2]
         ard_num_dims = self.ard_num_dims
         force = self.train_targets[data_num: data_num * (1 + ard_num_dims)].reshape(data_num, ard_num_dims)
         force_range = torch.max(force, dim=0).values - torch.min(force, dim=0).values
-        # new code
         lengthscale_rescale_factor = 1.0 / force_range
 
         for i in range(gpr_SE_kernel_number):
@@ -231,10 +232,11 @@ class GPModelWithHessians(gpytorch.models.ExactGP):
             length_scale_min_cutoff = length_scale_ratio_min_cutoff * train_inputs_range
             length_scale_max_cutoff = length_scale_ratio_max_cutoff * train_inputs_range
 
-            # rescale the length scale and length scale cutoff according to the amplitude of the force.  
-            length_scale = length_scale * lengthscale_rescale_factor 
-            length_scale_min_cutoff = length_scale_min_cutoff * lengthscale_rescale_factor 
-            length_scale_max_cutoff = length_scale_max_cutoff * lengthscale_rescale_factor
+            if set_physical_kernel:
+                # rescale the length scale and length scale cutoff according to the amplitude of the force.  
+                length_scale = length_scale * lengthscale_rescale_factor 
+                length_scale_min_cutoff = length_scale_min_cutoff * lengthscale_rescale_factor 
+                length_scale_max_cutoff = length_scale_max_cutoff * lengthscale_rescale_factor
 
             # set prior for lengthscale
             length_gamma_beta = torch.div(length_gamma_alpha, length_scale)
@@ -705,17 +707,35 @@ def train_gpr_model(
     loss_prior_list = []
     loss_mll_list = []
 
+    turn_on_preconditioner = True
     if model.cholesky_bool:
         # train with cholesky method
         cholesky_size = train_targets.shape[0] + 10
+        # will not do BBMM. These values will not be used.
+        min_preconditioning_size = 0
+        max_preconditioner_size = 0
     else:
         # train with BBMM.
         cholesky_size = 1
+        # if size of the kernel is smaller than min_preconditioning_size, 
+        # then we wouldn't use pivoted Cholesky based preconditioning.
+        # set it to small value to activate preconditioning of cg.
+        if turn_on_preconditioner:
+            min_preconditioning_size = 10
+            max_preconditioner_size = gpytorch.settings.max_preconditioner_size.value()
+        else:
+            min_preconditioning_size = gpytorch.settings.min_preconditioning_size.value()
+            # set max_preconditioner_size = 0 will turn off the preconditioning.
+            max_preconditioner_size = 0
+
 
     with (gpytorch.settings.cholesky_jitter(float_value= model.nugget, double_value= model.nugget),
            gpytorch.settings.max_cg_iterations(model.train_max_cg_iteration),
            gpytorch.settings.cg_tolerance(model.train_cg_tolerance),
-           gpytorch.settings.max_cholesky_size(cholesky_size)):
+           gpytorch.settings.max_cholesky_size(cholesky_size),
+           gpytorch.settings.min_preconditioning_size(min_preconditioning_size),
+           gpytorch.settings.max_preconditioner_size(max_preconditioner_size)
+           ):
         while loss_func_change > training_error_cutoff:
             # reset the gradients of all optimized torch.Tensor
             optimizer.zero_grad()
